@@ -1,0 +1,26 @@
+[package]
+name = "mq-benches"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[[bench]]
+name = "pipeline_bench"
+path = "pipeline_bench.rs"
+harness = false
+
+[dependencies]
+mq-core.workspace = true
+mq-sched.workspace = true
+mq-net.workspace = true
+mq-meta.workspace = true
+mq-install.workspace = true
+mq-mods.workspace = true
+testsupport.workspace = true
+criterion.workspace = true
+tokio.workspace = true
+rayon.workspace = true
+tempfile.workspace = true

@@ -1,0 +1,5 @@
+# Rust toolchain configuration for rustup-managed environments.
+# Note: Arch Linux system rust (/usr/bin/rustc) ignores this file and uses installed system components.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

@@ -1,0 +1,35 @@
+[package]
+name = "mq-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mq"
+path = "src/main.rs"
+
+[dependencies]
+mq-core.workspace = true
+mq-sched.workspace = true
+mq-net.workspace = true
+mq-meta.workspace = true
+mq-install.workspace = true
+mq-mods.workspace = true
+mq-auth.workspace = true
+mq-instances.workspace = true
+mq-launch.workspace = true
+mq-ui.workspace = true
+testsupport.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+rayon.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

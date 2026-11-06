@@ -1,0 +1,28 @@
+# Cargo build and release outputs
+# Note: Cargo.lock and .agents/ are intentionally NOT ignored.
+/target/
+/dist/
+
+# Partial/resumable downloads and atomic staging files
+*.part
+*.part*
+*.tmp
+
+# Arch Linux makepkg / PKGBUILD build artifacts
+/packaging/pkg/
+/packaging/src/
+/packaging/*.pkg.tar*
+/packaging/*.log
+
+# Profiling and benchmark outputs
+*.profraw
+*.profdata
+perf.data*
+flamegraph.svg
+
+# OS metadata and editor swap files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

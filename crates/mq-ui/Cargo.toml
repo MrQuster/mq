@@ -1,0 +1,28 @@
+[package]
+name = "mq-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mq-core.workspace = true
+mq-sched.workspace = true
+mq-net.workspace = true
+mq-meta.workspace = true
+mq-install.workspace = true
+mq-mods.workspace = true
+mq-auth.workspace = true
+mq-instances.workspace = true
+mq-launch.workspace = true
+egui.workspace = true
+eframe.workspace = true
+egui_extras.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+flume.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true

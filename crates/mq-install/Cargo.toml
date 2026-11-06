@@ -1,0 +1,24 @@
+[package]
+name = "mq-install"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mq-core.workspace = true
+mq-sched.workspace = true
+mq-net.workspace = true
+mq-meta.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+rayon.workspace = true
+dashmap.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+hex.workspace = true
+zip.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true

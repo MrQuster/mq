@@ -1,0 +1,104 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/mq-core",
+    "crates/mq-sched",
+    "crates/mq-net",
+    "crates/mq-meta",
+    "crates/mq-install",
+    "crates/mq-mods",
+    "crates/mq-auth",
+    "crates/mq-instances",
+    "crates/mq-launch",
+    "crates/mq-ui",
+    "crates/mq-cli",
+    "testsupport",
+    "benches",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["MQ Engineering Team"]
+rust-version = "1.80"
+
+[workspace.dependencies]
+# Internal workspace crates
+mq-core = { path = "crates/mq-core" }
+mq-sched = { path = "crates/mq-sched" }
+mq-net = { path = "crates/mq-net" }
+mq-meta = { path = "crates/mq-meta" }
+mq-install = { path = "crates/mq-install" }
+mq-mods = { path = "crates/mq-mods" }
+mq-auth = { path = "crates/mq-auth" }
+mq-instances = { path = "crates/mq-instances" }
+mq-launch = { path = "crates/mq-launch" }
+mq-ui = { path = "crates/mq-ui" }
+testsupport = { path = "testsupport" }
+
+# Async I/O & Networking
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "process", "sync", "time", "net", "signal"] }
+tokio-util = { version = "0.7", features = ["io"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "gzip"] }
+futures-util = "0.3"
+bytes = "1"
+url = { version = "2", features = ["serde"] }
+
+# CPU Parallelism & Concurrency
+rayon = "1.10"
+flume = { version = "0.11", features = ["async"] }
+crossbeam-channel = "0.5"
+dashmap = "6"
+parking_lot = "0.12"
+
+# Serialization, Crypto & Archives
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+uuid = { version = "1", features = ["v3", "v4", "serde"] }
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+hex = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# GUI
+egui = "0.31"
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "wgpu", "wayland", "x11"] }
+egui_extras = { version = "0.31", features = ["all_loaders"] }
+
+# CLI, Logging & System
+clap = { version = "4", features = ["derive", "env"] }
+directories = "6"
+sysinfo = "0.33"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+anyhow = "1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+
+# Testing & Benchmarking
+tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+loom = "0.7"
+axum = "0.8"
+
+# Optimize dependencies in dev mode so tests/mock-server/crypto run fast
+[profile.dev.package."*"]
+opt-level = 1
+
+# Production release profile (keep unwind panic for safe worker panic catching)
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"
+
+[workspace.lints.clippy]
+await_holding_lock = "deny"
+

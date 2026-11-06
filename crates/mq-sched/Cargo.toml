@@ -1,0 +1,22 @@
+[package]
+name = "mq-sched"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mq-core.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+rayon.workspace = true
+flume.workspace = true
+crossbeam-channel.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true
+loom.workspace = true
