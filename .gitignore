@@ -1,7 +1,18 @@
 # Cargo build and release outputs
-# Note: Cargo.lock and .agents/ are intentionally NOT ignored.
 /target/
 /dist/
+/.cache/
+
+# Agent, LLM transcripts and scratch files
+/.agent/
+/.agents/
+/.claude/
+/CHAT_HISTORY.md
+/BLOCKERS.md
+/PROGRESS.md
+/docs/CHAT_HISTORY.md
+/docs/transcript.jsonl
+*.jsonl
 
 # Partial/resumable downloads and atomic staging files
 *.part
