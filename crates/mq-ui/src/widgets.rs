@@ -445,6 +445,79 @@ impl SkinAvatarCache {
     }
 }
 
+/// Renders a loader badge with loader-specific color styling.
+pub fn loader_badge(ui: &mut Ui, loader: mq_core::ModLoaderKind) {
+    let (color, name) = match loader {
+        mq_core::ModLoaderKind::Vanilla => (Color32::from_rgb(0x3B, 0x82, 0xF6), "Vanilla"),
+        mq_core::ModLoaderKind::Fabric => (Color32::from_rgb(0xE2, 0xB3, 0x7E), "Fabric"),
+        mq_core::ModLoaderKind::Quilt => (Color32::from_rgb(0xC0, 0x84, 0xFC), "Quilt"),
+        mq_core::ModLoaderKind::Forge => (Color32::from_rgb(0xF5, 0x9E, 0x0B), "Forge"),
+        mq_core::ModLoaderKind::NeoForge => (Color32::from_rgb(0xF4, 0x3F, 0x5E), "NeoForge"),
+    };
+    version_badge(ui, name, color);
+}
+
+/// Prominent hero action button (height 40px, bold font, subtle emerald glow).
+pub fn hero_play_button(ui: &mut Ui, label: &str) -> Response {
+    let font_id = FontId::proportional(15.0);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font_id, BG_DEEP_GRAPHITE);
+    let icon_side = 18.0;
+    let icon_gap = 10.0;
+    let desired_width = (BUTTON_PADDING.x * 2.2 + icon_side + icon_gap + galley.size().x).max(140.0);
+    let desired_height = 40.0;
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(desired_width, desired_height), Sense::click());
+
+    if ui.is_rect_visible(rect) {
+        let hovered = response.hovered() && ui.is_enabled();
+        let active = response.is_pointer_button_down_on() && ui.is_enabled();
+        let fill = if active || hovered { ACCENT_EMERALD_HOVER } else { ACCENT_EMERALD };
+
+        let painter = ui.painter();
+        if hovered {
+            painter.rect_filled(rect.expand(2.0), RADIUS_BUTTON, ACCENT_EMERALD.gamma_multiply(0.35));
+        }
+        painter.rect_filled(rect, RADIUS_BUTTON, fill);
+        painter.rect_stroke(rect, RADIUS_BUTTON, Stroke::new(1.0_f32, Color32::WHITE), StrokeKind::Inside);
+
+        let mut cursor_x = rect.left() + (rect.width() - (icon_side + icon_gap + galley.size().x)) * 0.5;
+        let icon_rect = Rect::from_center_size(
+            Pos2::new(cursor_x + icon_side * 0.5, rect.center().y),
+            Vec2::splat(icon_side),
+        );
+        paint_vector_icon(painter, icon_rect, VectorIcon::Play, BG_DEEP_GRAPHITE);
+        cursor_x += icon_side + icon_gap;
+
+        let text_pos = Pos2::new(cursor_x, rect.center().y - galley.size().y * 0.5);
+        painter.galley(text_pos, galley, BG_DEEP_GRAPHITE);
+    }
+    response
+}
+
+/// Clean status pill badge with glowing dot and label.
+pub fn status_pill(ui: &mut Ui, label: &str, color: Color32) {
+    let font_id = FontId::proportional(11.5);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font_id, color);
+    let dot_size = 6.0;
+    let pad = Vec2::new(8.0, 3.5);
+    let size = Vec2::new(pad.x * 2.0 + dot_size + 6.0 + galley.size().x, (galley.size().y + pad.y * 2.0).max(18.0));
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let bg = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 26);
+        let border = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 90);
+        painter.rect_filled(rect, RADIUS_TAG, bg);
+        painter.rect_stroke(rect, RADIUS_TAG, Stroke::new(1.0_f32, border), StrokeKind::Inside);
+
+        let dot_center = Pos2::new(rect.left() + pad.x + dot_size * 0.5, rect.center().y);
+        painter.circle_filled(dot_center, dot_size * 0.5 + 1.0, color.gamma_multiply(0.35));
+        painter.circle_filled(dot_center, dot_size * 0.5, color);
+
+        let text_pos = Pos2::new(rect.left() + pad.x + dot_size + 6.0, rect.center().y - galley.size().y * 0.5);
+        painter.galley(text_pos, galley, color);
+    }
+}
+
 /// Paints an `8x8` [`SkinHeadAvatar`] with exact Nearest-Neighbor pixel bounds inside `rect`.
 pub fn paint_skin_head_in_rect(painter: &Painter, rect: Rect, avatar: &SkinHeadAvatar) {
     let cols = avatar.width.max(1) as usize;
