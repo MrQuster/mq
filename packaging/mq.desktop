@@ -1,12 +1,16 @@
 [Desktop Entry]
 Name=MQ
+Name[ru]=MQ
 GenericName=Minecraft Launcher
+GenericName[ru]=Лаунчер Minecraft
 Comment=Autonomous multithreaded Minecraft Java Edition launcher for Linux
-Exec=mq %u
+Comment[ru]=Многопоточный модульный лаунчер Minecraft для Linux
+Exec=/home/honey/.local/bin/mq %u
+TryExec=/home/honey/.local/bin/mq
 Icon=mq
 Terminal=false
 Type=Application
 Categories=Game;ActionGame;Simulation;
-Keywords=minecraft;launcher;fabric;quilt;forge;neoforge;modrinth;curseforge;
+Keywords=minecraft;launcher;fabric;quilt;forge;neoforge;modrinth;curseforge;майнкрафт;лаунчер;
 StartupWMClass=mq
 MimeType=application/x-modrinth-modpack+zip;
