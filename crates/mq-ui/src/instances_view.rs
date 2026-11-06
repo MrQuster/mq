@@ -11,7 +11,7 @@ use crate::theme::{
     STATUS_DANGER, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY,
 };
 use crate::widgets::{
-    hero_play_button, loader_badge, paint_vector_icon, primary_emerald_button,
+    hero_action_button, loader_badge, paint_vector_icon, primary_emerald_button,
     secondary_glass_button, status_pill, version_badge, VectorIcon,
 };
 
@@ -531,6 +531,19 @@ impl InstancesView {
 
                         for inst in &state.instances {
                             let is_selected = state.selected_instance_id.as_ref() == Some(&inst.id);
+                            let is_installed = state.is_instance_installed(&inst.id);
+                            let is_downloading =
+                                state.installing_instance.as_ref() == Some(&inst.id);
+                            let is_running = state.game_running
+                                && state.running_instance.as_ref() == Some(&inst.id);
+
+                            let stroke_color = if is_downloading {
+                                ACCENT_COBALT
+                            } else if is_running || is_selected {
+                                ACCENT_EMERALD
+                            } else {
+                                BORDER_SUBTLE
+                            };
 
                             let frame = egui::Frame::new()
                                 .fill(if is_selected {
@@ -538,14 +551,7 @@ impl InstancesView {
                                 } else {
                                     CARD_SURFACE
                                 })
-                                .stroke(Stroke::new(
-                                    1.0_f32,
-                                    if is_selected {
-                                        ACCENT_EMERALD
-                                    } else {
-                                        BORDER_SUBTLE
-                                    },
-                                ))
+                                .stroke(Stroke::new(1.0_f32, stroke_color))
                                 .corner_radius(RADIUS_CARD)
                                 .inner_margin(egui::Margin::same(8));
 
@@ -556,16 +562,24 @@ impl InstancesView {
                                         Vec2::splat(16.0),
                                         egui::Sense::hover(),
                                     );
-                                    paint_vector_icon(
-                                        ui.painter(),
-                                        rect,
-                                        VectorIcon::Layers,
-                                        if is_selected {
-                                            ACCENT_EMERALD
-                                        } else {
-                                            ACCENT_COBALT
-                                        },
-                                    );
+                                    let (icon, icon_col) = if is_downloading {
+                                        (VectorIcon::Download, ACCENT_COBALT)
+                                    } else if is_running {
+                                        (VectorIcon::Play, ACCENT_EMERALD)
+                                    } else if is_installed {
+                                        (
+                                            VectorIcon::Layers,
+                                            if is_selected {
+                                                ACCENT_EMERALD
+                                            } else {
+                                                ACCENT_COBALT
+                                            },
+                                        )
+                                    } else {
+                                        (VectorIcon::Download, TEXT_MUTED)
+                                    };
+                                    paint_vector_icon(ui.painter(), rect, icon, icon_col);
+
                                     ui.vertical(|ui| {
                                         ui.label(
                                             RichText::new(&inst.name).color(TEXT_PRIMARY).strong(),
@@ -573,6 +587,13 @@ impl InstancesView {
                                         ui.horizontal(|ui| {
                                             version_badge(ui, &inst.mc_version, ACCENT_COBALT);
                                             loader_badge(ui, inst.loader);
+                                            if is_downloading {
+                                                version_badge(ui, "Загрузка", ACCENT_COBALT);
+                                            } else if is_running {
+                                                version_badge(ui, "Запущен", ACCENT_EMERALD);
+                                            } else if !is_installed {
+                                                version_badge(ui, "Не скачан", STATUS_WARN);
+                                            }
                                         });
                                     });
                                 });
@@ -595,13 +616,102 @@ impl InstancesView {
 
             // Right selected instance details
             ui.vertical(|ui| {
-                if let Some(inst) = state.selected_instance() {
-                    let inst_id = inst.id.clone();
-                    let inst_name = inst.name.clone();
-                    let mc_ver = inst.mc_version.clone();
-                    let loader = inst.loader;
+                let selected_info = state.selected_instance().map(|i| {
+                    (
+                        i.id.clone(),
+                        i.name.clone(),
+                        i.mc_version.clone(),
+                        i.loader,
+                        i.memory_max_mb,
+                    )
+                });
 
-                    // Detail hero header card
+                if let Some((inst_id, inst_name, mc_ver, loader, memory_max_mb)) = selected_info {
+                    let is_installed = state.is_instance_installed(&inst_id);
+                    let is_downloading = state.installing_instance.as_ref() == Some(&inst_id);
+                    let is_running =
+                        state.game_running && state.running_instance.as_ref() == Some(&inst_id);
+
+                    // 1. Error Banner (if any)
+                    if let Some(err) = state.install_error.clone() {
+                        let err_frame = egui::Frame::new()
+                            .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 28))
+                            .stroke(Stroke::new(1.0_f32, STATUS_DANGER))
+                            .corner_radius(RADIUS_CARD)
+                            .inner_margin(egui::Margin::same(10));
+
+                        err_frame.show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let (rect, _) =
+                                    ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
+                                paint_vector_icon(
+                                    ui.painter(),
+                                    rect,
+                                    VectorIcon::Warning,
+                                    STATUS_DANGER,
+                                );
+                                ui.label(RichText::new(&err).color(TEXT_PRIMARY).size(13.0));
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if secondary_glass_button(
+                                            ui,
+                                            Some(VectorIcon::Cross),
+                                            "Закрыть",
+                                        )
+                                        .clicked()
+                                        {
+                                            state.install_error = None;
+                                        }
+                                    },
+                                );
+                            });
+                        });
+                        ui.add_space(8.0);
+                    }
+
+                    // 2. Active Download Progress Card (prominent real-time view)
+                    if is_downloading {
+                        let stage = state
+                            .active_phase
+                            .as_deref()
+                            .unwrap_or("Загрузка данных игры...");
+                        let (frac, speed, comp_bytes, tot_bytes, comp_items, tot_items) =
+                            if let Some(prog) = &state.phase_progress {
+                                let f = if prog.total_items > 0 {
+                                    prog.completed_items as f32 / prog.total_items as f32
+                                } else {
+                                    0.0
+                                };
+                                (
+                                    f,
+                                    prog.mib_per_sec * 1024.0 * 1024.0,
+                                    prog.bytes_done,
+                                    prog.bytes_total,
+                                    prog.completed_items,
+                                    prog.total_items,
+                                )
+                            } else {
+                                (0.0, 0.0, 0, 0, 0, 0)
+                            };
+
+                        crate::widgets::render_download_progress_card(
+                            ui,
+                            stage,
+                            frac,
+                            speed,
+                            comp_bytes,
+                            tot_bytes,
+                            comp_items,
+                            tot_items,
+                            || {
+                                let _ = state.cmd_sender.send(UiWorkerCommand::CancelDownload);
+                            },
+                        );
+                        ui.add_space(10.0);
+                    }
+
+                    // 3. Detail hero header card
                     let header_frame = egui::Frame::new()
                         .fill(CARD_SURFACE)
                         .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
@@ -623,38 +733,129 @@ impl InstancesView {
                                     loader_badge(ui, loader);
                                     version_badge(
                                         ui,
-                                        &format!("{} МБ RAM", inst.memory_max_mb),
+                                        &format!("{} МБ RAM", memory_max_mb),
                                         TEXT_MUTED,
                                     );
-                                    status_pill(ui, "Готов к запуску", ACCENT_EMERALD);
+                                    if is_running {
+                                        status_pill(ui, "Игра запущена", ACCENT_EMERALD);
+                                    } else if is_downloading {
+                                        status_pill(ui, "Скачивание файлов...", ACCENT_COBALT);
+                                    } else if is_installed {
+                                        status_pill(ui, "Готов к запуску", ACCENT_EMERALD);
+                                    } else {
+                                        status_pill(ui, "Требуется установка", STATUS_WARN);
+                                    }
                                 });
                             });
 
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    if hero_play_button(ui, "ИГРАТЬ").clicked() {
-                                        let _ = state.cmd_sender.send(
-                                            UiWorkerCommand::LaunchInstance {
-                                                instance_id: inst_id.clone(),
-                                                dry_run: false,
-                                            },
-                                        );
+                                    if is_running {
+                                        if hero_action_button(
+                                            ui,
+                                            VectorIcon::Stop,
+                                            "ОСТАНОВИТЬ",
+                                            STATUS_DANGER,
+                                        )
+                                        .clicked()
+                                        {
+                                            let _ = state
+                                                .cmd_sender
+                                                .send(UiWorkerCommand::CancelDownload);
+                                        }
+                                    } else if is_downloading {
+                                        if hero_action_button(
+                                            ui,
+                                            VectorIcon::Download,
+                                            "СКАЧИВАНИЕ...",
+                                            ACCENT_COBALT,
+                                        )
+                                        .clicked()
+                                        {
+                                            let _ = state
+                                                .cmd_sender
+                                                .send(UiWorkerCommand::CancelDownload);
+                                        }
+                                    } else if is_installed {
+                                        if hero_action_button(
+                                            ui,
+                                            VectorIcon::Play,
+                                            "ИГРАТЬ",
+                                            ACCENT_EMERALD,
+                                        )
+                                        .clicked()
+                                        {
+                                            let _ = state.cmd_sender.send(
+                                                UiWorkerCommand::LaunchInstance {
+                                                    instance_id: inst_id.clone(),
+                                                    dry_run: false,
+                                                },
+                                            );
+                                        }
+                                    } else {
+                                        if hero_action_button(
+                                            ui,
+                                            VectorIcon::Download,
+                                            "СКАЧАТЬ И ИГРАТЬ",
+                                            ACCENT_EMERALD,
+                                        )
+                                        .clicked()
+                                        {
+                                            let _ = state.cmd_sender.send(
+                                                UiWorkerCommand::LaunchInstance {
+                                                    instance_id: inst_id.clone(),
+                                                    dry_run: false,
+                                                },
+                                            );
+                                        }
                                     }
+
                                     ui.add_space(10.0);
-                                    if secondary_glass_button(
-                                        ui,
-                                        Some(VectorIcon::Verify),
-                                        "Проверить",
-                                    )
-                                    .clicked()
-                                    {
-                                        let _ = state.cmd_sender.send(
-                                            UiWorkerCommand::VerifyInstance {
-                                                instance_id: inst_id.clone(),
-                                            },
-                                        );
+
+                                    if !is_downloading {
+                                        if is_installed {
+                                            if secondary_glass_button(
+                                                ui,
+                                                Some(VectorIcon::Refresh),
+                                                "Переустановить",
+                                            )
+                                            .clicked()
+                                            {
+                                                let _ = state.cmd_sender.send(
+                                                    UiWorkerCommand::InstallInstance {
+                                                        instance_id: inst_id.clone(),
+                                                    },
+                                                );
+                                            }
+                                            if secondary_glass_button(
+                                                ui,
+                                                Some(VectorIcon::Verify),
+                                                "Проверить",
+                                            )
+                                            .clicked()
+                                            {
+                                                let _ = state.cmd_sender.send(
+                                                    UiWorkerCommand::VerifyInstance {
+                                                        instance_id: inst_id.clone(),
+                                                    },
+                                                );
+                                            }
+                                        } else if secondary_glass_button(
+                                            ui,
+                                            Some(VectorIcon::Download),
+                                            "Установить",
+                                        )
+                                        .clicked()
+                                        {
+                                            let _ = state.cmd_sender.send(
+                                                UiWorkerCommand::InstallInstance {
+                                                    instance_id: inst_id.clone(),
+                                                },
+                                            );
+                                        }
                                     }
+
                                     if secondary_glass_button(
                                         ui,
                                         Some(VectorIcon::Folder),
@@ -1132,10 +1333,37 @@ impl InstancesView {
             }
 
             ui.add_space(14.0);
-            if primary_emerald_button(ui, Some(VectorIcon::Check), "Сохранить параметры").clicked()
-            {
+            let mut should_delete = false;
+            let mut should_save = false;
+
+            ui.horizontal(|ui| {
+                if primary_emerald_button(ui, Some(VectorIcon::Check), "Сохранить параметры")
+                    .clicked()
+                {
+                    should_save = true;
+                }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить инстанс")
+                        .clicked()
+                    {
+                        should_delete = true;
+                    }
+                });
+            });
+
+            if should_save {
                 let _ = state.instance_mgr.save_instance(inst);
                 state.status_message = Some(("Параметры инстанса сохранены".to_string(), false));
+            }
+
+            if should_delete {
+                let inst_dir = state.paths.instance_dir(inst_id.as_str());
+                let _ = std::fs::remove_dir_all(inst_dir);
+                let id_to_remove = inst_id.clone();
+                state.instances.retain(|i| i.id != id_to_remove);
+                state.selected_instance_id = state.instances.first().map(|i| i.id.clone());
+                state.status_message = Some(("Инстанс успешно удален".to_string(), false));
             }
         }
     }

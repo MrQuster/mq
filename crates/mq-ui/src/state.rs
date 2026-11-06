@@ -31,6 +31,17 @@ pub enum UiWorkerResponse {
         conflicts: Vec<ModConflict>,
     },
     VersionManifestFetched(Vec<(String, String)>),
+    InstanceInstallStarted(InstanceId),
+    InstanceInstallCompleted(InstanceId),
+    InstanceError {
+        instance_id: InstanceId,
+        error: String,
+    },
+    GameStarted(InstanceId),
+    GameExited {
+        instance_id: InstanceId,
+        exit_code: i32,
+    },
 }
 
 /// Background task messages sent from UI to worker threads.
@@ -66,6 +77,10 @@ pub enum UiWorkerCommand {
     VerifyInstance {
         instance_id: InstanceId,
     },
+    InstallInstance {
+        instance_id: InstanceId,
+    },
+    CancelDownload,
     LaunchInstance {
         instance_id: InstanceId,
         dry_run: bool,
@@ -101,8 +116,13 @@ pub struct UiState {
     pub phase_progress: Option<PhaseProgress>,
     pub status_message: Option<(String, bool)>, // (msg, is_error)
 
-    // Game Console
+    // Game Console & Execution
     pub game_running: bool,
+    pub running_instance: Option<InstanceId>,
+    pub is_launching: bool,
+    pub installing_instance: Option<InstanceId>,
+    pub install_error: Option<String>,
+    pub last_game_exit_code: Option<i32>,
     pub game_logs: VecDeque<GameLogEntry>,
     pub log_filter: Option<GameLogLevel>,
 
@@ -182,6 +202,11 @@ impl UiState {
             phase_progress: None,
             status_message: Some(("MQ Launcher готов к работе".to_string(), false)),
             game_running: false,
+            running_instance: None,
+            is_launching: false,
+            installing_instance: None,
+            install_error: None,
+            last_game_exit_code: None,
             game_logs: VecDeque::with_capacity(MAX_GAME_LOG_LINES),
             log_filter: None,
             installed_mods: Vec::new(),
@@ -219,6 +244,42 @@ impl UiState {
                 UiWorkerResponse::VersionManifestFetched(versions) => {
                     self.remote_versions = versions;
                     self.is_fetching_manifest = false;
+                }
+                UiWorkerResponse::InstanceInstallStarted(id) => {
+                    self.installing_instance = Some(id);
+                    self.install_error = None;
+                }
+                UiWorkerResponse::InstanceInstallCompleted(id) => {
+                    if self.installing_instance.as_ref() == Some(&id) {
+                        self.installing_instance = None;
+                    }
+                    self.status_message = Some(("Инстанс успешно установлен".to_string(), false));
+                }
+                UiWorkerResponse::InstanceError {
+                    instance_id: _,
+                    error,
+                } => {
+                    self.installing_instance = None;
+                    self.is_launching = false;
+                    self.install_error = Some(error.clone());
+                    self.status_message = Some((error, true));
+                }
+                UiWorkerResponse::GameStarted(id) => {
+                    self.is_launching = false;
+                    self.game_running = true;
+                    self.running_instance = Some(id);
+                }
+                UiWorkerResponse::GameExited {
+                    instance_id: _,
+                    exit_code,
+                } => {
+                    self.game_running = false;
+                    self.running_instance = None;
+                    self.last_game_exit_code = Some(exit_code);
+                    self.status_message = Some((
+                        format!("Игра завершилась с кодом выхода {}", exit_code),
+                        exit_code != 0,
+                    ));
                 }
             }
         }
@@ -270,5 +331,11 @@ impl UiState {
     pub fn selected_instance(&self) -> Option<&InstanceManifest> {
         let sel_id = self.selected_instance_id.as_ref()?;
         self.instances.iter().find(|i| i.id == *sel_id)
+    }
+
+    /// Checks whether an instance has already been installed into the local CAS and instance directory.
+    pub fn is_instance_installed(&self, id: &InstanceId) -> bool {
+        let inst_dir = self.paths.instance_dir(id.as_str());
+        inst_dir.join("resolved_version.json").exists() && inst_dir.join("client.jar").exists()
     }
 }

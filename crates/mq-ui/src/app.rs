@@ -188,14 +188,90 @@ impl MqApp {
                         }
                     });
                 }
+                UiWorkerCommand::CancelDownload => {
+                    self.state.cancel_epoch.cancel_and_advance();
+                    self.state.installing_instance = None;
+                    self.state.active_phase = None;
+                    self.state.phase_progress = None;
+                    self.state.status_message =
+                        Some(("Загрузка отменена пользователем".to_string(), false));
+                }
+                UiWorkerCommand::InstallInstance { instance_id } => {
+                    let inst_dir = self.state.paths.instance_dir(instance_id.as_str());
+                    let paths = self.state.paths.clone();
+                    let bus = self.state.event_bus.clone();
+                    let net = self.state.net.clone();
+                    let cas = self.state.cas.clone();
+                    let pool = self.state.compute_pool.clone();
+                    let guard = self.state.cancel_epoch.snapshot();
+                    let resp_tx = self.state.resp_sender.clone();
+
+                    if let Some(inst) = self
+                        .state
+                        .instances
+                        .iter()
+                        .find(|i| i.id == instance_id)
+                        .cloned()
+                    {
+                        let _ = resp_tx.send(UiWorkerResponse::InstanceInstallStarted(
+                            instance_id.clone(),
+                        ));
+                        tokio::spawn(async move {
+                            let req = mq_install::InstallRequest {
+                                mc_version: inst.mc_version.clone(),
+                                loader: inst.loader,
+                                loader_version: inst.loader_version.clone(),
+                                instance_dir: inst_dir.clone(),
+                                mock_base_url: None,
+                            };
+
+                            match mq_install::install_game(
+                                &req,
+                                &paths,
+                                &net,
+                                &cas,
+                                &pool,
+                                &guard,
+                                Some(&bus),
+                            )
+                            .await
+                            {
+                                Ok(summary) => {
+                                    bus.publish(mq_core::Event::PhaseCompleted {
+                                        phase: "install_game".to_string(),
+                                        elapsed_ms: summary.elapsed_ms,
+                                    });
+                                    let _ = resp_tx.send(
+                                        UiWorkerResponse::InstanceInstallCompleted(instance_id),
+                                    );
+                                }
+                                Err(e) => {
+                                    let err_msg = format!("Ошибка установки {}: {e}", inst.name);
+                                    bus.publish(mq_core::Event::TaskError {
+                                        context: format!("Установка {}", inst.name),
+                                        message: e.to_string(),
+                                    });
+                                    let _ = resp_tx.send(UiWorkerResponse::InstanceError {
+                                        instance_id,
+                                        error: err_msg,
+                                    });
+                                }
+                            }
+                        });
+                    }
+                }
                 UiWorkerCommand::LaunchInstance {
                     instance_id,
                     dry_run,
                 } => {
                     let inst_dir = self.state.paths.instance_dir(instance_id.as_str());
-                    let resolved_path = inst_dir.join("resolved_version.json");
                     let paths = self.state.paths.clone();
                     let bus = self.state.event_bus.clone();
+                    let net = self.state.net.clone();
+                    let cas = self.state.cas.clone();
+                    let pool = self.state.compute_pool.clone();
+                    let guard = self.state.cancel_epoch.snapshot();
+                    let resp_tx = self.state.resp_sender.clone();
 
                     if let Some(inst) = self
                         .state
@@ -209,63 +285,214 @@ impl MqApp {
                             .accounts
                             .active_account()
                             .cloned()
-                            .unwrap_or_else(|| {
-                                mq_auth::create_offline_account("Mr_Quster").unwrap()
-                            });
+                            .unwrap_or_else(|| mq_auth::create_offline_account("Player").unwrap());
 
                         tokio::spawn(async move {
-                            if let Ok(bytes) = std::fs::read(&resolved_path) {
-                                if let Ok(ver) =
-                                    serde_json::from_slice::<mq_meta::ResolvedVersion>(&bytes)
-                                {
-                                    let java_runtimes = mq_launch::discover_java_runtimes();
-                                    let req_major = mq_launch::required_java_major_for_mc(
-                                        &ver.mc_version,
-                                        Some(ver.java_version.major_version),
-                                    );
-                                    if let Ok(selected_java) = mq_launch::select_java_runtime(
-                                        &java_runtimes,
-                                        req_major,
-                                        inst.java_path.as_deref(),
-                                    ) {
-                                        let launch_ctx = mq_launch::LaunchContext {
-                                            paths,
-                                            instance: inst,
-                                            version: ver,
-                                            account: active_acc,
-                                            java_bin: selected_java.path,
-                                            authlib_injector_jar: None,
-                                            extra_secrets_to_redact: Vec::new(),
-                                        };
+                            // 1. Check if installation is needed
+                            let resolved_path = inst_dir.join("resolved_version.json");
+                            let client_jar_path = inst_dir.join("client.jar");
+                            let is_installed = resolved_path.exists() && client_jar_path.exists();
 
-                                        if let Ok(built_cmd) =
-                                            mq_launch::build_launch_command(&launch_ctx)
-                                        {
-                                            if dry_run {
-                                                bus.publish(mq_core::Event::GameLog(
-                                                    mq_core::GameLogEntry {
-                                                        instance: instance_id.to_string(),
-                                                        timestamp_ms: chrono::Utc::now()
-                                                            .timestamp_millis(),
-                                                        level: mq_core::GameLogLevel::Info,
-                                                        line: format!(
-                                                            "DRY RUN COMMAND:\n{}",
-                                                            built_cmd.to_shell_command_line()
-                                                        ),
-                                                    },
-                                                ));
-                                            } else {
-                                                let _ = mq_launch::spawn_and_stream_game(
-                                                    &built_cmd,
-                                                    instance_id.as_str(),
-                                                    Vec::new(),
-                                                    Some(bus),
-                                                )
-                                                .await;
-                                            }
-                                        }
+                            if !is_installed {
+                                let _ = resp_tx.send(UiWorkerResponse::InstanceInstallStarted(
+                                    instance_id.clone(),
+                                ));
+                                let req = mq_install::InstallRequest {
+                                    mc_version: inst.mc_version.clone(),
+                                    loader: inst.loader,
+                                    loader_version: inst.loader_version.clone(),
+                                    instance_dir: inst_dir.clone(),
+                                    mock_base_url: None,
+                                };
+
+                                match mq_install::install_game(
+                                    &req,
+                                    &paths,
+                                    &net,
+                                    &cas,
+                                    &pool,
+                                    &guard,
+                                    Some(&bus),
+                                )
+                                .await
+                                {
+                                    Ok(summary) => {
+                                        bus.publish(mq_core::Event::PhaseCompleted {
+                                            phase: "install_game".to_string(),
+                                            elapsed_ms: summary.elapsed_ms,
+                                        });
+                                        let _ = resp_tx.send(
+                                            UiWorkerResponse::InstanceInstallCompleted(
+                                                instance_id.clone(),
+                                            ),
+                                        );
+                                    }
+                                    Err(e) => {
+                                        let err_msg = format!(
+                                            "Ошибка скачивания инстанса {}: {e}",
+                                            inst.name
+                                        );
+                                        bus.publish(mq_core::Event::TaskError {
+                                            context: format!("Установка {}", inst.name),
+                                            message: e.to_string(),
+                                        });
+                                        let _ = resp_tx.send(UiWorkerResponse::InstanceError {
+                                            instance_id,
+                                            error: err_msg,
+                                        });
+                                        return;
                                     }
                                 }
+                            }
+
+                            // 2. Read resolved version metadata
+                            let bytes = match std::fs::read(&resolved_path) {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    let err_msg =
+                                        format!("Не удалось прочитать resolved_version.json: {e}");
+                                    let _ = resp_tx.send(UiWorkerResponse::InstanceError {
+                                        instance_id,
+                                        error: err_msg,
+                                    });
+                                    return;
+                                }
+                            };
+
+                            let ver =
+                                match serde_json::from_slice::<mq_meta::ResolvedVersion>(&bytes) {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        let err_msg =
+                                            format!("Ошибка структуры resolved_version.json: {e}");
+                                        let _ = resp_tx.send(UiWorkerResponse::InstanceError {
+                                            instance_id,
+                                            error: err_msg,
+                                        });
+                                        return;
+                                    }
+                                };
+
+                            // 3. Ensure Ely.by authlib injector if Ely.by account is active
+                            let authlib_path = if active_acc.kind == mq_auth::AccountKind::ElyBy {
+                                let client = mq_auth::ElyByClient::new();
+                                match client.ensure_authlib_injector(&paths).await {
+                                    Ok(p) => Some(p),
+                                    Err(e) => {
+                                        bus.publish(mq_core::Event::TaskError {
+                                            context: "Ely.by Authlib".to_string(),
+                                            message: format!(
+                                                "Не удалось загрузить скин-инжектор: {e}"
+                                            ),
+                                        });
+                                        None
+                                    }
+                                }
+                            } else {
+                                None
+                            };
+
+                            // 4. Discover and select compatible Java Virtual Machine
+                            let java_runtimes = mq_launch::discover_java_runtimes();
+                            let req_major = mq_launch::required_java_major_for_mc(
+                                &ver.mc_version,
+                                Some(ver.java_version.major_version),
+                            );
+
+                            let selected_java = match mq_launch::select_java_runtime(
+                                &java_runtimes,
+                                req_major,
+                                inst.java_path.as_deref(),
+                            ) {
+                                Ok(j) => j,
+                                Err(e) => {
+                                    let err_msg = format!(
+                                        "Подходящая версия Java не найдена (требуется Java {req_major}): {e}"
+                                    );
+                                    bus.publish(mq_core::Event::TaskError {
+                                        context: "Поиск Java".to_string(),
+                                        message: err_msg.clone(),
+                                    });
+                                    let _ = resp_tx.send(UiWorkerResponse::InstanceError {
+                                        instance_id,
+                                        error: err_msg,
+                                    });
+                                    return;
+                                }
+                            };
+
+                            // 5. Construct launch context and arguments
+                            let launch_ctx = mq_launch::LaunchContext {
+                                paths,
+                                instance: inst.clone(),
+                                version: ver,
+                                account: active_acc,
+                                java_bin: selected_java.path.clone(),
+                                authlib_injector_jar: authlib_path,
+                                extra_secrets_to_redact: Vec::new(),
+                            };
+
+                            let built_cmd = match mq_launch::build_launch_command(&launch_ctx) {
+                                Ok(cmd) => cmd,
+                                Err(e) => {
+                                    let err_msg = format!("Ошибка построения аргументов JVM: {e}");
+                                    bus.publish(mq_core::Event::TaskError {
+                                        context: "Запуск JVM".to_string(),
+                                        message: err_msg.clone(),
+                                    });
+                                    let _ = resp_tx.send(UiWorkerResponse::InstanceError {
+                                        instance_id,
+                                        error: err_msg,
+                                    });
+                                    return;
+                                }
+                            };
+
+                            if dry_run {
+                                bus.publish(mq_core::Event::GameLog(mq_core::GameLogEntry {
+                                    instance: instance_id.to_string(),
+                                    timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                                    level: mq_core::GameLogLevel::Info,
+                                    line: format!(
+                                        "DRY RUN COMMAND:\n{}",
+                                        built_cmd.to_shell_command_line()
+                                    ),
+                                }));
+                            } else {
+                                let _ = resp_tx
+                                    .send(UiWorkerResponse::GameStarted(instance_id.clone()));
+                                bus.publish(mq_core::Event::GameLog(mq_core::GameLogEntry {
+                                    instance: instance_id.to_string(),
+                                    timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                                    level: mq_core::GameLogLevel::Info,
+                                    line: format!(
+                                        "[MQ] Запуск игры '{}' (MC {}, Java {})...",
+                                        inst.name, inst.mc_version, selected_java.full_version
+                                    ),
+                                }));
+
+                                let exit_code = match mq_launch::spawn_and_stream_game(
+                                    &built_cmd,
+                                    instance_id.as_str(),
+                                    Vec::new(),
+                                    Some(bus.clone()),
+                                )
+                                .await
+                                {
+                                    Ok(status) => status.code().unwrap_or(0),
+                                    Err(e) => {
+                                        bus.publish(mq_core::Event::TaskError {
+                                            context: "Процесс игры".to_string(),
+                                            message: format!("Ошибка процесса: {e}"),
+                                        });
+                                        -1
+                                    }
+                                };
+
+                                let _ = resp_tx.send(UiWorkerResponse::GameExited {
+                                    instance_id,
+                                    exit_code,
+                                });
                             }
                         });
                     }

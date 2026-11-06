@@ -37,6 +37,9 @@ pub enum VectorIcon {
     ChevronDown,
     Warning,
     Shield,
+    Download,
+    Cross,
+    Terminal,
 }
 
 #[inline]
@@ -236,6 +239,36 @@ pub fn paint_vector_icon(painter: &Painter, rect: Rect, icon: VectorIcon, color:
             painter.add(Shape::closed_line(shield, stroke));
             painter.line_segment([rel_pos(r, 0.36, 0.52), rel_pos(r, 0.47, 0.64)], stroke);
             painter.line_segment([rel_pos(r, 0.47, 0.64), rel_pos(r, 0.66, 0.40)], stroke);
+        }
+        VectorIcon::Download => {
+            let stem_top = rel_pos(r, 0.50, 0.16);
+            let stem_bottom = rel_pos(r, 0.50, 0.64);
+            painter.line_segment([stem_top, stem_bottom], stroke);
+            let wing_left = rel_pos(r, 0.28, 0.44);
+            let wing_right = rel_pos(r, 0.72, 0.44);
+            painter.line_segment([wing_left, stem_bottom], stroke);
+            painter.line_segment([wing_right, stem_bottom], stroke);
+            let tray_l = rel_pos(r, 0.18, 0.82);
+            let tray_r = rel_pos(r, 0.82, 0.82);
+            painter.line_segment([tray_l, tray_r], stroke);
+        }
+        VectorIcon::Cross => {
+            let p1 = rel_pos(r, 0.24, 0.24);
+            let p2 = rel_pos(r, 0.76, 0.76);
+            let p3 = rel_pos(r, 0.76, 0.24);
+            let p4 = rel_pos(r, 0.24, 0.76);
+            painter.line_segment([p1, p2], stroke);
+            painter.line_segment([p3, p4], stroke);
+        }
+        VectorIcon::Terminal => {
+            let prompt1 = rel_pos(r, 0.20, 0.30);
+            let prompt2 = rel_pos(r, 0.46, 0.50);
+            let prompt3 = rel_pos(r, 0.20, 0.70);
+            painter.line_segment([prompt1, prompt2], stroke);
+            painter.line_segment([prompt2, prompt3], stroke);
+            let cursor1 = rel_pos(r, 0.56, 0.70);
+            let cursor2 = rel_pos(r, 0.82, 0.70);
+            painter.line_segment([cursor1, cursor2], stroke);
         }
     }
 }
@@ -457,8 +490,13 @@ pub fn loader_badge(ui: &mut Ui, loader: mq_core::ModLoaderKind) {
     version_badge(ui, name, color);
 }
 
-/// Prominent hero action button (height 40px, bold font, subtle emerald glow).
-pub fn hero_play_button(ui: &mut Ui, label: &str) -> Response {
+/// Prominent hero action button with dynamic icon, color, and animated pulsing glow.
+pub fn hero_action_button(
+    ui: &mut Ui,
+    icon: VectorIcon,
+    label: &str,
+    accent_color: Color32,
+) -> Response {
     let font_id = FontId::proportional(15.0);
     let galley = ui
         .painter()
@@ -472,27 +510,30 @@ pub fn hero_play_button(ui: &mut Ui, label: &str) -> Response {
         ui.allocate_exact_size(Vec2::new(desired_width, desired_height), Sense::click());
 
     if ui.is_rect_visible(rect) {
+        let time = ui.input(|i| i.time);
+        let pulse = ((time * 3.2).sin() * 0.5 + 0.5) as f32;
         let hovered = response.hovered() && ui.is_enabled();
         let active = response.is_pointer_button_down_on() && ui.is_enabled();
         let fill = if active || hovered {
-            ACCENT_EMERALD_HOVER
+            accent_color.gamma_multiply(1.15)
         } else {
-            ACCENT_EMERALD
+            accent_color
         };
 
         let painter = ui.painter();
-        if hovered {
-            painter.rect_filled(
-                rect.expand(2.0),
-                RADIUS_BUTTON,
-                ACCENT_EMERALD.gamma_multiply(0.35),
-            );
-        }
+        let glow_expand = if hovered { 3.0 } else { 1.0 + pulse * 2.0 };
+        let glow_alpha = if hovered { 0.45 } else { 0.15 + pulse * 0.15 };
+        painter.rect_filled(
+            rect.expand(glow_expand),
+            RADIUS_BUTTON,
+            accent_color.gamma_multiply(glow_alpha),
+        );
+
         painter.rect_filled(rect, RADIUS_BUTTON, fill);
         painter.rect_stroke(
             rect,
             RADIUS_BUTTON,
-            Stroke::new(1.0_f32, Color32::WHITE),
+            Stroke::new(1.0_f32, Color32::WHITE.gamma_multiply(0.85)),
             StrokeKind::Inside,
         );
 
@@ -502,13 +543,151 @@ pub fn hero_play_button(ui: &mut Ui, label: &str) -> Response {
             Pos2::new(cursor_x + icon_side * 0.5, rect.center().y),
             Vec2::splat(icon_side),
         );
-        paint_vector_icon(painter, icon_rect, VectorIcon::Play, BG_DEEP_GRAPHITE);
+        paint_vector_icon(painter, icon_rect, icon, BG_DEEP_GRAPHITE);
         cursor_x += icon_side + icon_gap;
 
         let text_pos = Pos2::new(cursor_x, rect.center().y - galley.size().y * 0.5);
         painter.galley(text_pos, galley, BG_DEEP_GRAPHITE);
     }
     response
+}
+
+/// Prominent hero action button (height 40px, bold font, subtle emerald glow).
+pub fn hero_play_button(ui: &mut Ui, label: &str) -> Response {
+    hero_action_button(ui, VectorIcon::Play, label, ACCENT_EMERALD)
+}
+
+/// Detailed, animated download progress card showing current phase, percentage, speed, and bytes.
+#[allow(clippy::too_many_arguments)]
+pub fn render_download_progress_card(
+    ui: &mut Ui,
+    stage_name: &str,
+    progress_frac: f32,
+    speed_bytes_sec: f64,
+    completed_bytes: u64,
+    total_bytes: u64,
+    completed_items: u64,
+    total_items: u64,
+    mut on_cancel: impl FnMut(),
+) {
+    let card_frame = egui::Frame::new()
+        .fill(CARD_SURFACE)
+        .stroke(Stroke::new(
+            1.0_f32,
+            crate::theme::ACCENT_COBALT.gamma_multiply(0.75),
+        ))
+        .corner_radius(crate::theme::RADIUS_CARD)
+        .inner_margin(egui::Margin::same(14));
+
+    card_frame.show(ui, |ui| {
+        let time = ui.input(|i| i.time);
+        let pulse = ((time * 4.0).sin() * 0.5 + 0.5) as f32;
+
+        ui.horizontal(|ui| {
+            let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
+            paint_vector_icon(
+                ui.painter(),
+                icon_rect,
+                VectorIcon::Download,
+                crate::theme::ACCENT_COBALT,
+            );
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("ЗАГРУЗКА И ПОДГОТОВКА ИНСТАНСА")
+                            .color(TEXT_PRIMARY)
+                            .size(13.5)
+                            .strong(),
+                    );
+                    let dot_alpha = 0.5 + pulse * 0.5;
+                    ui.painter().circle_filled(
+                        Pos2::new(ui.cursor().min.x + 6.0, ui.cursor().center().y),
+                        3.5,
+                        crate::theme::ACCENT_COBALT.gamma_multiply(dot_alpha),
+                    );
+                });
+                ui.label(
+                    egui::RichText::new(stage_name)
+                        .color(crate::theme::ACCENT_COBALT)
+                        .size(12.0),
+                );
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if secondary_glass_button(ui, Some(VectorIcon::Cross), "Отменить").clicked()
+                {
+                    on_cancel();
+                }
+            });
+        });
+
+        ui.add_space(8.0);
+
+        // Smooth animated progress bar
+        let clamped = progress_frac.clamp(0.0, 1.0);
+        let smooth_prog =
+            ui.ctx()
+                .animate_value_with_time(ui.id().with("inst_dl_bar"), clamped, 0.15);
+
+        let bar_h = 10.0;
+        let (bar_rect, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), bar_h), Sense::hover());
+
+        if ui.is_rect_visible(bar_rect) {
+            let painter = ui.painter();
+            painter.rect_filled(bar_rect, RADIUS_TAG, BORDER_SUBTLE);
+            if smooth_prog > 0.001 {
+                let fill_w = (bar_rect.width() * smooth_prog).max(4.0);
+                let fill_rect = Rect::from_min_size(bar_rect.min, Vec2::new(fill_w, bar_h));
+                painter.rect_filled(fill_rect, RADIUS_TAG, crate::theme::ACCENT_COBALT);
+                let edge_rect = Rect::from_min_size(
+                    Pos2::new(fill_rect.right() - 3.0, fill_rect.top()),
+                    Vec2::new(3.0, bar_h),
+                );
+                painter.rect_filled(edge_rect, RADIUS_TAG, Color32::WHITE.gamma_multiply(0.7));
+            }
+        }
+
+        ui.add_space(8.0);
+
+        // 4 Telemetry status metrics
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(12.0, 4.0);
+
+            let pct_text = format!("{:.1}%", smooth_prog * 100.0);
+            version_badge(
+                ui,
+                &format!("Прогресс: {}", pct_text),
+                crate::theme::ACCENT_COBALT,
+            );
+
+            let speed_mib = speed_bytes_sec / (1024.0 * 1024.0);
+            let speed_text = if speed_mib >= 1.0 {
+                format!("{:.1} МБ/с", speed_mib)
+            } else {
+                format!("{:.0} КБ/с", speed_bytes_sec / 1024.0)
+            };
+            version_badge(ui, &format!("Скорость: {}", speed_text), TEXT_PRIMARY);
+
+            let cur_mib = completed_bytes as f64 / (1024.0 * 1024.0);
+            let tot_mib = total_bytes as f64 / (1024.0 * 1024.0);
+            let bytes_text = if total_bytes > 0 {
+                format!("{:.1} / {:.1} МБ", cur_mib, tot_mib)
+            } else {
+                format!("{:.1} МБ", cur_mib)
+            };
+            version_badge(
+                ui,
+                &format!("Данные: {}", bytes_text),
+                crate::theme::TEXT_MUTED,
+            );
+
+            if total_items > 0 {
+                let items_text = format!("{} / {} файлов", completed_items, total_items);
+                version_badge(ui, &items_text, crate::theme::TEXT_MUTED);
+            }
+        });
+    });
 }
 
 /// Clean status pill badge with glowing dot and label.
