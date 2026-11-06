@@ -36,7 +36,11 @@ trap cleanup EXIT
 cd "${TMP_DIR}"
 
 TARBALL="mq-portable-linux-x86_64.tar.gz"
-DOWNLOAD_URL="https://github.com/${REPO_USER}/${REPO_NAME}/releases/${RELEASE_TAG}/download/${TARBALL}"
+if [[ "${RELEASE_TAG}" == "latest" ]]; then
+    DOWNLOAD_URL="https://github.com/${REPO_USER}/${REPO_NAME}/releases/latest/download/${TARBALL}"
+else
+    DOWNLOAD_URL="https://github.com/${REPO_USER}/${REPO_NAME}/releases/download/${RELEASE_TAG}/${TARBALL}"
+fi
 RAW_BASE="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main"
 
 echo "Проверка наличия готового пакета на GitHub Releases..."
