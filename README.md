@@ -2,7 +2,19 @@
 
 > **Disclaimer:** MQ is an unofficial, independent open-source launcher for Minecraft: Java Edition. It is not affiliated with, endorsed by, or associated with Mojang Studios, Microsoft Corporation, or any of their subsidiaries. All trademarks and registered trademarks belong to their respective owners.
 
-MQ is an autonomous, high-performance modular launcher written from scratch in Rust, specifically tailored for Arch Linux and modern Wayland/X11 desktop environments. It delivers ultra-fast game installations and modpack resolution by saturating all available CPU cores on hash verification, archive extractions, and metadata scanning without freezing the UI or exceeding strict memory budgets.
+MQ is an autonomous, high-performance modular launcher written from scratch in Rust, specifically tailored for Arch Linux and modern Wayland/X11 desktop environments (Hyprland, Sway, KDE, GNOME). It delivers ultra-fast game installations and modpack resolution by saturating all available CPU cores on hash verification, archive extractions, and metadata scanning without freezing the UI or exceeding strict memory budgets.
+
+---
+
+## ⚡ Быстрая установка одной командой (Universal 1-Command Install)
+
+Установка актуального релиза лаунчера вместе с иконками и системной интеграцией (`.desktop` файл):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/MrQuster/mq/main/install.sh | bash
+```
+
+> Скрипт автоматически скачивает оптимизированный бинарник из GitHub Releases, устанавливает его в `~/.local/bin/mq`, настраивает иконки и меню приложений. В случае отсутствия бинарника под вашу платформу — автоматически компилирует из исходников через `cargo`.
 
 ---
 
@@ -68,9 +80,15 @@ MQ is an autonomous, high-performance modular launcher written from scratch in R
 
 ## Установка и запуск
 
-### 1. Локальная установка на Arch Linux (для вас)
+### 1. Установка одной командой через curl (Рекомендуется)
 
-В репозитории подготовлены автоматические скрипты для сборки и интеграции в систему:
+```bash
+curl -fsSL https://raw.githubusercontent.com/MrQuster/mq/main/install.sh | bash
+```
+
+### 2. Локальная сборка и установка из исходников
+
+Если вы уже склонировали репозиторий:
 
 ```bash
 # Вариант A: Автоматическая локальная установка в ~/.local/bin + desktop-файл
@@ -85,7 +103,7 @@ cd packaging && makepkg -si
 mq
 ```
 
-### 2. Как передать лаунчер другу (в 1 клик)
+### 3. Как передать лаунчер другу (в 1 клик)
 
 Для передачи другу готов автономный дистрибутив:
 * **Файл для отправки:** `dist/mq-portable-linux-x86_64.tar.gz` (весит ~8.4 МБ).
