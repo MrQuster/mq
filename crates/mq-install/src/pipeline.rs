@@ -382,14 +382,22 @@ pub async fn install_game(
         }
     }
 
-    // 5c. Assets
+    // 5c. Assets (Prioritize all minecraft/lang/*.json files at the very top of the download batch)
     let resources_base = req
         .mock_base_url
         .as_deref()
         .unwrap_or(mq_meta::MOJANG_RESOURCES_BASE_URL);
     let objects_base = paths.assets_dir().join("objects");
 
-    for obj in asset_index.unique_objects_by_hash() {
+    let all_unique = asset_index.unique_objects_by_hash();
+    let (lang_objs, mut other_objs): (Vec<_>, Vec<_>) = all_unique
+        .into_iter()
+        .partition(|o| o.name.starts_with("minecraft/lang/"));
+
+    let mut prioritized_objs = lang_objs;
+    prioritized_objs.append(&mut other_objs);
+
+    for obj in prioritized_objs {
         let rel_path = obj.relative_object_path();
         let target = objects_base.join(&rel_path);
         let blob_dest = cas.blob_path(&obj.hash);

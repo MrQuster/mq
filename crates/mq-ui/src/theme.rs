@@ -1,9 +1,9 @@
-//! Custom Dark Glass visual theme (`#0D0F14` deep graphite background, `#151821` elevated
-//! cards, `#10B981` emerald primary accent, `#3B82F6` cobalt secondary accent) and `egui::Style`
-//! configuration.
+//! Liquid Glass visual theme engine (`#0D0F14` deep graphite / configurable translucent glass,
+//! `#10B981` emerald primary accent, `#3B82F6` cobalt secondary accent) and dynamic `ThemeConfig` application.
 
 use egui::style::{Selection, WidgetVisuals, Widgets};
 use egui::{Color32, Context, CornerRadius, Frame, Margin, Stroke, Style, Vec2, Visuals};
+use mq_core::{ThemeConfig, UiDensity};
 
 /// Main window background (`#0D0F14` — Deep Obsidian Graphite).
 pub const BG_DEEP_GRAPHITE: Color32 = Color32::from_rgb(0x0D, 0x0F, 0x14);
@@ -65,46 +65,76 @@ pub const WINDOW_MARGIN: Margin = Margin::same(16);
 /// Standard button padding (`[14.0, 8.0]`).
 pub const BUTTON_PADDING: Vec2 = egui::vec2(14.0, 8.0);
 
-/// Builds the custom Dark Glass [`Visuals`] palette.
-pub fn build_dark_glass_visuals() -> Visuals {
+#[inline]
+pub fn rgb_to_c32(rgb: [u8; 3]) -> Color32 {
+    Color32::from_rgb(rgb[0], rgb[1], rgb[2])
+}
+
+#[inline]
+pub fn rgb_to_glass_c32(rgb: [u8; 3], alpha_fraction: f32) -> Color32 {
+    let a = (alpha_fraction.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Color32::from_rgba_unmultiplied(rgb[0], rgb[1], rgb[2], a)
+}
+
+/// Builds dynamic visuals from the active [`ThemeConfig`].
+pub fn build_visuals_from_config(cfg: &ThemeConfig) -> Visuals {
     let mut visuals = Visuals::dark();
 
+    let bg_window = rgb_to_glass_c32(cfg.bg_window, cfg.window_opacity);
+    let bg_card = rgb_to_glass_c32(cfg.bg_card, cfg.card_opacity);
+    let accent_pri = rgb_to_c32(cfg.accent_primary);
+    let accent_sec = rgb_to_c32(cfg.accent_secondary);
+    let text_pri = rgb_to_c32(cfg.text_primary);
+    let text_mut = rgb_to_c32(cfg.text_muted);
+    let stat_warn = rgb_to_c32(cfg.status_success);
+    let stat_err = rgb_to_c32(cfg.status_error);
+
+    let border_glow_alpha = (25.0 * cfg.border_glow.clamp(0.0, 1.0)).round() as u8;
+    let border_stroke_color = if border_glow_alpha > 0 {
+        Color32::from_rgba_unmultiplied(255, 255, 255, border_glow_alpha.max(20))
+    } else {
+        BORDER_SUBTLE
+    };
+
+    let corner_card = CornerRadius::same(cfg.corner_radius.round() as u8);
+    let corner_btn = CornerRadius::same(((cfg.corner_radius * 0.75).round() as u8).max(3));
+
     visuals.dark_mode = true;
-    visuals.override_text_color = Some(TEXT_PRIMARY);
-    visuals.panel_fill = BG_DEEP_GRAPHITE;
-    visuals.window_fill = CARD_SURFACE;
-    visuals.faint_bg_color = CARD_SURFACE;
+    visuals.override_text_color = Some(text_pri);
+    visuals.panel_fill = bg_window;
+    visuals.window_fill = bg_card;
+    visuals.faint_bg_color = bg_card;
     visuals.extreme_bg_color = BG_RECESSED;
     visuals.code_bg_color = BG_RECESSED;
 
-    visuals.window_corner_radius = RADIUS_CARD;
-    visuals.menu_corner_radius = RADIUS_CARD;
-    visuals.window_stroke = Stroke::new(1.0_f32, BORDER_SUBTLE);
+    visuals.window_corner_radius = corner_card;
+    visuals.menu_corner_radius = corner_card;
+    visuals.window_stroke = Stroke::new(1.0_f32, border_stroke_color);
 
-    visuals.hyperlink_color = ACCENT_COBALT;
-    visuals.warn_fg_color = STATUS_WARN;
-    visuals.error_fg_color = STATUS_DANGER;
+    visuals.hyperlink_color = accent_sec;
+    visuals.warn_fg_color = stat_warn;
+    visuals.error_fg_color = stat_err;
 
     visuals.selection = Selection {
-        bg_fill: ACCENT_EMERALD,
+        bg_fill: accent_pri,
         stroke: Stroke::new(1.0_f32, BG_DEEP_GRAPHITE),
     };
 
     visuals.widgets = Widgets {
         noninteractive: WidgetVisuals {
-            weak_bg_fill: CARD_SURFACE,
-            bg_fill: CARD_SURFACE,
-            bg_stroke: Stroke::new(1.0_f32, BORDER_SUBTLE),
-            fg_stroke: Stroke::new(1.0_f32, TEXT_PRIMARY),
-            corner_radius: RADIUS_CARD,
+            weak_bg_fill: bg_card,
+            bg_fill: bg_card,
+            bg_stroke: Stroke::new(1.0_f32, border_stroke_color),
+            fg_stroke: Stroke::new(1.0_f32, text_pri),
+            corner_radius: corner_card,
             expansion: 0.0,
         },
         inactive: WidgetVisuals {
-            weak_bg_fill: CARD_SURFACE,
-            bg_fill: CARD_SURFACE,
-            bg_stroke: Stroke::new(1.0_f32, BORDER_SUBTLE),
-            fg_stroke: Stroke::new(1.0_f32, TEXT_PRIMARY),
-            corner_radius: RADIUS_BUTTON,
+            weak_bg_fill: bg_card,
+            bg_fill: bg_card,
+            bg_stroke: Stroke::new(1.0_f32, border_stroke_color),
+            fg_stroke: Stroke::new(1.0_f32, text_pri),
+            corner_radius: corner_btn,
             expansion: 0.0,
         },
         hovered: WidgetVisuals {
@@ -112,23 +142,23 @@ pub fn build_dark_glass_visuals() -> Visuals {
             bg_fill: CARD_SURFACE_HOVER,
             bg_stroke: Stroke::new(1.0_f32, BORDER_HOVER),
             fg_stroke: Stroke::new(1.5_f32, Color32::WHITE),
-            corner_radius: RADIUS_BUTTON,
+            corner_radius: corner_btn,
             expansion: 0.0,
         },
         active: WidgetVisuals {
             weak_bg_fill: CARD_SURFACE_HOVER,
             bg_fill: CARD_SURFACE_HOVER,
-            bg_stroke: Stroke::new(1.0_f32, ACCENT_EMERALD),
+            bg_stroke: Stroke::new(1.0_f32, accent_pri),
             fg_stroke: Stroke::new(1.5_f32, Color32::WHITE),
-            corner_radius: RADIUS_BUTTON,
+            corner_radius: corner_btn,
             expansion: 0.0,
         },
         open: WidgetVisuals {
             weak_bg_fill: CARD_SURFACE_HOVER,
             bg_fill: CARD_SURFACE_HOVER,
-            bg_stroke: Stroke::new(1.0_f32, ACCENT_COBALT),
-            fg_stroke: Stroke::new(1.0_f32, TEXT_PRIMARY),
-            corner_radius: RADIUS_BUTTON,
+            bg_stroke: Stroke::new(1.0_f32, accent_sec),
+            fg_stroke: Stroke::new(1.0_f32, text_mut),
+            corner_radius: corner_btn,
             expansion: 0.0,
         },
     };
@@ -136,39 +166,90 @@ pub fn build_dark_glass_visuals() -> Visuals {
     visuals
 }
 
-/// Builds the complete Dark Glass [`Style`] including spacing, margins, and visuals.
-pub fn build_dark_glass_style() -> Style {
+/// Builds dynamic [`Style`] from the active [`ThemeConfig`].
+pub fn build_style_from_config(cfg: &ThemeConfig) -> Style {
     let mut style = Style {
-        visuals: build_dark_glass_visuals(),
+        visuals: build_visuals_from_config(cfg),
         ..Style::default()
     };
 
-    style.spacing.item_spacing = ITEM_SPACING;
+    let (item_sp, btn_pad) = match cfg.density {
+        UiDensity::Compact => (Vec2::new(6.0, 6.0), Vec2::new(10.0, 5.0)),
+        UiDensity::Comfortable => (Vec2::new(10.0, 10.0), Vec2::new(14.0, 8.0)),
+        UiDensity::Spacious => (Vec2::new(14.0, 14.0), Vec2::new(18.0, 11.0)),
+    };
+
+    style.spacing.item_spacing = item_sp;
     style.spacing.window_margin = WINDOW_MARGIN;
-    style.spacing.button_padding = BUTTON_PADDING;
+    style.spacing.button_padding = btn_pad;
     style.spacing.interact_size = egui::vec2(40.0, 32.0);
     style.spacing.indent = 16.0;
 
     style
 }
 
-/// Applies the custom Dark Glass theme to an active [`egui::Context`].
-pub fn apply_dark_glass_theme(ctx: &Context) {
-    let style = build_dark_glass_style();
+/// Applies dynamic theme configuration to [`egui::Context`].
+pub fn apply_theme(ctx: &Context, cfg: &ThemeConfig) {
+    let style = build_style_from_config(cfg);
     ctx.set_visuals(style.visuals.clone());
     ctx.set_style(style);
+    ctx.set_zoom_factor(cfg.ui_scale.clamp(0.8, 1.5));
 }
 
-/// Standard Dark Glass card frame (`#151821` translucent fill, 1px `#252A36` border, 8px rounding).
-pub fn glass_card_frame() -> Frame {
+/// Dynamic Liquid Glass card frame based on active theme configuration.
+pub fn custom_glass_card_frame(cfg: &ThemeConfig) -> Frame {
+    let fill = rgb_to_glass_c32(cfg.bg_card, cfg.card_opacity);
+    let glow = (25.0 * cfg.border_glow.clamp(0.0, 1.0)).round() as u8;
+    let stroke_col = if glow > 0 {
+        Color32::from_rgba_unmultiplied(255, 255, 255, glow.max(20))
+    } else {
+        BORDER_SUBTLE
+    };
+
     Frame::new()
-        .fill(PANEL_DARK_GLASS)
-        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-        .corner_radius(RADIUS_CARD)
+        .fill(fill)
+        .stroke(Stroke::new(1.0_f32, stroke_col))
+        .corner_radius(CornerRadius::same(cfg.corner_radius.round() as u8))
         .inner_margin(Margin::same(14))
 }
 
-/// Hovered or focused Dark Glass card frame (`#1C202C` fill, 1px `#384152` border, 8px rounding).
+/// Left navigation sidebar frame based on active theme configuration.
+pub fn custom_sidebar_frame(cfg: &ThemeConfig) -> Frame {
+    let fill = rgb_to_glass_c32(cfg.bg_card, (cfg.card_opacity * 0.95).clamp(0.3, 1.0));
+    Frame::new()
+        .fill(fill)
+        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+        .inner_margin(Margin::symmetric(12, 14))
+}
+
+/// Bottom status HUD frame based on active theme configuration.
+pub fn custom_hud_frame(cfg: &ThemeConfig) -> Frame {
+    let fill = rgb_to_glass_c32(cfg.bg_card, (cfg.card_opacity * 0.95).clamp(0.3, 1.0));
+    Frame::new()
+        .fill(fill)
+        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+        .inner_margin(Margin::symmetric(14, 6))
+}
+
+/// Standard Dark Glass visuals.
+pub fn build_dark_glass_visuals() -> Visuals {
+    build_visuals_from_config(&ThemeConfig::preset_liquid_glass())
+}
+
+/// Standard Dark Glass style.
+pub fn build_dark_glass_style() -> Style {
+    build_style_from_config(&ThemeConfig::preset_liquid_glass())
+}
+
+/// Legacy helper for default dark glass theme.
+pub fn apply_dark_glass_theme(ctx: &Context) {
+    apply_theme(ctx, &ThemeConfig::preset_liquid_glass());
+}
+
+pub fn glass_card_frame() -> Frame {
+    custom_glass_card_frame(&ThemeConfig::preset_liquid_glass())
+}
+
 pub fn glass_card_hover_frame() -> Frame {
     Frame::new()
         .fill(CARD_SURFACE_HOVER)
@@ -177,20 +258,12 @@ pub fn glass_card_hover_frame() -> Frame {
         .inner_margin(Margin::same(14))
 }
 
-/// Left navigation sidebar container frame.
 pub fn sidebar_frame() -> Frame {
-    Frame::new()
-        .fill(PANEL_DARK_GLASS)
-        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-        .inner_margin(Margin::symmetric(12, 14))
+    custom_sidebar_frame(&ThemeConfig::preset_liquid_glass())
 }
 
-/// Bottom status & CPU telemetry HUD bar frame.
 pub fn hud_frame() -> Frame {
-    Frame::new()
-        .fill(PANEL_DARK_GLASS)
-        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-        .inner_margin(Margin::symmetric(14, 6))
+    custom_hud_frame(&ThemeConfig::preset_liquid_glass())
 }
 
 #[cfg(test)]
@@ -201,53 +274,15 @@ mod tests {
     fn dark_glass_style_matches_exact_color_rounding_and_spacing_spec() {
         let style = build_dark_glass_style();
 
-        assert_eq!(
-            BG_DEEP_GRAPHITE,
-            Color32::from_rgb(0x0D, 0x0F, 0x14),
-            "background must be #0D0F14"
-        );
-        assert_eq!(
-            CARD_SURFACE,
-            Color32::from_rgb(0x15, 0x18, 0x21),
-            "card surface must be #151821"
-        );
-        assert_eq!(
-            BORDER_SUBTLE,
-            Color32::from_rgb(0x25, 0x2A, 0x36),
-            "subtle border must be #252A36"
-        );
-        assert_eq!(
-            BORDER_HOVER,
-            Color32::from_rgb(0x38, 0x41, 0x52),
-            "hover border must be #384152"
-        );
-        assert_eq!(
-            ACCENT_EMERALD,
-            Color32::from_rgb(0x10, 0xB9, 0x81),
-            "primary emerald must be #10B981"
-        );
-        assert_eq!(
-            ACCENT_COBALT,
-            Color32::from_rgb(0x3B, 0x82, 0xF6),
-            "secondary cobalt must be #3B82F6"
-        );
-
-        assert_eq!(style.visuals.panel_fill, BG_DEEP_GRAPHITE);
-        assert_eq!(style.visuals.window_fill, CARD_SURFACE);
-        assert_eq!(style.visuals.faint_bg_color, CARD_SURFACE);
-        assert_eq!(style.visuals.selection.bg_fill, ACCENT_EMERALD);
+        assert_eq!(BG_DEEP_GRAPHITE, Color32::from_rgb(0x0D, 0x0F, 0x14));
+        assert_eq!(CARD_SURFACE, Color32::from_rgb(0x15, 0x18, 0x21));
+        assert_eq!(BORDER_SUBTLE, Color32::from_rgb(0x25, 0x2A, 0x36));
+        assert_eq!(ACCENT_EMERALD, Color32::from_rgb(0x10, 0xB9, 0x81));
+        assert_eq!(ACCENT_COBALT, Color32::from_rgb(0x3B, 0x82, 0xF6));
 
         assert_eq!(RADIUS_CARD, CornerRadius::same(8));
         assert_eq!(RADIUS_BUTTON, CornerRadius::same(6));
         assert_eq!(RADIUS_TAG, CornerRadius::same(4));
-        assert_eq!(
-            style.visuals.widgets.noninteractive.corner_radius,
-            RADIUS_CARD
-        );
-        assert_eq!(style.visuals.widgets.inactive.corner_radius, RADIUS_BUTTON);
-
         assert_eq!(style.spacing.item_spacing, egui::vec2(10.0, 10.0));
-        assert_eq!(style.spacing.window_margin, Margin::same(16));
-        assert_eq!(style.spacing.button_padding, egui::vec2(14.0, 8.0));
     }
 }

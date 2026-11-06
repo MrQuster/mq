@@ -13,7 +13,7 @@ use crate::perf_view::PerfView;
 use crate::settings_view::SettingsView;
 use crate::sidebar::{render_sidebar, NavTab, SidebarAction};
 use crate::state::{UiState, UiWorkerCommand, UiWorkerResponse};
-use crate::theme::apply_dark_glass_theme;
+use crate::theme::apply_theme;
 
 pub struct MqApp {
     pub state: UiState,
@@ -27,7 +27,7 @@ pub struct MqApp {
 
 impl MqApp {
     pub fn new(cc: &eframe::CreationContext<'_>, state: UiState) -> Self {
-        apply_dark_glass_theme(&cc.egui_ctx);
+        apply_theme(&cc.egui_ctx, &state.config.theme);
         configure_system_fonts(&cc.egui_ctx);
 
         Self {
@@ -272,6 +272,7 @@ impl MqApp {
                     let pool = self.state.compute_pool.clone();
                     let guard = self.state.cancel_epoch.snapshot();
                     let resp_tx = self.state.resp_sender.clone();
+                    let default_mc_loc = self.state.config.default_mc_locale.clone();
 
                     if let Some(inst) = self
                         .state
@@ -461,13 +462,25 @@ impl MqApp {
                             } else {
                                 let _ = resp_tx
                                     .send(UiWorkerResponse::GameStarted(instance_id.clone()));
+
+                                // Auto-synchronize options.txt language
+                                let target_mc_lang =
+                                    inst.mc_locale.as_deref().unwrap_or(default_mc_loc.as_str());
+                                let _ = mq_launch::sync_minecraft_options_lang(
+                                    &inst_dir,
+                                    target_mc_lang,
+                                );
+
                                 bus.publish(mq_core::Event::GameLog(mq_core::GameLogEntry {
                                     instance: instance_id.to_string(),
                                     timestamp_ms: chrono::Utc::now().timestamp_millis(),
                                     level: mq_core::GameLogLevel::Info,
                                     line: format!(
-                                        "[MQ] Запуск игры '{}' (MC {}, Java {})...",
-                                        inst.name, inst.mc_version, selected_java.full_version
+                                        "[MQ] Запуск игры '{}' (MC {}, Java {}, Язык: {})...",
+                                        inst.name,
+                                        inst.mc_version,
+                                        selected_java.full_version,
+                                        target_mc_lang
                                     ),
                                 }));
 
@@ -549,12 +562,18 @@ impl eframe::App for MqApp {
             .map(|a| a.id.to_string());
 
         let mut sidebar_action = None;
+        let launcher_locale = self.state.config.launcher_locale.clone();
         SidePanel::left("mq_sidebar")
             .resizable(false)
             .default_width(220.0)
             .show(ctx, |ui| {
-                sidebar_action =
-                    render_sidebar(ui, self.current_tab, &accounts_list, active_id.as_deref());
+                sidebar_action = render_sidebar(
+                    ui,
+                    self.current_tab,
+                    &accounts_list,
+                    active_id.as_deref(),
+                    &launcher_locale,
+                );
             });
 
         if let Some(act) = sidebar_action {
@@ -565,6 +584,10 @@ impl eframe::App for MqApp {
                     let _ = self.state.accounts.save(&self.state.paths);
                 }
                 SidebarAction::OpenAccountsTab => self.current_tab = NavTab::Accounts,
+                SidebarAction::ChangeLanguage(code) => {
+                    self.state.config.launcher_locale = code;
+                    let _ = self.state.config.save(&self.state.paths);
+                }
             }
         }
 
@@ -626,7 +649,9 @@ pub fn run_gui(state: UiState, backend: GuiBackend) -> Result<(), eframe::Error>
         viewport: egui::ViewportBuilder::default()
             .with_title("MQ Launcher")
             .with_inner_size([1120.0, 720.0])
-            .with_min_inner_size([800.0, 500.0]),
+            .with_min_inner_size([960.0, 620.0])
+            .with_transparent(true)
+            .with_decorations(true),
         renderer: match backend {
             GuiBackend::Vulkan => eframe::Renderer::Wgpu,
             GuiBackend::Gl => eframe::Renderer::Glow,

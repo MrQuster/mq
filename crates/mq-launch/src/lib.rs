@@ -6,6 +6,7 @@
 
 pub mod command;
 pub mod java;
+pub mod options;
 pub mod runner;
 
 pub use command::{
@@ -16,6 +17,7 @@ pub use java::{
     parse_java_version_output, parse_java_version_str, probe_java_binary,
     required_java_major_for_mc, select_java_runtime, JavaRuntime, SYSTEM_JVM_DIRS,
 };
+pub use options::{read_minecraft_options_lang, sync_minecraft_options_lang};
 pub use runner::spawn_and_stream_game;
 
 #[cfg(test)]

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 pub const LAUNCHER_NAME: &str = "mq";
 
 /// Canonical launcher version string injected into `${launcher_version}`.
-pub const LAUNCHER_VERSION: &str = "0.1.0";
+pub const LAUNCHER_VERSION: &str = "1.1.0";
 
 /// Complete input context required to construct a deterministic Minecraft launch command.
 #[derive(Debug, Clone)]

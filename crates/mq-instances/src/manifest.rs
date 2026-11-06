@@ -91,6 +91,10 @@ pub struct InstanceManifest {
     /// Optional origin identifier if imported from a `.mrpack` or CurseForge `.zip` modpack.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modpack_source: Option<String>,
+
+    /// Optional Minecraft game locale override (e.g. `Some("uk_ua")` or `Some("ru_ru")`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mc_locale: Option<String>,
 }
 
 impl InstanceManifest {
@@ -120,6 +124,7 @@ impl InstanceManifest {
             last_played: None,
             playtime_secs: 0,
             modpack_source: None,
+            mc_locale: None,
         }
     }
 

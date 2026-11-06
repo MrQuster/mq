@@ -10,9 +10,9 @@ use egui::{
 use mq_auth::{generate_offline_geometric_avatar, SkinHeadAvatar};
 
 use crate::theme::{
-    ACCENT_EMERALD, ACCENT_EMERALD_HOVER, BG_DEEP_GRAPHITE, BORDER_HOVER, BORDER_SUBTLE,
-    BUTTON_PADDING, CARD_SURFACE, CARD_SURFACE_HOVER, RADIUS_BUTTON, RADIUS_TAG, STATUS_DANGER,
-    TEXT_PRIMARY,
+    ACCENT_COBALT, ACCENT_EMERALD, ACCENT_EMERALD_HOVER, BG_DEEP_GRAPHITE, BORDER_HOVER,
+    BORDER_SUBTLE, BUTTON_PADDING, CARD_SURFACE, CARD_SURFACE_HOVER, RADIUS_BUTTON, RADIUS_TAG,
+    STATUS_DANGER, TEXT_PRIMARY,
 };
 
 /// Crisp vector icons drawn procedurally via [`egui::Painter`] (strict zero-emoji policy).
@@ -40,6 +40,7 @@ pub enum VectorIcon {
     Download,
     Cross,
     Terminal,
+    Globe,
 }
 
 #[inline]
@@ -270,6 +271,24 @@ pub fn paint_vector_icon(painter: &Painter, rect: Rect, icon: VectorIcon, color:
             let cursor2 = rel_pos(r, 0.82, 0.70);
             painter.line_segment([cursor1, cursor2], stroke);
         }
+        VectorIcon::Globe => {
+            let center = r.center();
+            let rad = r.width().min(r.height()) * 0.40;
+            painter.circle_stroke(center, rad, stroke);
+            painter.line_segment([rel_pos(r, 0.10, 0.50), rel_pos(r, 0.90, 0.50)], stroke);
+            painter.line_segment([rel_pos(r, 0.50, 0.10), rel_pos(r, 0.50, 0.90)], stroke);
+            let mut left_arc = Vec::new();
+            let mut right_arc = Vec::new();
+            for i in 0..=8 {
+                let t = i as f32 / 8.0;
+                let y = 0.10 + 0.80 * t;
+                let offset = (1.0 - (2.0 * t - 1.0).powi(2)).max(0.0).sqrt() * 0.22;
+                left_arc.push(rel_pos(r, 0.50 - offset, y));
+                right_arc.push(rel_pos(r, 0.50 + offset, y));
+            }
+            painter.add(Shape::line(left_arc, stroke));
+            painter.add(Shape::line(right_arc, stroke));
+        }
     }
 }
 
@@ -376,6 +395,109 @@ pub fn danger_button(ui: &mut Ui, icon: Option<VectorIcon>, label: &str) -> Resp
         STATUS_DANGER,
         STATUS_DANGER,
     )
+}
+
+/// Dynamic theme accent button with smooth hover animation via `ctx.animate_bool_with_time`.
+pub fn accent_button(
+    ui: &mut Ui,
+    icon: Option<VectorIcon>,
+    label: &str,
+    accent_color: Color32,
+) -> Response {
+    let font_id = FontId::proportional(13.5);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font_id, Color32::WHITE);
+    let icon_w = if icon.is_some() { 16.0 + 8.0 } else { 0.0 };
+    let desired_w = galley.size().x + icon_w + BUTTON_PADDING.x * 2.0;
+    let desired_h = (galley.size().y + BUTTON_PADDING.y * 2.0).max(34.0);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(desired_w, desired_h), Sense::click());
+
+    let t = ui
+        .ctx()
+        .animate_bool_with_time(response.id, response.hovered(), 0.15);
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let bg_fill = Color32::from_rgba_unmultiplied(
+            accent_color.r(),
+            accent_color.g(),
+            accent_color.b(),
+            (180.0 + 75.0 * t) as u8,
+        );
+        let border_stroke = Stroke::new(
+            1.0_f32,
+            Color32::from_rgba_unmultiplied(255, 255, 255, (30.0 + 40.0 * t) as u8),
+        );
+        painter.rect_filled(rect, RADIUS_BUTTON, bg_fill);
+        painter.rect_stroke(rect, RADIUS_BUTTON, border_stroke, StrokeKind::Inside);
+
+        let content_w = galley.size().x + icon_w;
+        let mut cursor_x = rect.left() + (rect.width() - content_w) * 0.5;
+
+        if let Some(ic) = icon {
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(cursor_x + 8.0, rect.center().y),
+                Vec2::splat(16.0),
+            );
+            paint_vector_icon(painter, icon_rect, ic, Color32::WHITE);
+            cursor_x += 16.0 + 8.0;
+        }
+
+        let text_pos = Pos2::new(cursor_x, rect.center().y - galley.size().y * 0.5);
+        painter.galley(text_pos, galley, Color32::WHITE);
+    }
+
+    response
+}
+
+/// Animated smooth toggle switch with sliding knob.
+pub fn smooth_toggle(ui: &mut Ui, on: &mut bool) -> Response {
+    let desired_size = Vec2::new(40.0, 22.0);
+    let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+
+    let t = ui.ctx().animate_bool_with_time(response.id, *on, 0.18);
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let r = (0x15 as f32 + (0x10 as f32 - 0x15 as f32) * t) as u8;
+        let g = (0x18 as f32 + (0xB9 as f32 - 0x18 as f32) * t) as u8;
+        let b = (0x21 as f32 + (0x81 as f32 - 0x21 as f32) * t) as u8;
+        let bg = Color32::from_rgb(r, g, b);
+
+        painter.rect_filled(rect, CornerRadius::same(11), bg);
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(11),
+            Stroke::new(1.0_f32, BORDER_SUBTLE),
+            StrokeKind::Inside,
+        );
+
+        let knob_x = rect.left() + 11.0 + t * (rect.width() - 22.0);
+        let knob_center = Pos2::new(knob_x, rect.center().y);
+        painter.circle_filled(knob_center, 7.5, Color32::WHITE);
+    }
+
+    response
+}
+
+/// Tag pill with custom color and rounded corners.
+pub fn tag_pill(ui: &mut Ui, label: &str, color: Color32) {
+    version_badge(ui, label, color);
+}
+
+/// Search input field with embedded vector search icon.
+pub fn search_field(ui: &mut Ui, query: &mut String, hint: &str) -> Response {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+        paint_vector_icon(ui.painter(), rect, VectorIcon::Search, ACCENT_COBALT);
+        ui.add(egui::TextEdit::singleline(query).hint_text(hint))
+    })
+    .inner
 }
 
 /// Renders a compact `4px` rounded badge (`RADIUS_TAG`) for versions, loaders, or account kinds.

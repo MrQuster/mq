@@ -168,6 +168,8 @@ pub struct InstancesView {
     pub show_betas: bool,
     pub show_alphas: bool,
     pub version_search: String,
+    pub show_locale_dialog: bool,
+    pub locale_search_query: String,
 }
 
 impl Default for InstancesView {
@@ -180,6 +182,8 @@ impl Default for InstancesView {
             show_betas: false,
             show_alphas: false,
             version_search: String::new(),
+            show_locale_dialog: false,
+            locale_search_query: String::new(),
         }
     }
 }
@@ -778,14 +782,22 @@ impl InstancesView {
                                                 .send(UiWorkerCommand::CancelDownload);
                                         }
                                     } else if is_installed {
+                                        let btn_text = if state.is_launching {
+                                            "ЗАПУСК..."
+                                        } else {
+                                            "ИГРАТЬ"
+                                        };
                                         if hero_action_button(
                                             ui,
                                             VectorIcon::Play,
-                                            "ИГРАТЬ",
+                                            btn_text,
                                             ACCENT_EMERALD,
                                         )
                                         .clicked()
+                                            && !state.is_launching
+                                            && !is_running
                                         {
+                                            state.is_launching = true;
                                             let _ = state.cmd_sender.send(
                                                 UiWorkerCommand::LaunchInstance {
                                                     instance_id: inst_id.clone(),
@@ -794,14 +806,22 @@ impl InstancesView {
                                             );
                                         }
                                     } else {
+                                        let btn_text = if state.is_launching {
+                                            "СКАЧИВАНИЕ И ЗАПУСК..."
+                                        } else {
+                                            "СКАЧАТЬ И ИГРАТЬ"
+                                        };
                                         if hero_action_button(
                                             ui,
                                             VectorIcon::Download,
-                                            "СКАЧАТЬ И ИГРАТЬ",
+                                            btn_text,
                                             ACCENT_EMERALD,
                                         )
                                         .clicked()
+                                            && !state.is_launching
+                                            && !is_running
                                         {
+                                            state.is_launching = true;
                                             let _ = state.cmd_sender.send(
                                                 UiWorkerCommand::LaunchInstance {
                                                     instance_id: inst_id.clone(),
@@ -866,6 +886,20 @@ impl InstancesView {
                                         let inst_dir = state.paths.instance_dir(inst_id.as_str());
                                         let _ = std::process::Command::new("xdg-open")
                                             .arg(inst_dir)
+                                            .spawn();
+                                    }
+                                    if secondary_glass_button(
+                                        ui,
+                                        Some(VectorIcon::Folder),
+                                        "Папка mods",
+                                    )
+                                    .clicked()
+                                    {
+                                        let mods_dir =
+                                            state.paths.instance_dir(inst_id.as_str()).join("mods");
+                                        let _ = std::fs::create_dir_all(&mods_dir);
+                                        let _ = std::process::Command::new("xdg-open")
+                                            .arg(mods_dir)
                                             .spawn();
                                     }
                                 },
@@ -1330,6 +1364,78 @@ impl InstancesView {
                     .split_whitespace()
                     .map(|s| s.to_string())
                     .collect();
+            }
+
+            ui.add_space(8.0);
+            ui.label("Язык Minecraft для этого инстанса (80+ языков):");
+            let effective_loc = inst
+                .mc_locale
+                .as_deref()
+                .unwrap_or(state.config.default_mc_locale.as_str());
+            let current_loc_info = mq_meta::find_mc_locale(effective_loc);
+            let display_name = current_loc_info
+                .map(|i| i.display_label())
+                .unwrap_or_else(|| effective_loc.to_string());
+
+            ui.horizontal(|ui| {
+                version_badge(ui, &display_name, ACCENT_EMERALD);
+                if secondary_glass_button(ui, Some(VectorIcon::Globe), "Выбрать другой язык...")
+                    .clicked()
+                {
+                    self.show_locale_dialog = true;
+                }
+                if inst.mc_locale.is_some()
+                    && secondary_glass_button(
+                        ui,
+                        Some(VectorIcon::Cross),
+                        "Сбросить на язык по умолчанию",
+                    )
+                    .clicked()
+                {
+                    inst.mc_locale = None;
+                }
+            });
+
+            if self.show_locale_dialog {
+                egui::Window::new("Выбор языка Minecraft")
+                    .collapsible(false)
+                    .resizable(true)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ui.ctx(), |ui| {
+                        ui.set_width(380.0);
+                        ui.horizontal(|ui| {
+                            let (r, _) =
+                                ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
+                            paint_vector_icon(ui.painter(), r, VectorIcon::Search, ACCENT_COBALT);
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.locale_search_query)
+                                    .hint_text("Поиск языка..."),
+                            );
+                        });
+                        ui.add_space(6.0);
+                        ScrollArea::vertical()
+                            .max_height(200.0)
+                            .id_salt("inst_locale_modal_scroll")
+                            .show(ui, |ui| {
+                                for loc in mq_meta::search_mc_locales(&self.locale_search_query)
+                                    .iter()
+                                    .take(30)
+                                {
+                                    let is_active = inst.mc_locale.as_deref() == Some(loc.code);
+                                    if ui
+                                        .selectable_label(is_active, loc.display_label())
+                                        .clicked()
+                                    {
+                                        inst.mc_locale = Some(loc.code.to_string());
+                                        self.show_locale_dialog = false;
+                                    }
+                                }
+                            });
+                        ui.add_space(8.0);
+                        if secondary_glass_button(ui, None, "Закрыть").clicked() {
+                            self.show_locale_dialog = false;
+                        }
+                    });
             }
 
             ui.add_space(14.0);

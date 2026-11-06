@@ -1,6 +1,6 @@
 //! Left navigation sidebar with geometric `MQ` vector emblem, 5 primary tabs, active emerald
-//! indicator bar, and bottom Active Account card with 2D Nearest-Neighbor skin avatar and
-//! 1-click account switcher.
+//! indicator bar, bottom Active Account card with 2D Nearest-Neighbor skin avatar,
+//! 1-click account switcher, and quick language switcher.
 
 use egui::{
     Align, Color32, Context, CornerRadius, FontId, Id, Layout, Painter, Pos2, Rect, RichText,
@@ -8,6 +8,7 @@ use egui::{
 };
 use mq_auth::{AccountKind, AccountProfile};
 
+use crate::i18n::{tr, Language};
 use crate::theme::{
     sidebar_frame, ACCENT_COBALT, ACCENT_EMERALD, BG_DEEP_GRAPHITE, BORDER_HOVER, BORDER_SUBTLE,
     CARD_SURFACE, CARD_SURFACE_HOVER, RADIUS_BUTTON, RADIUS_CARD, TEXT_MUTED, TEXT_PRIMARY,
@@ -38,7 +39,7 @@ impl NavTab {
         Self::Settings,
     ];
 
-    /// Russian UI label for this navigation tab.
+    /// Russian UI label for this navigation tab (backwards compatibility).
     pub const fn label(&self) -> &'static str {
         match self {
             Self::Instances => "Инстансы",
@@ -46,6 +47,17 @@ impl NavTab {
             Self::Accounts => "Аккаунты",
             Self::Performance => "Производительность и задачи",
             Self::Settings => "Настройки",
+        }
+    }
+
+    /// Translated UI label for this navigation tab for a specific language.
+    pub fn label_for(&self, lang: &str) -> &'static str {
+        match self {
+            Self::Instances => tr("tab_instances", lang),
+            Self::Catalog => tr("tab_catalog", lang),
+            Self::Accounts => tr("tab_accounts", lang),
+            Self::Performance => tr("tab_performance", lang),
+            Self::Settings => tr("tab_settings", lang),
         }
     }
 
@@ -70,6 +82,8 @@ pub enum SidebarAction {
     SwitchAccount(String),
     /// Navigate directly to the [`NavTab::Accounts`] management tab.
     OpenAccountsTab,
+    /// Switch the launcher interface language.
+    ChangeLanguage(String),
 }
 
 /// Paints the crisp geometric `MQ` isometric cube/monogram emblem inside `rect`.
@@ -119,7 +133,7 @@ fn kind_badge_color(kind: AccountKind) -> Color32 {
     }
 }
 
-fn render_nav_row(ui: &mut Ui, tab: NavTab, is_active: bool) -> bool {
+fn render_nav_row(ui: &mut Ui, tab: NavTab, is_active: bool, lang_code: &str) -> bool {
     let available_w = ui.available_width().max(160.0);
     let row_h = 38.0;
     let (rect, response) = ui.allocate_exact_size(Vec2::new(available_w, row_h), Sense::click());
@@ -136,14 +150,18 @@ fn render_nav_row(ui: &mut Ui, tab: NavTab, is_active: bool) -> bool {
                 Stroke::new(1.0_f32, ACCENT_EMERALD.gamma_multiply(0.55)),
                 StrokeKind::Inside,
             );
-            // Active 3px emerald indicator bar on the left edge
+            // Active emerald indicator bar on the left
             let bar_rect = Rect::from_min_max(
-                Pos2::new(rect.left() + 2.0, rect.top() + 7.0),
-                Pos2::new(rect.left() + 5.0, rect.bottom() - 7.0),
+                Pos2::new(rect.left() + 2.0, rect.top() + 6.0),
+                Pos2::new(rect.left() + 5.5, rect.bottom() - 6.0),
             );
             painter.rect_filled(bar_rect, CornerRadius::same(2), ACCENT_EMERALD);
         } else if hovered {
-            painter.rect_filled(rect, RADIUS_BUTTON, CARD_SURFACE_HOVER);
+            painter.rect_filled(
+                rect,
+                RADIUS_BUTTON,
+                Color32::from_rgba_unmultiplied(0x1C, 0x20, 0x2C, 180),
+            );
             painter.rect_stroke(
                 rect,
                 RADIUS_BUTTON,
@@ -152,6 +170,11 @@ fn render_nav_row(ui: &mut Ui, tab: NavTab, is_active: bool) -> bool {
             );
         }
 
+        // Vector Icon
+        let icon_rect = Rect::from_center_size(
+            Pos2::new(rect.left() + 22.0, rect.center().y),
+            Vec2::splat(18.0),
+        );
         let icon_color = if is_active {
             ACCENT_EMERALD
         } else if hovered {
@@ -159,24 +182,18 @@ fn render_nav_row(ui: &mut Ui, tab: NavTab, is_active: bool) -> bool {
         } else {
             TEXT_MUTED
         };
+        paint_vector_icon(painter, icon_rect, tab.icon(), icon_color);
+
+        // Label
         let text_color = if is_active || hovered {
             TEXT_PRIMARY
         } else {
             TEXT_MUTED
         };
-
-        let icon_rect = Rect::from_center_size(
-            Pos2::new(rect.left() + 22.0, rect.center().y),
-            Vec2::splat(16.0),
-        );
-        paint_vector_icon(painter, icon_rect, tab.icon(), icon_color);
-
-        let galley = painter.layout_no_wrap(
-            tab.label().to_owned(),
-            FontId::proportional(13.5),
-            text_color,
-        );
-        let text_pos = Pos2::new(rect.left() + 40.0, rect.center().y - galley.size().y * 0.5);
+        let font_id = FontId::proportional(if is_active { 13.5 } else { 13.0 });
+        let galley =
+            painter.layout_no_wrap(tab.label_for(lang_code).to_owned(), font_id, text_color);
+        let text_pos = Pos2::new(rect.left() + 42.0, rect.center().y - galley.size().y * 0.5);
         painter.galley(text_pos, galley, text_color);
     }
 
@@ -189,7 +206,6 @@ fn render_active_account_card(
     active_account_id: Option<&str>,
 ) -> Option<SidebarAction> {
     let mut action = None;
-
     let active_profile = active_account_id
         .and_then(|id| {
             accounts
@@ -327,10 +343,12 @@ pub fn render_sidebar(
     active_tab: NavTab,
     accounts: &[AccountProfile],
     active_account_id: Option<&str>,
+    lang_code: &str,
 ) -> Option<SidebarAction> {
     let mut action = None;
+    let lang_popup_id = Id::new("mq_sidebar_language_popup");
 
-    // 1. Brand Header
+    // 1. Brand Header + Quick Language Selector
     ui.horizontal(|ui| {
         let (emblem_rect, _) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::hover());
         if ui.is_rect_visible(emblem_rect) {
@@ -344,7 +362,54 @@ pub fn render_sidebar(
                     .size(15.0)
                     .strong(),
             );
-            version_badge(ui, "v0.1.0", ACCENT_COBALT);
+            version_badge(ui, "v1.1.0", ACCENT_COBALT);
+        });
+
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let (globe_rect, globe_resp) =
+                ui.allocate_exact_size(Vec2::splat(26.0), Sense::click());
+            if ui.is_rect_visible(globe_rect) {
+                let hovered = globe_resp.hovered();
+                if hovered {
+                    ui.painter()
+                        .rect_filled(globe_rect, RADIUS_BUTTON, CARD_SURFACE_HOVER);
+                }
+                paint_vector_icon(
+                    ui.painter(),
+                    globe_rect.shrink(4.0),
+                    VectorIcon::Globe,
+                    if hovered { ACCENT_EMERALD } else { TEXT_MUTED },
+                );
+            }
+            if globe_resp.clicked() {
+                ui.memory_mut(|mem| mem.toggle_popup(lang_popup_id));
+            }
+
+            egui::popup_below_widget(
+                ui,
+                lang_popup_id,
+                &globe_resp,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                |ui| {
+                    ui.set_min_width(160.0);
+                    ui.label(
+                        RichText::new("Выбор языка / Language")
+                            .color(TEXT_MUTED)
+                            .size(11.5),
+                    );
+                    ui.separator();
+                    for lang in Language::ALL {
+                        let is_current = lang_code == lang.code();
+                        if ui
+                            .selectable_label(is_current, lang.native_name())
+                            .clicked()
+                        {
+                            action = Some(SidebarAction::ChangeLanguage(lang.code().to_string()));
+                            ui.memory_mut(|mem| mem.close_popup());
+                        }
+                    }
+                },
+            );
         });
     });
 
@@ -354,7 +419,7 @@ pub fn render_sidebar(
 
     // 2. Navigation Rows
     for tab in NavTab::ALL {
-        if render_nav_row(ui, tab, tab == active_tab) {
+        if render_nav_row(ui, tab, tab == active_tab, lang_code) {
             action = Some(SidebarAction::SelectTab(tab));
         }
     }
@@ -377,13 +442,14 @@ pub fn show_sidebar(
     active_tab: NavTab,
     accounts: &[AccountProfile],
     active_account_id: Option<&str>,
+    lang_code: &str,
 ) -> Option<SidebarAction> {
     SidePanel::left("mq_left_sidebar")
         .resizable(false)
         .exact_width(SIDEBAR_WIDTH)
         .frame(sidebar_frame())
         .show(ctx, |ui| {
-            render_sidebar(ui, active_tab, accounts, active_account_id)
+            render_sidebar(ui, active_tab, accounts, active_account_id, lang_code)
         })
         .inner
 }
@@ -412,7 +478,13 @@ mod tests {
 
         let id_str = acc1.id.to_string();
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            let action = show_sidebar(ctx, NavTab::Instances, &accounts, Some(id_str.as_str()));
+            let action = show_sidebar(
+                ctx,
+                NavTab::Instances,
+                &accounts,
+                Some(id_str.as_str()),
+                "ru_RU",
+            );
             assert!(action.is_none());
         });
     }

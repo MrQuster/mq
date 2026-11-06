@@ -8,7 +8,10 @@ pub mod ids;
 pub mod paths;
 pub mod secret;
 
-pub use config::{AppConfig, GuiBackend, ENV_CF_API_KEY, ENV_MS_CLIENT_ID};
+pub use config::{
+    AppConfig, GuiBackend, LaunchAction, ThemeConfig, ThemePreset, UiDensity, ENV_CF_API_KEY,
+    ENV_MS_CLIENT_ID,
+};
 pub use error::{MqError, MqResult};
 pub use events::{
     CoreCpuLoad, CoreLoad, CpuSnapshot, Event, EventBus, GameLogEntry, GameLogLevel, PhaseMetrics,

@@ -157,6 +157,12 @@ impl MqPaths {
         self.config_dir.join("config.toml")
     }
 
+    /// Dedicated theme configuration file (`<config_dir>/theme.toml`).
+    #[inline]
+    pub fn theme_file(&self) -> PathBuf {
+        self.config_dir.join("theme.toml")
+    }
+
     /// Canonical path to the cached `authlib-injector.jar` agent
     /// (`<data_dir>/cache/authlib-injector.jar`, i.e. `~/.local/share/mq/cache/authlib-injector.jar`).
     #[inline]

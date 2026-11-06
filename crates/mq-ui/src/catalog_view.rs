@@ -225,6 +225,17 @@ impl CatalogView {
                 };
                 paint_vector_icon(ui.painter(), rect, icon, ACCENT_EMERALD);
 
+                let is_already_installed = state.installed_mods.iter().any(|m| {
+                    let file_lower = m.file_name.to_lowercase();
+                    let name_lower = m.name.to_lowercase();
+                    let slug_lower = hit.slug.to_lowercase();
+                    let title_lower = hit.title.to_lowercase();
+                    file_lower.contains(&slug_lower)
+                        || file_lower.contains(&title_lower)
+                        || name_lower.contains(&title_lower)
+                        || name_lower.contains(&slug_lower)
+                });
+
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(&hit.title).color(TEXT_PRIMARY).strong());
@@ -234,6 +245,9 @@ impl CatalogView {
                                 .small(),
                         );
                         version_badge(ui, &format!("{} скачиваний", hit.downloads), ACCENT_COBALT);
+                        if is_already_installed {
+                            version_badge(ui, "Установлен", ACCENT_EMERALD);
+                        }
                     });
 
                     ui.label(RichText::new(&hit.description).color(TEXT_MUTED).small());
@@ -255,6 +269,8 @@ impl CatalogView {
                                 instance_name: Some(hit.title.clone()),
                             });
                         }
+                    } else if is_already_installed {
+                        version_badge(ui, "Уже добавлен", ACCENT_EMERALD);
                     } else if let Some(inst) = state.selected_instance() {
                         let btn_label = format!("В '{}'", inst.name);
                         if primary_emerald_button(ui, Some(VectorIcon::Plus), &btn_label).clicked()

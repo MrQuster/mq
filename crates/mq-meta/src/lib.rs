@@ -4,6 +4,7 @@
 #![deny(clippy::await_holding_lock)]
 
 pub mod assets;
+pub mod languages;
 pub mod loaders;
 pub mod merge;
 pub mod models;
@@ -12,6 +13,8 @@ pub mod vanilla;
 
 #[allow(unused_imports)]
 pub use assets::*;
+#[allow(unused_imports)]
+pub use languages::*;
 #[allow(unused_imports)]
 pub use loaders::*;
 #[allow(unused_imports)]
