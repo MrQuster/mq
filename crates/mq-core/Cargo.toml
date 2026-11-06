@@ -12,6 +12,7 @@ thiserror.workspace = true
 directories.workspace = true
 flume.workspace = true
 uuid.workspace = true
+hex.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 

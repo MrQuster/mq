@@ -1,0 +1,33 @@
+# Maintainer: MQ Systems Team <dev@mq-launcher.local>
+pkgname=mq-launcher
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Autonomous multithreaded Minecraft: Java Edition launcher for Linux"
+arch=('x86_64')
+url="https://github.com/antigravity/mq"
+license=('MIT' 'Apache-2.0')
+depends=('gcc-libs' 'glibc' 'wayland' 'libx11' 'libxcursor' 'libxrandr' 'libxi')
+optdepends=(
+    'vulkan-driver: High-performance WGPU Vulkan rendering'
+    'mesa: OpenGL / Glow rendering fallback'
+    'jdk21-openjdk: Recommended Java 21 runtime for Minecraft 1.20.5+'
+    'jdk17-openjdk: Recommended Java 17 runtime for Minecraft 1.18 - 1.20.4'
+    'jdk8-openjdk: Recommended Java 8 runtime for Minecraft 1.16.5 and older'
+)
+makedepends=('cargo' 'rust')
+source=()
+sha256sums=()
+
+build() {
+    cargo build --release --locked
+}
+
+check() {
+    cargo test --release --locked --workspace --exclude testsupport
+}
+
+package() {
+    install -Dm755 "target/release/mq" "${pkgdir}/usr/bin/mq"
+    install -Dm644 "packaging/mq.desktop" "${pkgdir}/usr/share/applications/mq.desktop"
+    install -Dm644 "packaging/mq.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/mq.svg"
+}

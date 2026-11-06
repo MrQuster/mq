@@ -8,7 +8,6 @@ license.workspace = true
 mq-core.workspace = true
 mq-sched.workspace = true
 mq-net.workspace = true
-mq-install.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 reqwest.workspace = true

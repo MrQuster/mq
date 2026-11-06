@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=MQ
+GenericName=Minecraft Launcher
+Comment=Autonomous multithreaded Minecraft Java Edition launcher for Linux
+Exec=mq %u
+Icon=mq
+Terminal=false
+Type=Application
+Categories=Game;ActionGame;Simulation;
+Keywords=minecraft;launcher;fabric;quilt;forge;neoforge;modrinth;curseforge;
+StartupWMClass=mq
+MimeType=application/x-modrinth-modpack+zip;
