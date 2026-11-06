@@ -114,7 +114,7 @@ pub fn build_launch_command(ctx: &LaunchContext) -> MqResult<BuiltLaunchCommand>
     let natives_dir = ctx.instance.natives_dir(&ctx.paths);
     let libraries_dir = ctx.paths.libraries_dir();
     let assets_dir = ctx.paths.assets_dir();
-    let client_jar_path = resolve_client_jar_path(&ctx.paths, &ctx.version)?;
+    let client_jar_path = resolve_client_jar_path(&ctx.paths, &instance_dir, &ctx.version)?;
 
     let classpath_entries =
         build_deterministic_classpath(&ctx.version, &libraries_dir, &client_jar_path);
@@ -246,13 +246,27 @@ pub fn build_launch_command(ctx: &LaunchContext) -> MqResult<BuiltLaunchCommand>
     })
 }
 
-fn resolve_client_jar_path(paths: &MqPaths, version: &ResolvedVersion) -> MqResult<PathBuf> {
+fn resolve_client_jar_path(
+    paths: &MqPaths,
+    instance_dir: &Path,
+    version: &ResolvedVersion,
+) -> MqResult<PathBuf> {
+    let instance_client_jar = instance_dir.join("client.jar");
+    if instance_client_jar.exists() {
+        return Ok(instance_client_jar);
+    }
+
+    let default_version_jar = paths
+        .versions_dir()
+        .join(&version.mc_version)
+        .join(format!("{}.jar", version.mc_version));
+    if default_version_jar.exists() {
+        return Ok(default_version_jar);
+    }
+
     let raw_path = version.client_jar.path.trim();
     if raw_path.is_empty() {
-        return Ok(paths
-            .versions_dir()
-            .join(&version.mc_version)
-            .join(format!("{}.jar", version.mc_version)));
+        return Ok(default_version_jar);
     }
 
     let candidate = Path::new(raw_path);

@@ -320,7 +320,14 @@ pub async fn install_game(
         },
     });
     if client_jar_blob != client_jar_dest {
-        hardlink_targets.push((client_jar_blob, client_jar_dest));
+        hardlink_targets.push((client_jar_blob.clone(), client_jar_dest));
+    }
+    let ver_jar_dest = paths
+        .versions_dir()
+        .join(&resolved_ver.mc_version)
+        .join(format!("{}.jar", resolved_ver.mc_version));
+    if client_jar_blob != ver_jar_dest {
+        hardlink_targets.push((client_jar_blob, ver_jar_dest));
     }
 
     // 5b. Libraries
