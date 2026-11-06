@@ -30,10 +30,12 @@ pub enum UiWorkerResponse {
         mods: Vec<InstalledModEntry>,
         conflicts: Vec<ModConflict>,
     },
+    VersionManifestFetched(Vec<(String, String)>),
 }
 
 /// Background task messages sent from UI to worker threads.
 pub enum UiWorkerCommand {
+    FetchVersionManifest,
     RefreshInstances,
     RefreshAccounts,
     SearchCatalog {
@@ -117,12 +119,14 @@ pub struct UiState {
     pub catalog_kind: ProjectKind,
     pub catalog_filter_version: String,
 
-    // Dialogs
+    // Dialogs & Versions
     pub show_create_instance_dialog: bool,
     pub create_inst_name: String,
     pub create_inst_mc_ver: String,
     pub create_inst_loader: ModLoaderKind,
     pub create_inst_ram_mb: u32,
+    pub remote_versions: Vec<(String, String)>, // (id, release_type)
+    pub is_fetching_manifest: bool,
 }
 
 impl UiState {
@@ -194,6 +198,8 @@ impl UiState {
             create_inst_mc_ver: "1.21.1".to_string(),
             create_inst_loader: ModLoaderKind::Fabric,
             create_inst_ram_mb: 4096,
+            remote_versions: Vec::new(),
+            is_fetching_manifest: false,
         })
     }
 
@@ -209,6 +215,10 @@ impl UiState {
                     self.installed_mods = mods;
                     self.mod_conflicts = conflicts;
                     self.is_scanning_mods = false;
+                }
+                UiWorkerResponse::VersionManifestFetched(versions) => {
+                    self.remote_versions = versions;
+                    self.is_fetching_manifest = false;
                 }
             }
         }

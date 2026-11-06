@@ -15,22 +15,143 @@ use crate::widgets::{
     secondary_glass_button, status_pill, version_badge, VectorIcon,
 };
 
+/// Minecraft version release category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McVersionCategory {
+    Release,
+    Snapshot,
+    OldBeta,
+    OldAlpha,
+}
+
+impl McVersionCategory {
+    pub fn badge_label(&self) -> &'static str {
+        match self {
+            Self::Release => "Релиз",
+            Self::Snapshot => "Снапшот",
+            Self::OldBeta => "Beta",
+            Self::OldAlpha => "Alpha",
+        }
+    }
+
+    pub fn badge_color(&self) -> Color32 {
+        match self {
+            Self::Release => ACCENT_EMERALD,
+            Self::Snapshot => ACCENT_COBALT,
+            Self::OldBeta => Color32::from_rgb(0xF5, 0x9E, 0x0B),
+            Self::OldAlpha => Color32::from_rgb(0xEC, 0x48, 0x99),
+        }
+    }
+}
+
 /// All official release versions of Minecraft Java Edition in reverse chronological order.
-pub const ALL_MC_VERSIONS: &[&str] = &[
-    "1.21.4", "1.21.3", "1.21.2", "1.21.1", "1.21",
-    "1.20.6", "1.20.5", "1.20.4", "1.20.3", "1.20.2", "1.20.1", "1.20",
-    "1.19.4", "1.19.3", "1.19.2", "1.19.1", "1.19",
-    "1.18.2", "1.18.1", "1.18",
-    "1.17.1", "1.17",
-    "1.16.5", "1.16.4", "1.16.3", "1.16.2", "1.16.1",
-    "1.15.2", "1.14.4", "1.13.2",
-    "1.12.2", "1.11.2", "1.10.2", "1.9.4", "1.8.9", "1.7.10",
+pub const ALL_MC_RELEASES: &[&str] = &[
+    "1.21.4", "1.21.3", "1.21.2", "1.21.1", "1.21", "1.20.6", "1.20.5", "1.20.4", "1.20.3",
+    "1.20.2", "1.20.1", "1.20", "1.19.4", "1.19.3", "1.19.2", "1.19.1", "1.19", "1.18.2", "1.18.1",
+    "1.18", "1.17.1", "1.17", "1.16.5", "1.16.4", "1.16.3", "1.16.2", "1.16.1", "1.16", "1.15.2",
+    "1.15.1", "1.15", "1.14.4", "1.14.3", "1.14.2", "1.14.1", "1.14", "1.13.2", "1.13.1", "1.13",
+    "1.12.2", "1.12.1", "1.12", "1.11.2", "1.11", "1.10.2", "1.10.1", "1.10", "1.9.4", "1.9.2",
+    "1.9", "1.8.9", "1.8.8", "1.8", "1.7.10", "1.7.9", "1.7.2", "1.6.4", "1.6.2", "1.5.2", "1.4.7",
+    "1.3.2", "1.2.5", "1.1", "1.0.0",
+];
+
+pub const ALL_MC_VERSIONS: &[&str] = ALL_MC_RELEASES;
+
+/// Notable and recent snapshot versions.
+pub const ALL_MC_SNAPSHOTS: &[&str] = &[
+    "25w09b",
+    "25w09a",
+    "25w08a",
+    "25w07a",
+    "25w06a",
+    "25w05a",
+    "25w04a",
+    "25w03a",
+    "25w02a",
+    "1.21.4-rc3",
+    "1.21.4-rc2",
+    "1.21.4-rc1",
+    "1.21.4-pre2",
+    "1.21.4-pre1",
+    "24w46a",
+    "24w45a",
+    "24w44a",
+    "24w40a",
+    "24w39a",
+    "24w38a",
+    "24w37a",
+    "24w36a",
+    "1.21.2-rc2",
+    "1.21.2-pre5",
+    "1.21.2-pre1",
+    "24w35a",
+    "24w34a",
+    "24w33a",
+    "1.21.1-rc1",
+    "24w14a",
+    "24w13a",
+    "24w12a",
+    "24w11a",
+    "24w10a",
+    "23w51b",
+    "23w46a",
+    "23w45a",
+    "23w44a",
+    "23w43a",
+    "22w46a",
+    "22w42a",
+    "21w44a",
+    "21w37a",
+    "20w51a",
+    "20w45a",
+    "20w14infinite",
+    "19w46b",
+    "19w34a",
+    "18w50a",
+    "18w07a",
+    "17w47b",
+    "16w50a",
+    "15w51b",
+    "14w34d",
+    "13w49a",
+    "12w49a",
+];
+
+/// Classic Minecraft Beta versions.
+pub const ALL_MC_BETAS: &[&str] = &[
+    "b1.8.1", "b1.8", "b1.7.3", "b1.7.2", "b1.7", "b1.6.6", "b1.6.5", "b1.6.4", "b1.6", "b1.5_01",
+    "b1.5", "b1.4_01", "b1.4", "b1.3_01", "b1.3", "b1.2_02", "b1.2_01", "b1.2", "b1.1_02",
+    "b1.1_01", "b1.1", "b1.0_01", "b1.0",
+];
+
+/// Classic Minecraft Alpha / Infdev / Classic versions.
+pub const ALL_MC_ALPHAS: &[&str] = &[
+    "a1.2.6",
+    "a1.2.5",
+    "a1.2.4_01",
+    "a1.2.3_04",
+    "a1.2.2",
+    "a1.2.1_01",
+    "a1.2.0_02",
+    "a1.1.2_01",
+    "a1.1.0",
+    "a1.0.17_04",
+    "a1.0.16",
+    "a1.0.15",
+    "a1.0.14",
+    "a1.0.5_01",
+    "a1.0.4",
+    "inf-20100618",
+    "inf-20100415",
+    "c0.30_01c",
+    "c0.0.13a_03",
+    "c0.0.11a",
+    "rd-161348",
+    "rd-132211",
 ];
 
 /// Highlighted popular versions for quick 1-click selection chips.
-pub const POPULAR_CHIPS: &[&str] = &[
-    "1.21.1", "1.20.1", "1.16.5", "1.12.2", "1.8.9"
-];
+pub const POPULAR_CHIPS: &[&str] = &["1.21.1", "1.20.1", "1.16.5", "1.12.2", "1.8.9", "b1.7.3"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstanceDetailTab {
@@ -42,6 +163,11 @@ pub enum InstanceDetailTab {
 pub struct InstancesView {
     pub current_tab: InstanceDetailTab,
     pub console_autoscroll: bool,
+    pub show_releases: bool,
+    pub show_snapshots: bool,
+    pub show_betas: bool,
+    pub show_alphas: bool,
+    pub version_search: String,
 }
 
 impl Default for InstancesView {
@@ -49,6 +175,11 @@ impl Default for InstancesView {
         Self {
             current_tab: InstanceDetailTab::Mods,
             console_autoscroll: true,
+            show_releases: true,
+            show_snapshots: false,
+            show_betas: false,
+            show_alphas: false,
+            version_search: String::new(),
         }
     }
 }
@@ -83,15 +214,25 @@ impl InstancesView {
 
         // Instance creation modal
         if state.show_create_instance_dialog {
+            // Trigger manifest fetch on first open if empty
+            if state.remote_versions.is_empty() && !state.is_fetching_manifest {
+                state.is_fetching_manifest = true;
+                let _ = state.cmd_sender.send(UiWorkerCommand::FetchVersionManifest);
+            }
+
             egui::Window::new("Создание нового инстанса Minecraft")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ui.ctx(), |ui| {
-                    ui.set_width(420.0);
+                    ui.set_width(460.0);
 
                     // 1. Minecraft Version Selection
-                    ui.label(RichText::new("Версия Minecraft:").color(TEXT_PRIMARY).strong());
+                    ui.label(
+                        RichText::new("Версия Minecraft:")
+                            .color(TEXT_PRIMARY)
+                            .strong(),
+                    );
                     ui.add_space(2.0);
 
                     // Quick-pick popular chips
@@ -106,41 +247,182 @@ impl InstancesView {
                             };
                             if ui.selectable_label(is_selected, label).clicked() {
                                 state.create_inst_mc_ver = v.to_string();
-                                state.create_inst_name = format!("{} {}", v, state.create_inst_loader.as_str());
+                                state.create_inst_name =
+                                    format!("{} {}", v, state.create_inst_loader.as_str());
                             }
                         }
                     });
 
+                    ui.add_space(6.0);
+
+                    // Category Filter Toggles & Manifest sync
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Категории:").color(TEXT_MUTED).small());
+                        ui.checkbox(&mut self.show_releases, "Релизы");
+                        ui.checkbox(&mut self.show_snapshots, "Снапшоты");
+                        ui.checkbox(&mut self.show_betas, "Beta");
+                        ui.checkbox(&mut self.show_alphas, "Alpha");
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if state.is_fetching_manifest {
+                                ui.label(RichText::new("Загрузка...").color(ACCENT_COBALT).small());
+                            } else if secondary_glass_button(
+                                ui,
+                                Some(VectorIcon::Refresh),
+                                "Mojang",
+                            )
+                            .clicked()
+                            {
+                                state.is_fetching_manifest = true;
+                                let _ =
+                                    state.cmd_sender.send(UiWorkerCommand::FetchVersionManifest);
+                            }
+                        });
+                    });
+
                     ui.add_space(4.0);
 
-                    // Full version dropdown selector
+                    // Search input for versions
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Все релизы:").color(TEXT_MUTED).small());
-                        egui::ComboBox::from_id_salt("all_mc_versions_dropdown")
-                            .width(280.0)
-                            .selected_text(
-                                RichText::new(&state.create_inst_mc_ver)
-                                    .color(ACCENT_COBALT)
-                                    .strong(),
-                            )
-                            .show_ui(ui, |ui| {
-                                for &v in ALL_MC_VERSIONS {
-                                    if ui
-                                        .selectable_label(state.create_inst_mc_ver == v, v)
-                                        .clicked()
-                                    {
-                                        state.create_inst_mc_ver = v.to_string();
-                                        state.create_inst_name =
-                                            format!("{} {}", v, state.create_inst_loader.as_str());
+                        ui.label(RichText::new("Поиск:").color(TEXT_MUTED).small());
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.version_search)
+                                .hint_text("Фильтр (1.20, b1.7, 24w, rd)...")
+                                .desired_width(ui.available_width() - 60.0),
+                        );
+                        if !self.version_search.is_empty() && ui.small_button("Сброс").clicked()
+                        {
+                            self.version_search.clear();
+                        }
+                    });
+
+                    ui.add_space(6.0);
+
+                    // Build filtered version list
+                    let query = self.version_search.trim().to_lowercase();
+                    let mut filtered: Vec<(&str, McVersionCategory)> = Vec::new();
+
+                    if !state.remote_versions.is_empty() {
+                        for (id, rel_type) in &state.remote_versions {
+                            let cat = match rel_type.as_str() {
+                                "release" => McVersionCategory::Release,
+                                "snapshot" => McVersionCategory::Snapshot,
+                                "old_beta" => McVersionCategory::OldBeta,
+                                "old_alpha" => McVersionCategory::OldAlpha,
+                                _ => continue,
+                            };
+                            let matches_cat = match cat {
+                                McVersionCategory::Release => self.show_releases,
+                                McVersionCategory::Snapshot => self.show_snapshots,
+                                McVersionCategory::OldBeta => self.show_betas,
+                                McVersionCategory::OldAlpha => self.show_alphas,
+                            };
+                            if !matches_cat {
+                                continue;
+                            }
+                            if !query.is_empty() && !id.to_lowercase().contains(&query) {
+                                continue;
+                            }
+                            filtered.push((id.as_str(), cat));
+                        }
+                    } else {
+                        if self.show_releases {
+                            for &v in ALL_MC_RELEASES {
+                                if query.is_empty() || v.to_lowercase().contains(&query) {
+                                    filtered.push((v, McVersionCategory::Release));
+                                }
+                            }
+                        }
+                        if self.show_snapshots {
+                            for &v in ALL_MC_SNAPSHOTS {
+                                if query.is_empty() || v.to_lowercase().contains(&query) {
+                                    filtered.push((v, McVersionCategory::Snapshot));
+                                }
+                            }
+                        }
+                        if self.show_betas {
+                            for &v in ALL_MC_BETAS {
+                                if query.is_empty() || v.to_lowercase().contains(&query) {
+                                    filtered.push((v, McVersionCategory::OldBeta));
+                                }
+                            }
+                        }
+                        if self.show_alphas {
+                            for &v in ALL_MC_ALPHAS {
+                                if query.is_empty() || v.to_lowercase().contains(&query) {
+                                    filtered.push((v, McVersionCategory::OldAlpha));
+                                }
+                            }
+                        }
+                    }
+
+                    // Scrollable version list
+                    let picker_frame = egui::Frame::new()
+                        .fill(CARD_SURFACE)
+                        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+                        .corner_radius(RADIUS_CARD)
+                        .inner_margin(egui::Margin::same(6));
+
+                    picker_frame.show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ScrollArea::vertical()
+                            .id_salt("version_select_scroll")
+                            .max_height(130.0)
+                            .show(ui, |ui| {
+                                if filtered.is_empty() {
+                                    ui.add_space(8.0);
+                                    ui.label(
+                                        RichText::new("Нет версий, соответствующих фильтрам")
+                                            .color(TEXT_MUTED),
+                                    );
+                                } else {
+                                    for (vid, cat) in filtered {
+                                        let is_sel = state.create_inst_mc_ver == vid;
+                                        ui.horizontal(|ui| {
+                                            let text_col =
+                                                if is_sel { ACCENT_COBALT } else { TEXT_PRIMARY };
+                                            if ui
+                                                .selectable_label(
+                                                    is_sel,
+                                                    RichText::new(vid).color(text_col).strong(),
+                                                )
+                                                .clicked()
+                                            {
+                                                state.create_inst_mc_ver = vid.to_string();
+                                                state.create_inst_name = format!(
+                                                    "{} {}",
+                                                    vid,
+                                                    state.create_inst_loader.as_str()
+                                                );
+                                            }
+                                            version_badge(ui, cat.badge_label(), cat.badge_color());
+                                        });
                                     }
                                 }
                             });
                     });
 
+                    ui.add_space(4.0);
+
+                    // Selected version editable field
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Выбранная версия:").color(TEXT_MUTED).small());
+                        let mut ver_str = state.create_inst_mc_ver.clone();
+                        if ui.text_edit_singleline(&mut ver_str).changed() {
+                            state.create_inst_mc_ver = ver_str.clone();
+                            state.create_inst_name =
+                                format!("{} {}", ver_str, state.create_inst_loader.as_str());
+                        }
+                    });
+
                     ui.add_space(10.0);
 
                     // 2. Mod Loader Selection
-                    ui.label(RichText::new("Загрузчик модов:").color(TEXT_PRIMARY).strong());
+                    ui.label(
+                        RichText::new("Загрузчик модов:")
+                            .color(TEXT_PRIMARY)
+                            .strong(),
+                    );
                     ui.add_space(2.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
@@ -198,7 +480,11 @@ impl InstancesView {
                     ui.add_space(10.0);
 
                     // 4. Instance Name
-                    ui.label(RichText::new("Название инстанса:").color(TEXT_PRIMARY).strong());
+                    ui.label(
+                        RichText::new("Название инстанса:")
+                            .color(TEXT_PRIMARY)
+                            .strong(),
+                    );
                     ui.text_edit_singleline(&mut state.create_inst_name);
 
                     ui.add_space(14.0);
@@ -335,29 +621,54 @@ impl InstancesView {
                                 ui.horizontal(|ui| {
                                     version_badge(ui, &mc_ver, ACCENT_COBALT);
                                     loader_badge(ui, loader);
-                                    version_badge(ui, &format!("{} МБ RAM", inst.memory_max_mb), TEXT_MUTED);
+                                    version_badge(
+                                        ui,
+                                        &format!("{} МБ RAM", inst.memory_max_mb),
+                                        TEXT_MUTED,
+                                    );
                                     status_pill(ui, "Готов к запуску", ACCENT_EMERALD);
                                 });
                             });
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if hero_play_button(ui, "ИГРАТЬ").clicked() {
-                                    let _ = state.cmd_sender.send(UiWorkerCommand::LaunchInstance {
-                                        instance_id: inst_id.clone(),
-                                        dry_run: false,
-                                    });
-                                }
-                                ui.add_space(10.0);
-                                if secondary_glass_button(ui, Some(VectorIcon::Verify), "Проверить").clicked() {
-                                    let _ = state.cmd_sender.send(UiWorkerCommand::VerifyInstance {
-                                        instance_id: inst_id.clone(),
-                                    });
-                                }
-                                if secondary_glass_button(ui, Some(VectorIcon::Folder), "Папка игры").clicked() {
-                                    let inst_dir = state.paths.instance_dir(inst_id.as_str());
-                                    let _ = std::process::Command::new("xdg-open").arg(inst_dir).spawn();
-                                }
-                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if hero_play_button(ui, "ИГРАТЬ").clicked() {
+                                        let _ = state.cmd_sender.send(
+                                            UiWorkerCommand::LaunchInstance {
+                                                instance_id: inst_id.clone(),
+                                                dry_run: false,
+                                            },
+                                        );
+                                    }
+                                    ui.add_space(10.0);
+                                    if secondary_glass_button(
+                                        ui,
+                                        Some(VectorIcon::Verify),
+                                        "Проверить",
+                                    )
+                                    .clicked()
+                                    {
+                                        let _ = state.cmd_sender.send(
+                                            UiWorkerCommand::VerifyInstance {
+                                                instance_id: inst_id.clone(),
+                                            },
+                                        );
+                                    }
+                                    if secondary_glass_button(
+                                        ui,
+                                        Some(VectorIcon::Folder),
+                                        "Папка игры",
+                                    )
+                                    .clicked()
+                                    {
+                                        let inst_dir = state.paths.instance_dir(inst_id.as_str());
+                                        let _ = std::process::Command::new("xdg-open")
+                                            .arg(inst_dir)
+                                            .spawn();
+                                    }
+                                },
+                            );
                         });
                     });
 
@@ -430,7 +741,11 @@ impl InstancesView {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), egui::Sense::hover());
             let painter = ui.painter();
             painter.circle_filled(rect.center(), 32.0, ACCENT_EMERALD.gamma_multiply(0.12));
-            painter.circle_stroke(rect.center(), 32.0, Stroke::new(1.5_f32, ACCENT_EMERALD.gamma_multiply(0.5)));
+            painter.circle_stroke(
+                rect.center(),
+                32.0,
+                Stroke::new(1.5_f32, ACCENT_EMERALD.gamma_multiply(0.5)),
+            );
             let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(32.0));
             paint_vector_icon(painter, icon_rect, VectorIcon::Layers, ACCENT_EMERALD);
 
@@ -443,9 +758,11 @@ impl InstancesView {
             );
             ui.add_space(4.0);
             ui.label(
-                RichText::new("Сверхбыстрый модульный лаунчер Minecraft на чистом Rust для Arch Linux")
-                    .color(TEXT_MUTED)
-                    .size(14.0),
+                RichText::new(
+                    "Сверхбыстрый модульный лаунчер Minecraft на чистом Rust для Arch Linux",
+                )
+                .color(TEXT_MUTED)
+                .size(14.0),
             );
 
             ui.add_space(28.0);
@@ -463,14 +780,21 @@ impl InstancesView {
                 card1.show(ui, |ui| {
                     ui.set_width(220.0);
                     ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
+                        let (r, _) =
+                            ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
                         paint_vector_icon(ui.painter(), r, VectorIcon::Check, ACCENT_COBALT);
                         ui.label(RichText::new("Vanilla 1.21.1").color(TEXT_PRIMARY).strong());
                     });
                     ui.add_space(6.0);
-                    ui.label(RichText::new("Чистая официальная версия игры без сторонних модов.").color(TEXT_MUTED).small());
+                    ui.label(
+                        RichText::new("Чистая официальная версия игры без сторонних модов.")
+                            .color(TEXT_MUTED)
+                            .small(),
+                    );
                     ui.add_space(14.0);
-                    if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать Vanilla").clicked() {
+                    if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать Vanilla")
+                        .clicked()
+                    {
                         if let Ok(mut manifest) = state.instance_mgr.create_instance(
                             "Vanilla 1.21.1",
                             "1.21.1",
@@ -494,14 +818,26 @@ impl InstancesView {
                 card2.show(ui, |ui| {
                     ui.set_width(220.0);
                     ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
-                        paint_vector_icon(ui.painter(), r, VectorIcon::Layers, Color32::from_rgb(0xE2, 0xB3, 0x7E));
+                        let (r, _) =
+                            ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
+                        paint_vector_icon(
+                            ui.painter(),
+                            r,
+                            VectorIcon::Layers,
+                            Color32::from_rgb(0xE2, 0xB3, 0x7E),
+                        );
                         ui.label(RichText::new("Fabric 1.21.1").color(TEXT_PRIMARY).strong());
                     });
                     ui.add_space(6.0);
-                    ui.label(RichText::new("Оптимизированный легковесный загрузчик для Sodium и Iris.").color(TEXT_MUTED).small());
+                    ui.label(
+                        RichText::new("Оптимизированный легковесный загрузчик для Sodium и Iris.")
+                            .color(TEXT_MUTED)
+                            .small(),
+                    );
                     ui.add_space(14.0);
-                    if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать Fabric").clicked() {
+                    if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать Fabric")
+                        .clicked()
+                    {
                         if let Ok(mut manifest) = state.instance_mgr.create_instance(
                             "Fabric 1.21.1",
                             "1.21.1",
@@ -525,14 +861,22 @@ impl InstancesView {
                 card3.show(ui, |ui| {
                     ui.set_width(220.0);
                     ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
+                        let (r, _) =
+                            ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
                         paint_vector_icon(ui.painter(), r, VectorIcon::Settings, ACCENT_EMERALD);
                         ui.label(RichText::new("Свой инстанс").color(TEXT_PRIMARY).strong());
                     });
                     ui.add_space(6.0);
-                    ui.label(RichText::new("Выбор любой версии (1.7 - 1.21), Quilt, Forge или NeoForge.").color(TEXT_MUTED).small());
+                    ui.label(
+                        RichText::new(
+                            "Выбор любой версии (1.7 - 1.21), Quilt, Forge или NeoForge.",
+                        )
+                        .color(TEXT_MUTED)
+                        .small(),
+                    );
                     ui.add_space(14.0);
-                    if secondary_glass_button(ui, Some(VectorIcon::Plus), "Настроить...").clicked() {
+                    if secondary_glass_button(ui, Some(VectorIcon::Plus), "Настроить...").clicked()
+                    {
                         state.show_create_instance_dialog = true;
                     }
                 });
@@ -545,7 +889,11 @@ impl InstancesView {
                 ui.spacing_mut().item_spacing.x = 12.0;
                 status_pill(ui, "CAS Дедупликация O(1)", ACCENT_EMERALD);
                 status_pill(ui, "Rayon Многопоточность", ACCENT_COBALT);
-                status_pill(ui, "Zero-Lag UI Watchdog", Color32::from_rgb(0xC0, 0x84, 0xFC));
+                status_pill(
+                    ui,
+                    "Zero-Lag UI Watchdog",
+                    Color32::from_rgb(0xC0, 0x84, 0xFC),
+                );
             });
         });
     }
@@ -790,5 +1138,38 @@ impl InstancesView {
                 state.status_message = Some(("Параметры инстанса сохранены".to_string(), false));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_catalogs_contain_expected_categories_and_versions() {
+        assert!(ALL_MC_RELEASES.contains(&"1.21.4"));
+        assert!(ALL_MC_RELEASES.contains(&"1.7.10"));
+        assert!(ALL_MC_SNAPSHOTS.contains(&"25w09b"));
+        assert!(ALL_MC_BETAS.contains(&"b1.7.3"));
+        assert!(ALL_MC_ALPHAS.contains(&"a1.2.6"));
+        assert!(ALL_MC_ALPHAS.contains(&"c0.30_01c"));
+    }
+
+    #[test]
+    fn version_categories_have_clean_labels_and_colors() {
+        assert_eq!(McVersionCategory::Release.badge_label(), "Релиз");
+        assert_eq!(McVersionCategory::Snapshot.badge_label(), "Снапшот");
+        assert_eq!(McVersionCategory::OldBeta.badge_label(), "Beta");
+        assert_eq!(McVersionCategory::OldAlpha.badge_label(), "Alpha");
+    }
+
+    #[test]
+    fn instances_view_default_configuration() {
+        let view = InstancesView::default();
+        assert!(view.show_releases);
+        assert!(!view.show_snapshots);
+        assert!(!view.show_betas);
+        assert!(!view.show_alphas);
+        assert!(view.version_search.is_empty());
     }
 }

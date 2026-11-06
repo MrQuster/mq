@@ -44,6 +44,29 @@ impl MqApp {
     fn handle_worker_commands(&mut self) {
         while let Ok(cmd) = self.state.cmd_receiver.try_recv() {
             match cmd {
+                UiWorkerCommand::FetchVersionManifest => {
+                    let resp_tx = self.state.resp_sender.clone();
+                    let bus = self.state.event_bus.clone();
+                    tokio::spawn(async move {
+                        let client = reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(12))
+                            .build()
+                            .unwrap_or_default();
+                        if let Ok(manifest) = mq_meta::fetch_version_manifest(&client, None).await {
+                            let versions = manifest
+                                .versions
+                                .into_iter()
+                                .map(|v| (v.id, v.release_type))
+                                .collect();
+                            let _ =
+                                resp_tx.send(UiWorkerResponse::VersionManifestFetched(versions));
+                            bus.publish(mq_core::Event::PhaseCompleted {
+                                phase: "manifest_fetch".to_string(),
+                                elapsed_ms: 0,
+                            });
+                        }
+                    });
+                }
                 UiWorkerCommand::RefreshInstances => {
                     if let Ok(instances) = self.state.instance_mgr.list_instances() {
                         self.state.instances = instances;
