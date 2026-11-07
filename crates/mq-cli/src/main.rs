@@ -102,6 +102,7 @@ enum Commands {
     Accounts(AccountsArgs),
 
     /// Manage Minecraft instances (list, create, delete, clone, export, import).
+    #[command(alias = "instance")]
     Instances(InstancesArgs),
 
     /// Manage Java runtimes (list, download Adoptium Temurin JRE 8, 17, 21).
@@ -322,6 +323,7 @@ enum InstancesSubcommand {
         loader_version: Option<String>,
     },
     /// Delete an instance and its files.
+    #[command(alias = "rm", alias = "remove")]
     Delete {
         /// Instance identifier or name.
         instance: String,

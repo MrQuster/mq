@@ -20,7 +20,7 @@ use crate::theme::{
     STATUS_DANGER, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY,
 };
 use crate::widgets::{
-    hero_action_button, loader_badge, paint_vector_icon, primary_emerald_button,
+    danger_button, hero_action_button, loader_badge, paint_vector_icon, primary_emerald_button,
     secondary_glass_button, status_pill, version_badge, VectorIcon,
 };
 
@@ -212,6 +212,8 @@ pub struct InstancesView {
     pub new_server_name: String,
     pub new_server_ip: String,
     pub mod_update_check_done: bool,
+    pub show_delete_dialog: bool,
+    pub instance_to_delete: Option<(mq_core::InstanceId, String)>,
 }
 
 impl Default for InstancesView {
@@ -239,6 +241,8 @@ impl Default for InstancesView {
             new_server_name: String::new(),
             new_server_ip: String::new(),
             mod_update_check_done: false,
+            show_delete_dialog: false,
+            instance_to_delete: None,
         }
     }
 }
@@ -719,6 +723,100 @@ impl InstancesView {
                 });
         }
 
+        // Delete confirmation modal
+        if self.show_delete_dialog {
+            if let Some((target_id, target_name)) = self.instance_to_delete.clone() {
+                let is_running =
+                    state.game_running && state.running_instance.as_ref() == Some(&target_id);
+                let is_downloading = state.installing_instance.as_ref() == Some(&target_id);
+
+                egui::Window::new("Удаление инстанса")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ui.ctx(), |ui| {
+                        let modal_w = 420.0_f32.min(ui.ctx().screen_rect().width() - 32.0);
+                        ui.set_width(modal_w);
+
+                        ui.horizontal(|ui| {
+                            let (rect, _) =
+                                ui.allocate_exact_size(Vec2::splat(22.0), egui::Sense::hover());
+                            paint_vector_icon(
+                                ui.painter(),
+                                rect,
+                                VectorIcon::Warning,
+                                STATUS_DANGER,
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(format!("Удалить «{}»?", target_name))
+                                    .color(TEXT_PRIMARY)
+                                    .strong()
+                                    .size(15.0),
+                            );
+                        });
+
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new(
+                                "Вы уверены, что хотите удалить этот инстанс? Это действие безвозвратно удалит директорию инстанса, включая все установленные моды, миры, скриншоты и настройки.",
+                            )
+                            .color(TEXT_MUTED)
+                            .size(12.5),
+                        );
+
+                        if is_running {
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new("Инстанс сейчас запущен! Закройте игру перед удалением.")
+                                    .color(STATUS_DANGER)
+                                    .strong(),
+                            );
+                        } else if is_downloading {
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new("Инстанс сейчас загружается/устанавливается. Дождитесь окончания или отмените загрузку.")
+                                    .color(STATUS_DANGER)
+                                    .strong(),
+                            );
+                        }
+
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            let can_delete = !is_running && !is_downloading;
+                            ui.add_enabled_ui(can_delete, |ui| {
+                                if danger_button(ui, Some(VectorIcon::Trash), "Удалить").clicked() {
+                                    let inst_dir = state.paths.instance_dir(target_id.as_str());
+                                    if inst_dir.exists() {
+                                        let _ = std::fs::remove_dir_all(&inst_dir);
+                                    }
+                                    let _ = state.instance_mgr.delete_instance(target_id.as_str());
+                                    let id_to_remove = target_id.clone();
+                                    state.instances.retain(|i| i.id != id_to_remove);
+                                    state.favorite_instances.remove(target_id.as_str());
+                                    if state.selected_instance_id.as_ref() == Some(&id_to_remove) {
+                                        state.selected_instance_id =
+                                            state.instances.first().map(|i| i.id.clone());
+                                    }
+                                    state.status_message = Some((
+                                        format!("Инстанс «{}» успешно удален", target_name),
+                                        false,
+                                    ));
+                                    self.show_delete_dialog = false;
+                                    self.instance_to_delete = None;
+                                }
+                            });
+                            if secondary_glass_button(ui, None, "Отмена").clicked() {
+                                self.show_delete_dialog = false;
+                                self.instance_to_delete = None;
+                            }
+                        });
+                    });
+            } else {
+                self.show_delete_dialog = false;
+            }
+        }
+
         // Layout: Left column (instances list) + Right column (selected instance details)
         ui.horizontal(|ui| {
             // Left list of instances
@@ -738,6 +836,11 @@ impl InstancesView {
                                 state.show_create_instance_dialog = true;
                             }
                         }
+
+                        let mut action_delete = None;
+                        let mut action_open_dir = None;
+                        let mut action_duplicate = None;
+                        let mut action_export = None;
 
                         for inst in &state.instances {
                             let is_selected = state.selected_instance_id.as_ref() == Some(&inst.id);
@@ -829,7 +932,8 @@ impl InstancesView {
                                 });
                             });
 
-                            if resp.response.interact(egui::Sense::click()).clicked() {
+                            let click_resp = resp.response.interact(egui::Sense::click());
+                            if click_resp.clicked() {
                                 state.selected_instance_id = Some(inst.id.clone());
                                 // Trigger scanning mods
                                 let _ = state.cmd_sender.send(UiWorkerCommand::ScanInstanceMods {
@@ -837,7 +941,61 @@ impl InstancesView {
                                 });
                             }
 
+                            click_resp.context_menu(|ui| {
+                                ui.set_min_width(150.0);
+                                if ui.button("Открыть папку").clicked() {
+                                    action_open_dir = Some(inst.id.clone());
+                                    ui.close_menu();
+                                }
+                                if ui.button("Дублировать").clicked() {
+                                    action_duplicate = Some((inst.id.clone(), inst.name.clone()));
+                                    ui.close_menu();
+                                }
+                                if ui.button("Экспорт (.zip)").clicked() {
+                                    action_export = Some(inst.id.clone());
+                                    ui.close_menu();
+                                }
+                                ui.separator();
+                                if ui
+                                    .button(RichText::new("Удалить инстанс").color(STATUS_DANGER))
+                                    .clicked()
+                                {
+                                    action_delete = Some((inst.id.clone(), inst.name.clone()));
+                                    ui.close_menu();
+                                }
+                            });
+
                             ui.add_space(4.0);
+                        }
+
+                        if let Some((id, name)) = action_delete {
+                            self.show_delete_dialog = true;
+                            self.instance_to_delete = Some((id, name));
+                        }
+                        if let Some((id, name)) = action_duplicate {
+                            state.selected_instance_id = Some(id);
+                            self.show_duplicate_dialog = true;
+                            self.duplicate_name = format!("{} (Копия)", name);
+                        }
+                        if let Some(id) = action_open_dir {
+                            let inst_dir = state.paths.instance_dir(id.as_str());
+                            let _ = crate::opener::open_that(inst_dir);
+                        }
+                        if let Some(id) = action_export {
+                            let inst_dir = state.paths.instance_dir(id.as_str());
+                            let out_path = state
+                                .paths
+                                .backups_dir()
+                                .join(format!("{}.zip", id.as_str()));
+                            if let Err(e) = export_instance_to_zip(&inst_dir, &out_path) {
+                                state.status_message =
+                                    Some((format!("Ошибка экспорта: {e}"), true));
+                            } else {
+                                state.status_message = Some((
+                                    format!("Экспортировано в {}", out_path.display()),
+                                    false,
+                                ));
+                            }
                         }
                     });
             });
@@ -1205,8 +1363,28 @@ impl InstancesView {
                                         self.show_duplicate_dialog = true;
                                         self.duplicate_name = format!("{} (Копия)", inst_name);
                                     }
+                                    ui.separator();
+                                    if ui
+                                        .button(
+                                            RichText::new("Удалить инстанс").color(STATUS_DANGER),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.show_delete_dialog = true;
+                                        self.instance_to_delete =
+                                            Some((inst_id.clone(), inst_name.clone()));
+                                    }
                                 },
                             );
+
+                            if danger_button(ui, Some(VectorIcon::Trash), "Удалить")
+                                .on_hover_text("Удалить этот инстанс")
+                                .clicked()
+                            {
+                                self.show_delete_dialog = true;
+                                self.instance_to_delete =
+                                    Some((inst_id.clone(), inst_name.clone()));
+                            }
                         });
                     });
 
@@ -2455,7 +2633,7 @@ impl InstancesView {
                     should_save = true;
                 }
 
-                if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить инстанс").clicked()
+                if danger_button(ui, Some(VectorIcon::Trash), "Удалить инстанс").clicked()
                 {
                     should_delete = true;
                 }
@@ -2467,12 +2645,8 @@ impl InstancesView {
             }
 
             if should_delete {
-                let inst_dir = state.paths.instance_dir(inst_id.as_str());
-                let _ = std::fs::remove_dir_all(inst_dir);
-                let id_to_remove = inst_id.clone();
-                state.instances.retain(|i| i.id != id_to_remove);
-                state.selected_instance_id = state.instances.first().map(|i| i.id.clone());
-                state.status_message = Some(("Инстанс успешно удален".to_string(), false));
+                self.show_delete_dialog = true;
+                self.instance_to_delete = Some((inst_id.clone(), inst.name.clone()));
             }
         }
     }
@@ -2537,5 +2711,7 @@ mod tests {
         assert!(!view.show_betas);
         assert!(!view.show_alphas);
         assert!(view.version_search.is_empty());
+        assert!(!view.show_delete_dialog);
+        assert!(view.instance_to_delete.is_none());
     }
 }

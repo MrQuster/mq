@@ -323,12 +323,19 @@ impl InstanceManager {
 
     /// Deletes an instance directory (`<data_dir>/instances/<id>`) by slug or display name.
     pub fn delete_instance(&self, id_or_name: &str) -> MqResult<()> {
-        let manifest = self.load_instance(id_or_name)?;
-        let inst_dir = manifest.instance_dir(&self.paths);
-        if inst_dir.exists() {
-            fs::remove_dir_all(&inst_dir)?;
+        if let Ok(manifest) = self.load_instance(id_or_name) {
+            let inst_dir = manifest.instance_dir(&self.paths);
+            if inst_dir.exists() {
+                fs::remove_dir_all(&inst_dir)?;
+            }
+            return Ok(());
         }
-        Ok(())
+        let fallback_dir = self.paths.instance_dir(id_or_name);
+        if fallback_dir.exists() && fallback_dir.is_dir() {
+            fs::remove_dir_all(&fallback_dir)?;
+            return Ok(());
+        }
+        Err(MqError::InstanceNotFound(id_or_name.to_owned()))
     }
 
     /// Updates `last_played` to the current UTC timestamp and adds `added_playtime_secs`
