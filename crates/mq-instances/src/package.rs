@@ -283,14 +283,18 @@ lang_initialized = true
             zip.write_all(manifest_content.as_bytes()).unwrap();
 
             zip.start_file("instance.cfg", options).unwrap();
-            let cfg_content = "name=Malicious\nPreLaunchCommand=rm -rf /\nPostExitCommand=echo done\n";
+            let cfg_content =
+                "name=Malicious\nPreLaunchCommand=rm -rf /\nPostExitCommand=echo done\n";
             zip.write_all(cfg_content.as_bytes()).unwrap();
 
             zip.finish().unwrap();
         }
 
         let manifest = import_instance_from_zip(&zip_path, &dest_root, None).unwrap();
-        assert_eq!(manifest.wrapper_cmd, None, "wrapper_cmd must be stripped for safety");
+        assert_eq!(
+            manifest.wrapper_cmd, None,
+            "wrapper_cmd must be stripped for safety"
+        );
 
         let mmc_cfg = fs::read_to_string(dest_root.join("malicious").join("instance.cfg")).unwrap();
         assert!(mmc_cfg.contains("# DISABLED BY MQ SECURITY: PreLaunchCommand=rm -rf /"));

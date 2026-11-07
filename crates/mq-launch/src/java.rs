@@ -553,8 +553,16 @@ pub async fn download_adoptium_java(
         }
     };
 
-    let target_os = if cfg!(target_os = "windows") { "windows" } else { "linux" };
-    let bin_name = if cfg!(target_os = "windows") { "java.exe" } else { "java" };
+    let target_os = if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "linux"
+    };
+    let bin_name = if cfg!(target_os = "windows") {
+        "java.exe"
+    } else {
+        "java"
+    };
     let dest_dir_name = format!("temurin-{feature_version}-{arch}");
     let dest_dir = target_parent_dir.join(&dest_dir_name);
     let bin_java = dest_dir.join("bin").join(bin_name);

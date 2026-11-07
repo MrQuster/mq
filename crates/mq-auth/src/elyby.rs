@@ -529,7 +529,10 @@ impl PkcePair {
         let mut hasher = Sha256::new();
         hasher.update(verifier.as_bytes());
         let challenge = URL_SAFE_NO_PAD.encode(hasher.finalize());
-        Self { verifier, challenge }
+        Self {
+            verifier,
+            challenge,
+        }
     }
 }
 
@@ -782,7 +785,9 @@ impl ElyByOAuthFlow {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(MqError::Auth(format!("Ely.by отклонил обновление токена: {text}")));
+            return Err(MqError::Auth(format!(
+                "Ely.by отклонил обновление токена: {text}"
+            )));
         }
 
         let token_resp: ElyByTokenResponse = resp
@@ -1357,7 +1362,8 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let mut bad_stream = TcpStream::connect("127.0.0.1:29852").await.unwrap();
-        let bad_req = "GET /callback?code=some_code&state=wrong_state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        let bad_req =
+            "GET /callback?code=some_code&state=wrong_state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
         bad_stream.write_all(bad_req.as_bytes()).await.unwrap();
 
         let n = bad_stream.read(&mut resp_buf).await.unwrap();
@@ -1374,8 +1380,12 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let mut cancel_stream = TcpStream::connect("127.0.0.1:29853").await.unwrap();
-        let cancel_req = "GET /callback?error=access_denied&state=state_xyz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
-        cancel_stream.write_all(cancel_req.as_bytes()).await.unwrap();
+        let cancel_req =
+            "GET /callback?error=access_denied&state=state_xyz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        cancel_stream
+            .write_all(cancel_req.as_bytes())
+            .await
+            .unwrap();
 
         let n = cancel_stream.read(&mut resp_buf).await.unwrap();
         let cancel_resp = String::from_utf8_lossy(&resp_buf[..n]);

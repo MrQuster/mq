@@ -42,7 +42,10 @@ pub fn sanitize_filename(name: &str) -> String {
     // 1. Strip forbidden characters: <>:"/\|?* and control characters.
     let mut stripped = String::with_capacity(name.len());
     for ch in name.chars() {
-        if !matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' | '\0'..='\x1f') {
+        if !matches!(
+            ch,
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' | '\0'..='\x1f'
+        ) {
             stripped.push(ch);
         }
     }
@@ -73,8 +76,14 @@ mod tests {
             sanitize_filename("hello<world>:test?\"pipe|star*slash/backslash\\end.txt"),
             "helloworldtestpipestarslashbackslashend.txt"
         );
-        assert_eq!(sanitize_filename("clean_filename_123.jar"), "clean_filename_123.jar");
-        assert_eq!(sanitize_filename("control\0\t\r\nchars.txt"), "controlchars.txt");
+        assert_eq!(
+            sanitize_filename("clean_filename_123.jar"),
+            "clean_filename_123.jar"
+        );
+        assert_eq!(
+            sanitize_filename("control\0\t\r\nchars.txt"),
+            "controlchars.txt"
+        );
     }
 
     #[test]

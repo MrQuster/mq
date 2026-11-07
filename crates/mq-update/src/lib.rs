@@ -15,8 +15,7 @@ use sha2::{Digest, Sha256};
 use tracing::info;
 
 /// Embedded minisign public key for validating release checksums and binaries.
-pub const MQ_RELEASE_PUBLIC_KEY: &str =
-    "RWRlxrUOJgeLq7AIndJRG9ZhsdT5QiHy9usykXvxt1C49a1h/km3h9lt";
+pub const MQ_RELEASE_PUBLIC_KEY: &str = "RWRlxrUOJgeLq7AIndJRG9ZhsdT5QiHy9usykXvxt1C49a1h/km3h9lt";
 
 /// Minisign signature verifier for release manifests and checksums.
 pub struct MinisignVerifier;
@@ -248,15 +247,27 @@ impl UpdateManager {
 
         // Fetch SHA256SUMS and verify minisign signature if both are present
         if let Some(chk_asset) = checksums_asset {
-            if let Ok(chk_resp) = self.client.get(&chk_asset.browser_download_url).send().await {
+            if let Ok(chk_resp) = self
+                .client
+                .get(&chk_asset.browser_download_url)
+                .send()
+                .await
+            {
                 if chk_resp.status().is_success() {
                     if let Ok(chk_bytes) = chk_resp.bytes().await {
                         // Check minisig signature if available
                         if let Some(sig_asset) = signature_asset {
-                            if let Ok(sig_resp) = self.client.get(&sig_asset.browser_download_url).send().await {
+                            if let Ok(sig_resp) = self
+                                .client
+                                .get(&sig_asset.browser_download_url)
+                                .send()
+                                .await
+                            {
                                 if sig_resp.status().is_success() {
                                     if let Ok(sig_text) = sig_resp.text().await {
-                                        if let Err(e) = MinisignVerifier::verify_checksums(&chk_bytes, &sig_text) {
+                                        if let Err(e) = MinisignVerifier::verify_checksums(
+                                            &chk_bytes, &sig_text,
+                                        ) {
                                             tracing::warn!("Minisign release signature verification failed: {e}");
                                         } else {
                                             info!("Release SHA256SUMS verified with Minisign Ed25519 signature!");
@@ -272,7 +283,10 @@ impl UpdateManager {
                             if parts.len() >= 2 {
                                 let hash = parts[0];
                                 let filename = parts[1].trim_start_matches('*');
-                                if filename == target_binary_name || filename == "mq" || filename == "mq.exe" {
+                                if filename == target_binary_name
+                                    || filename == "mq"
+                                    || filename == "mq.exe"
+                                {
                                     binary_sha256 = hash.to_string();
                                     break;
                                 }
@@ -509,15 +523,9 @@ mod tests {
         let pk_str = pk_box.lines().nth(1).unwrap().trim();
 
         let data = b"4a4f89d34e62  mq-linux-x86_64\n3b2e7c1092a4  mq-windows-x86_64.exe\n";
-        let sig_box = minisign::sign(
-            None,
-            &keypair.sk,
-            data.as_slice(),
-            None,
-            None,
-        )
-        .unwrap()
-        .to_string();
+        let sig_box = minisign::sign(None, &keypair.sk, data.as_slice(), None, None)
+            .unwrap()
+            .to_string();
 
         // 1. Success validation
         assert!(MinisignVerifier::verify(data, &sig_box, pk_str).is_ok());
@@ -536,6 +544,9 @@ mod tests {
     #[test]
     fn test_official_embedded_public_key_format() {
         let pk = minisign_verify::PublicKey::from_base64(MQ_RELEASE_PUBLIC_KEY);
-        assert!(pk.is_ok(), "Embedded public key must be valid base64 Minisign public key");
+        assert!(
+            pk.is_ok(),
+            "Embedded public key must be valid base64 Minisign public key"
+        );
     }
 }
