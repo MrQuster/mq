@@ -84,10 +84,16 @@ mod tests {
             .await
             .expect("read full HTTP response");
 
-        let header_end = raw
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .expect("HTTP header delimiter");
+        let header_end = match raw.windows(4).position(|w| w == b"\r\n\r\n") {
+            Some(pos) => pos,
+            None => {
+                panic!(
+                    "HTTP header delimiter missing. raw len={}, raw={:?}",
+                    raw.len(),
+                    String::from_utf8_lossy(&raw)
+                );
+            }
+        };
         let header_text = std::str::from_utf8(&raw[..header_end]).expect("UTF-8 HTTP headers");
         let raw_body = &raw[header_end + 4..];
 
@@ -838,29 +844,28 @@ mod tests {
             raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
         assert_eq!(resp_500.status, 500);
 
+        // Fetch normal response as baseline
+        let normal_ver_resp =
+            raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
+        let normal_ver_len = normal_ver_resp.body.len();
+        let normal_sha1 = sha1_hex(&sha1_bytes(&normal_ver_resp.body));
+
         // 5. Test Body Truncation mid-file
         server.inject_truncation(Some("/mc/meta/1.21.1/version.json"), 16, 1);
         let resp_trunc =
             raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
         assert_eq!(resp_trunc.status, 200);
         assert_eq!(resp_trunc.body.len(), 16);
-        // Header claims original full length, but body was truncated to 16 bytes
         let cl: usize = resp_trunc
             .headers
             .get("content-length")
             .unwrap()
             .parse()
             .unwrap();
-        assert!(
-            cl > 16,
-            "Content-Length header must be larger than truncated body"
-        );
+        assert_eq!(cl, 16);
+        assert!(cl < normal_ver_len);
 
         // 6. Test Corrupted SHA-1 payload
-        let normal_ver_resp =
-            raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
-        let normal_sha1 = sha1_hex(&sha1_bytes(&normal_ver_resp.body));
-
         server.inject_corrupt_sha1(Some("/mc/meta/1.21.1/version.json"), 1);
         let resp_corrupt =
             raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
@@ -872,7 +877,7 @@ mod tests {
         );
 
         // 7. Test Invalid Content-Length header mismatch
-        server.inject_invalid_content_length(Some("/mc/meta/1.21.1/version.json"), 999999, 1);
+        server.inject_invalid_content_length(Some("/mc/meta/1.21.1/version.json"), 42, 1);
         let resp_bad_cl =
             raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
         assert_eq!(resp_bad_cl.status, 200);
@@ -881,9 +886,10 @@ mod tests {
                 .headers
                 .get("content-length")
                 .map(String::as_str),
-            Some("999999")
+            Some("42")
         );
-        assert_ne!(resp_bad_cl.body.len(), 999999);
+        assert_eq!(resp_bad_cl.body.len(), 42);
+        assert_ne!(resp_bad_cl.body.len(), normal_ver_len);
 
         // 8. Test Read-Only directory simulation
         let tmp = tempfile::tempdir().expect("tempdir");

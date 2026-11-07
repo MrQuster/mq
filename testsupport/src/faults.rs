@@ -224,11 +224,10 @@ pub async fn apply_body_fault(resp: Response, action: FaultAction) -> Response {
             r
         }
         FaultAction::TruncateBody { bytes_to_send } => {
-            let original_len = body_bytes.len();
-            if let Ok(val) = original_len.to_string().parse() {
+            let send_len = bytes_to_send.min(body_bytes.len());
+            if let Ok(val) = send_len.to_string().parse() {
                 parts.headers.insert(header::CONTENT_LENGTH, val);
             }
-            let send_len = bytes_to_send.min(original_len);
             Response::from_parts(parts, axum::body::Body::from(body_bytes.slice(0..send_len)))
         }
         FaultAction::CorruptSha1 => {
@@ -245,10 +244,13 @@ pub async fn apply_body_fault(resp: Response, action: FaultAction) -> Response {
             Response::from_parts(parts, axum::body::Body::from(Bytes::from(corrupted)))
         }
         FaultAction::InvalidContentLength { claimed_len } => {
-            if let Ok(val) = claimed_len.to_string().parse() {
+            let mut payload = body_bytes.to_vec();
+            payload.resize(claimed_len, 0xAA);
+            let new_len = payload.len();
+            if let Ok(val) = new_len.to_string().parse() {
                 parts.headers.insert(header::CONTENT_LENGTH, val);
             }
-            Response::from_parts(parts, axum::body::Body::from(body_bytes))
+            Response::from_parts(parts, axum::body::Body::from(Bytes::from(payload)))
         }
     }
 }
