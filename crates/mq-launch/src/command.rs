@@ -147,35 +147,82 @@ pub fn build_launch_command(ctx: &LaunchContext) -> MqResult<BuiltLaunchCommand>
     jvm_flags.push(format!("-Xms{min_mb}M"));
     jvm_flags.push(format!("-Xmx{max_mb}M"));
 
-    // 3. User custom JVM arguments from `instance.toml`.
+    // Prepare JVM placeholders for substitutions
+    let natives_str = natives_dir.to_string_lossy();
+    let libs_str = libraries_dir.to_string_lossy();
+    let game_dir_str = game_dir.to_string_lossy();
+    let assets_dir_str = assets_dir.to_string_lossy();
+
+    let log_path_str = if let Some(ref logging) = ctx.version.logging {
+        if let Some(ref client) = logging.client {
+            if !client.file.path.is_empty() {
+                ctx.paths.assets_dir().join(&client.file.path).to_string_lossy().into_owned()
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    let mut cp_sep_buf = [0u8; 4];
+    let cp_sep = mq_core::platform::classpath_separator().encode_utf8(&mut cp_sep_buf);
+
+    let jvm_subs = [
+        ("natives_directory", natives_str.as_ref()),
+        ("launcher_name", LAUNCHER_NAME),
+        ("launcher_version", LAUNCHER_VERSION),
+        ("classpath", classpath_str.as_str()),
+        ("library_directory", libs_str.as_ref()),
+        ("classpath_separator", cp_sep),
+        ("version_name", ctx.version.id.as_str()),
+        ("game_directory", game_dir_str.as_ref()),
+        ("assets_root", assets_dir_str.as_ref()),
+        ("path", log_path_str.as_str()),
+    ];
+
+    // 3. User custom JVM arguments from `instance.toml` (sanitized against stray placeholders).
     for custom_arg in &ctx.instance.jvm_args {
-        let trimmed = custom_arg.trim();
+        let expanded = expand_and_sanitize_arg(custom_arg, &jvm_subs);
+        let trimmed = expanded.trim();
         if !trimmed.is_empty() {
             jvm_flags.push(trimmed.to_owned());
         }
     }
 
     // 4. Expanded version JVM arguments.
-    let natives_str = natives_dir.to_string_lossy();
-    let libs_str = libraries_dir.to_string_lossy();
     let mut has_library_path = false;
     let mut has_classpath = false;
+    let mut has_logging_config = false;
 
     for raw_jvm_arg in &ctx.version.jvm_arguments {
-        let expanded = expand_jvm_placeholder(
-            raw_jvm_arg,
-            &natives_str,
-            &libs_str,
-            &classpath_str,
-            &ctx.version.id,
-        );
+        let expanded = expand_and_sanitize_arg(raw_jvm_arg, &jvm_subs);
         if expanded.starts_with("-Djava.library.path=") {
             has_library_path = true;
         }
         if expanded == "-cp" || expanded == "-classpath" {
             has_classpath = true;
         }
+        if expanded.starts_with("-Dlog4j.configurationFile=") {
+            has_logging_config = true;
+        }
         jvm_flags.push(expanded);
+    }
+
+    // Inject logging configuration if specified in version.json and not yet added
+    if !has_logging_config {
+        if let Some(ref logging) = ctx.version.logging {
+            if let Some(ref client) = logging.client {
+                if !client.argument.trim().is_empty() {
+                    let log_flag = expand_and_sanitize_arg(&client.argument, &jvm_subs);
+                    if !log_flag.is_empty() {
+                        jvm_flags.push(log_flag);
+                    }
+                }
+            }
+        }
     }
 
     if !has_library_path {
@@ -195,14 +242,46 @@ pub fn build_launch_command(ctx: &LaunchContext) -> MqResult<BuiltLaunchCommand>
     }
 
     // 6. Expanded game arguments.
-    let game_dir_str = game_dir.to_string_lossy();
-    let assets_dir_str = assets_dir.to_string_lossy();
     let uuid_simple = ctx.account.uuid_simple();
     let access_token = match ctx.account.kind {
         AccountKind::Offline => "0",
         AccountKind::ElyBy | AccountKind::Microsoft => ctx.account.access_token.expose_secret(),
     };
     let user_type = ctx.account.kind.user_type_arg();
+    let version_type = if ctx.version.id.contains("snapshot") || ctx.version.id.contains('w') {
+        "snapshot"
+    } else {
+        "release"
+    };
+    let profile_name = ctx.instance.name.as_str();
+
+    let game_subs = [
+        ("auth_player_name", ctx.account.username.as_str()),
+        ("version_name", ctx.version.id.as_str()),
+        ("game_directory", game_dir_str.as_ref()),
+        ("assets_root", assets_dir_str.as_ref()),
+        ("game_assets", assets_dir_str.as_ref()),
+        ("assets_index_name", ctx.version.asset_index.id.as_str()),
+        ("auth_uuid", uuid_simple.as_str()),
+        ("auth_access_token", access_token),
+        ("auth_session", access_token),
+        ("user_type", user_type),
+        ("version_type", version_type),
+        ("launcher_name", LAUNCHER_NAME),
+        ("launcher_version", LAUNCHER_VERSION),
+        ("user_properties", "{}"),
+        ("clientid", "0"),
+        ("auth_xuid", "0"),
+        ("resolution_width", "854"),
+        ("resolution_height", "480"),
+        ("quickPlayPath", ""),
+        ("quick_play_path", ""),
+        ("quickPlaySingleplayer", ""),
+        ("quickPlayMultiplayer", ""),
+        ("quickPlayRealms", ""),
+        ("path", log_path_str.as_str()),
+        ("profile_name", profile_name),
+    ];
 
     let default_game_args: Vec<String>;
     let source_game_args: &[String] = if ctx.version.game_arguments.is_empty() {
@@ -213,17 +292,7 @@ pub fn build_launch_command(ctx: &LaunchContext) -> MqResult<BuiltLaunchCommand>
     };
 
     for raw_game_arg in source_game_args {
-        let expanded = expand_game_placeholder(
-            raw_game_arg,
-            &ctx.account.username,
-            &ctx.version.id,
-            &game_dir_str,
-            &assets_dir_str,
-            &ctx.version.asset_index.id,
-            &uuid_simple,
-            access_token,
-            user_type,
-        );
+        let expanded = expand_and_sanitize_arg(raw_game_arg, &game_subs);
         jvm_flags.push(expanded);
     }
 
@@ -253,9 +322,21 @@ pub fn build_launch_command(ctx: &LaunchContext) -> MqResult<BuiltLaunchCommand>
         None => (ctx.java_bin.clone(), jvm_flags),
     };
 
+    // Strict guarantee: sanitize any remaining stray unexpanded placeholders across all arguments
+    let sanitized_args = args
+        .into_iter()
+        .map(|arg| {
+            if arg.contains("${") {
+                expand_and_sanitize_arg(&arg, &[])
+            } else {
+                arg
+            }
+        })
+        .collect();
+
     Ok(BuiltLaunchCommand {
         program,
-        args,
+        args: sanitized_args,
         working_dir: instance_dir,
         env: BTreeMap::new(),
     })
@@ -296,30 +377,78 @@ fn resolve_client_jar_path(
     }
 }
 
-fn expand_jvm_placeholder(
+/// Expands known placeholders and guarantees that NO unreplaced `${...}` substrings
+/// remain in the resulting argument string.
+pub fn expand_and_sanitize_arg(template: &str, substitutions: &[(&str, &str)]) -> String {
+    if !template.contains("${") {
+        return template.to_owned();
+    }
+
+    let mut result = template.to_owned();
+    for (k, v) in substitutions {
+        let needle = format!("${{{k}}}");
+        if result.contains(&needle) {
+            result = result.replace(&needle, v);
+        }
+    }
+
+    if result.contains("${") {
+        let mut clean = String::with_capacity(result.len());
+        let mut chars = result.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '$' && chars.peek() == Some(&'{') {
+                chars.next(); // consume '{'
+                let mut var_name = String::new();
+                let mut closed = false;
+                for inner in chars.by_ref() {
+                    if inner == '}' {
+                        closed = true;
+                        break;
+                    }
+                    var_name.push(inner);
+                }
+                if closed {
+                    tracing::warn!(
+                        "Unrecognized placeholder '${{{var_name}}}' in launch argument, replaced with empty string"
+                    );
+                } else {
+                    tracing::warn!(
+                        "Malformed unclosed placeholder in launch argument, scrubbed"
+                    );
+                }
+            } else {
+                clean.push(ch);
+            }
+        }
+        result = clean;
+    }
+
+    result
+}
+
+pub fn expand_jvm_placeholder(
     template: &str,
     natives_dir: &str,
     libraries_dir: &str,
     classpath: &str,
     version_name: &str,
 ) -> String {
-    if !template.contains("${") {
-        return template.to_owned();
-    }
     let mut cp_sep_buf = [0u8; 4];
     let cp_sep = mq_core::platform::classpath_separator().encode_utf8(&mut cp_sep_buf);
-    template
-        .replace("${natives_directory}", natives_dir)
-        .replace("${launcher_name}", LAUNCHER_NAME)
-        .replace("${launcher_version}", LAUNCHER_VERSION)
-        .replace("${classpath}", classpath)
-        .replace("${library_directory}", libraries_dir)
-        .replace("${classpath_separator}", cp_sep)
-        .replace("${version_name}", version_name)
+    let subs = [
+        ("natives_directory", natives_dir),
+        ("launcher_name", LAUNCHER_NAME),
+        ("launcher_version", LAUNCHER_VERSION),
+        ("classpath", classpath),
+        ("library_directory", libraries_dir),
+        ("classpath_separator", cp_sep),
+        ("version_name", version_name),
+    ];
+    expand_and_sanitize_arg(template, &subs)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn expand_game_placeholder(
+pub fn expand_game_placeholder(
     template: &str,
     player_name: &str,
     version_name: &str,
@@ -330,26 +459,32 @@ fn expand_game_placeholder(
     auth_access_token: &str,
     user_type: &str,
 ) -> String {
-    if !template.contains("${") {
-        return template.to_owned();
-    }
-    template
-        .replace("${auth_player_name}", player_name)
-        .replace("${version_name}", version_name)
-        .replace("${game_directory}", game_dir)
-        .replace("${assets_root}", assets_root)
-        .replace("${game_assets}", assets_root)
-        .replace("${assets_index_name}", assets_index_name)
-        .replace("${auth_uuid}", auth_uuid)
-        .replace("${auth_access_token}", auth_access_token)
-        .replace("${auth_session}", auth_access_token)
-        .replace("${user_type}", user_type)
-        .replace("${version_type}", "release")
-        .replace("${user_properties}", "{}")
-        .replace("${clientid}", "0")
-        .replace("${auth_xuid}", "0")
-        .replace("${resolution_width}", "854")
-        .replace("${resolution_height}", "480")
+    let subs = [
+        ("auth_player_name", player_name),
+        ("version_name", version_name),
+        ("game_directory", game_dir),
+        ("assets_root", assets_root),
+        ("game_assets", assets_root),
+        ("assets_index_name", assets_index_name),
+        ("auth_uuid", auth_uuid),
+        ("auth_access_token", auth_access_token),
+        ("auth_session", auth_access_token),
+        ("user_type", user_type),
+        ("version_type", "release"),
+        ("user_properties", "{}"),
+        ("clientid", "0"),
+        ("auth_xuid", "0"),
+        ("resolution_width", "854"),
+        ("resolution_height", "480"),
+        ("launcher_name", LAUNCHER_NAME),
+        ("launcher_version", LAUNCHER_VERSION),
+        ("quickPlayPath", ""),
+        ("quick_play_path", ""),
+        ("quickPlaySingleplayer", ""),
+        ("quickPlayMultiplayer", ""),
+        ("quickPlayRealms", ""),
+    ];
+    expand_and_sanitize_arg(template, &subs)
 }
 
 fn default_minecraft_game_arguments() -> Vec<String> {
@@ -401,4 +536,148 @@ fn shell_quote(arg: &str) -> String {
     }
     quoted.push('"');
     quoted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expands_all_known_placeholders_and_scrubs_unknowns_without_leaving_placeholder_markers() {
+        let template = "--user ${auth_player_name} --ver ${version_name} --unknown ${unknown_var} --flag=${another_bad_var}";
+        let subs = [
+            ("auth_player_name", "TestUser"),
+            ("version_name", "26.3"),
+        ];
+        let expanded = expand_and_sanitize_arg(template, &subs);
+        assert_eq!(expanded, "--user TestUser --ver 26.3 --unknown  --flag=");
+        assert!(!expanded.contains("${"), "Result contains unexpanded placeholder marker!");
+    }
+
+    #[test]
+    fn scrubs_malformed_unclosed_placeholder() {
+        let template = "-Dfoo=${unclosed_var";
+        let expanded = expand_and_sanitize_arg(template, &[]);
+        assert_eq!(expanded, "-Dfoo=");
+        assert!(!expanded.contains("${"));
+    }
+
+    #[test]
+    fn guarantee_no_placeholders_leak_into_built_command() {
+        use mq_core::{ModLoaderKind, MqPaths};
+        use mq_meta::{ArtifactDownload, AssetIndexPointer, JavaVersionSpec, ResolvedVersion};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let paths = MqPaths::with_root(temp.path());
+        paths.ensure_dirs().expect("dirs");
+
+        let mut instance = InstanceManifest::new(
+            "Test 26",
+            "26.3",
+            ModLoaderKind::Vanilla,
+            None,
+        );
+        instance.memory_min_mb = 1024;
+        instance.memory_max_mb = 2048;
+        instance.jvm_args = vec!["-Dcustom.unknown=${user_custom_prop}".to_string()];
+
+        let version = ResolvedVersion {
+            id: "26.3".to_string(),
+            mc_version: "26.3".to_string(),
+            loader: ModLoaderKind::Vanilla,
+            loader_version: None,
+            inherits_from: None,
+            main_class: "net.minecraft.client.main.Main".to_string(),
+            java_version: JavaVersionSpec {
+                component: "java-runtime-epsilon".to_string(),
+                major_version: 25,
+            },
+            asset_index: AssetIndexPointer {
+                id: "34".to_string(),
+                sha1: None,
+                size: 100,
+                total_size: 1000,
+                url: String::new(),
+            },
+            client_jar: ArtifactDownload {
+                path: "versions/26.3/26.3.jar".to_string(),
+                url: String::new(),
+                sha1: None,
+                size: 100,
+            },
+            libraries: vec![],
+            jvm_arguments: vec![
+                "-Djava.library.path=${natives_directory}".to_string(),
+                "-cp".to_string(),
+                "${classpath}".to_string(),
+                "-Dlegacy.unknown=${some_unknown_jvm_flag}".to_string(),
+            ],
+            game_arguments: vec![
+                "--username".to_string(),
+                "${auth_player_name}".to_string(),
+                "--version".to_string(),
+                "${version_name}".to_string(),
+                "--gameDir".to_string(),
+                "${game_directory}".to_string(),
+                "--assetsDir".to_string(),
+                "${assets_root}".to_string(),
+                "--assetIndex".to_string(),
+                "${assets_index_name}".to_string(),
+                "--uuid".to_string(),
+                "${auth_uuid}".to_string(),
+                "--accessToken".to_string(),
+                "${auth_access_token}".to_string(),
+                "--userType".to_string(),
+                "${user_type}".to_string(),
+                "--versionType".to_string(),
+                "${version_type}".to_string(),
+                "--quickPlayPath".to_string(),
+                "${quickPlayPath}".to_string(),
+                "--unknownGameFlag".to_string(),
+                "${unrecognized_game_placeholder}".to_string(),
+            ],
+            logging: Some(mq_meta::LoggingConfig {
+                client: Some(mq_meta::LoggingClientConfig {
+                    argument: "-Dlog4j.configurationFile=${path}".to_string(),
+                    file: ArtifactDownload {
+                        path: "log_configs/client-26.xml".to_string(),
+                        url: String::new(),
+                        sha1: None,
+                        size: 50,
+                    },
+                    logging_type: "log4j2-xml".to_string(),
+                }),
+            }),
+        };
+
+        let account = mq_auth::create_offline_account("Steve").expect("account");
+
+        let ctx = LaunchContext {
+            paths,
+            instance,
+            version,
+            account,
+            java_bin: PathBuf::from("/usr/bin/java"),
+            authlib_injector_jar: None,
+            extra_secrets_to_redact: vec![],
+        };
+
+        let cmd = build_launch_command(&ctx).expect("build launch command");
+
+        for (idx, arg) in cmd.args.iter().enumerate() {
+            assert!(
+                !arg.contains("${"),
+                "Unexpanded placeholder '${{' leaked at argument index {idx}: {arg}"
+            );
+        }
+
+        let full_cmd_line = cmd.to_shell_command_line();
+        assert!(
+            !full_cmd_line.contains("${"),
+            "Unexpanded placeholder '${{' leaked into full command line: {full_cmd_line}"
+        );
+
+        // Verify logging argument was added
+        assert!(cmd.args.iter().any(|arg| arg.starts_with("-Dlog4j.configurationFile=")));
+    }
 }

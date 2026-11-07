@@ -87,6 +87,8 @@ pub fn merge_inherits_from(
         .cloned()
         .unwrap_or_else(|| parent.client_jar.clone());
 
+    let logging = parent.logging.clone();
+
     Ok(ResolvedVersion {
         id,
         mc_version: parent.mc_version.clone(),
@@ -100,6 +102,111 @@ pub fn merge_inherits_from(
         libraries,
         jvm_arguments,
         game_arguments,
+        logging,
+    })
+}
+
+/// Deterministically merges a child [`ResolvedVersion`] (which has `inheritsFrom`)
+/// onto a parent [`ResolvedVersion`].
+///
+/// Inherits properties from parent if not defined on child:
+/// - assetIndex
+/// - assets / client_jar downloads
+/// - javaVersion
+/// - logging
+/// - mainClass
+/// - libraries (child overrides duplicate modules, child libs prepended)
+/// - arguments (jvm and game arguments: parent followed by child)
+pub fn merge_resolved_versions(
+    parent: &ResolvedVersion,
+    child: &ResolvedVersion,
+) -> MqResult<ResolvedVersion> {
+    if let Some(target) = child
+        .inherits_from
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if target != parent.mc_version && target != parent.id {
+            return Err(MqError::Metadata(format!(
+                "version '{}' inheritsFrom '{}' does not match parent version id '{}' or mc_version '{}'",
+                child.id, target, parent.id, parent.mc_version
+            )));
+        }
+    }
+
+    let id = if !child.id.trim().is_empty() {
+        child.id.clone()
+    } else {
+        parent.id.clone()
+    };
+
+    let loader = if child.loader != ModLoaderKind::Vanilla {
+        child.loader
+    } else {
+        parent.loader
+    };
+
+    let loader_version = child
+        .loader_version
+        .clone()
+        .or_else(|| parent.loader_version.clone());
+
+    let inherits_from = child
+        .inherits_from
+        .clone()
+        .or_else(|| parent.inherits_from.clone());
+
+    let main_class = if !child.main_class.trim().is_empty() {
+        child.main_class.clone()
+    } else {
+        parent.main_class.clone()
+    };
+
+    let java_version = if child.java_version.major_version > 0 {
+        child.java_version.clone()
+    } else {
+        parent.java_version.clone()
+    };
+
+    let asset_index = if !child.asset_index.id.trim().is_empty() {
+        child.asset_index.clone()
+    } else {
+        parent.asset_index.clone()
+    };
+
+    let client_jar = if !child.client_jar.path.trim().is_empty()
+        && child.client_jar.path != format!("versions/{}/{}.jar", child.id, child.id)
+    {
+        child.client_jar.clone()
+    } else if !child.client_jar.url.trim().is_empty() {
+        child.client_jar.clone()
+    } else {
+        parent.client_jar.clone()
+    };
+
+    let logging = child.logging.clone().or_else(|| parent.logging.clone());
+
+    let libraries = merge_libraries_deterministically(&parent.libraries, &child.libraries);
+    let jvm_arguments =
+        merge_arguments_deterministically(&parent.jvm_arguments, &child.jvm_arguments);
+    let game_arguments =
+        merge_arguments_deterministically(&parent.game_arguments, &child.game_arguments);
+
+    Ok(ResolvedVersion {
+        id,
+        mc_version: parent.mc_version.clone(),
+        loader,
+        loader_version,
+        inherits_from,
+        main_class,
+        java_version,
+        asset_index,
+        client_jar,
+        libraries,
+        jvm_arguments,
+        game_arguments,
+        logging,
     })
 }
 
@@ -269,6 +376,7 @@ mod tests {
                 "${auth_player_name}".to_owned(),
                 "--demo".to_owned(),
             ],
+            logging: None,
         }
     }
 
