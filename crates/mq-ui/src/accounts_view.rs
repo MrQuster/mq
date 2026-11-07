@@ -319,7 +319,7 @@ impl AccountsView {
                     .clicked()
                 {
                     if let Some(ref url) = self.ely_auth_url {
-                        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+                        let _ = crate::opener::open_that(url);
                     }
                 }
                 if secondary_glass_button(ui, Some(VectorIcon::Copy), "Скопировать ссылку")
@@ -365,9 +365,7 @@ impl AccountsView {
                 let port = oauth_cfg.redirect_port;
                 let auth_url = ElyByOAuthFlow::generate_auth_url(client_id, port, &state_str);
                 self.ely_auth_url = Some(auth_url.clone());
-                let _ = std::process::Command::new("xdg-open")
-                    .arg(&auth_url)
-                    .spawn();
+                let _ = crate::opener::open_that(&auth_url);
 
                 let cancel_flag = Arc::new(AtomicBool::new(false));
                 self.ely_cancel_flag = cancel_flag.clone();
@@ -478,16 +476,12 @@ impl AccountsView {
                 )
                 .clicked()
                 {
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg("https://account.ely.by/dev/applications")
-                        .spawn();
+                    let _ = crate::opener::open_that("https://account.ely.by/dev/applications");
                 }
                 if secondary_glass_button(ui, Some(VectorIcon::Globe), "Создать аккаунт на Ely.by")
                     .clicked()
                 {
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg("https://ely.by/registration")
-                        .spawn();
+                    let _ = crate::opener::open_that("https://ely.by/registration");
                 }
             });
         }

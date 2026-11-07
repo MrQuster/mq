@@ -8,8 +8,10 @@ use std::sync::Arc;
 
 use egui::{Context, FontData, FontDefinitions, FontFamily};
 
-/// Ordered proportional font candidates on Arch Linux / standard Linux distributions.
+/// Ordered proportional font candidates across Windows and Linux distributions.
 pub const PROPORTIONAL_FONT_CANDIDATES: &[&str] = &[
+    "C:\\Windows\\Fonts\\segoeui.ttf",
+    "C:\\Windows\\Fonts\\arial.ttf",
     "/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf",
     "/usr/share/fonts/TTF/Inter-Regular.ttf",
     "/usr/share/fonts/inter/Inter-Regular.ttf",
@@ -20,8 +22,11 @@ pub const PROPORTIONAL_FONT_CANDIDATES: &[&str] = &[
     "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
 ];
 
-/// Ordered monospace font candidates on Arch Linux / standard Linux distributions.
+/// Ordered monospace font candidates across Windows and Linux distributions.
 pub const MONOSPACE_FONT_CANDIDATES: &[&str] = &[
+    "C:\\Windows\\Fonts\\consola.ttf",
+    "C:\\Windows\\Fonts\\cascadiamono.ttf",
+    "C:\\Windows\\Fonts\\lucon.ttf",
     "/home/honey/.local/share/fonts/JetBrainsMono-Regular.ttf",
     "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
     "/usr/share/fonts/Adwaita/AdwaitaMono-Regular.ttf",

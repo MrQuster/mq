@@ -1030,7 +1030,7 @@ impl SettingsView {
                         ui.label(RichText::new("Лаунчер установлен через системный пакетный менеджер (/usr/). Для обновления используйте пакетный менеджер вашей системы.").color(STATUS_WARN));
                         ui.add_space(8.0);
                         if secondary_glass_button(ui, Some(VectorIcon::Globe), "Открыть страницу релизов на GitHub").clicked() {
-                            let _ = std::process::Command::new("xdg-open").arg("https://github.com/MrQuster/mq/releases").spawn();
+                            let _ = crate::opener::open_that("https://github.com/MrQuster/mq/releases");
                         }
                     } else {
                         ui.label(RichText::new(format!("Текущая версия: v{}", env!("CARGO_PKG_VERSION"))).color(TEXT_MUTED));
@@ -1173,16 +1173,16 @@ impl SettingsView {
                         ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
 
                         if secondary_glass_button(ui, Some(VectorIcon::User), "Профиль автора на GitHub").clicked() {
-                            let _ = std::process::Command::new("xdg-open").arg("https://github.com/MrQuster").spawn();
+                            let _ = crate::opener::open_that("https://github.com/MrQuster");
                         }
                         if secondary_glass_button(ui, Some(VectorIcon::Globe), "Репозиторий").clicked() {
-                            let _ = std::process::Command::new("xdg-open").arg("https://github.com/MrQuster/mq").spawn();
+                            let _ = crate::opener::open_that("https://github.com/MrQuster/mq");
                         }
                         if secondary_glass_button(ui, Some(VectorIcon::Download), "Релизы").clicked() {
-                            let _ = std::process::Command::new("xdg-open").arg("https://github.com/MrQuster/mq/releases").spawn();
+                            let _ = crate::opener::open_that("https://github.com/MrQuster/mq/releases");
                         }
                         if secondary_glass_button(ui, Some(VectorIcon::Warning), "Сообщить об ошибке").clicked() {
-                            let _ = std::process::Command::new("xdg-open").arg("https://github.com/MrQuster/mq/issues").spawn();
+                            let _ = crate::opener::open_that("https://github.com/MrQuster/mq/issues");
                         }
                         if secondary_glass_button(ui, Some(VectorIcon::Copy), "Скопировать диагностику").clicked() {
                             let diag = format!(
