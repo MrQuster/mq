@@ -25,12 +25,14 @@ use crate::ely::{
     serve_authlib_latest_json, serve_ely_yggdrasil_meta, serve_skin_png, AuthenticateRequest,
     ElyAuthStore, RefreshRequest, ValidateRequest,
 };
+use crate::faults::{apply_body_fault, FaultAction, FaultInjector};
 use crate::world::{MockConfig, MockWorld};
 
 #[derive(Debug)]
 struct ServerState {
     world: Arc<MockWorld>,
     ely: ElyAuthStore,
+    faults: Arc<FaultInjector>,
     request_count: AtomicUsize,
     remaining_failures: AtomicUsize,
 }
@@ -65,9 +67,11 @@ impl MockServer {
 
         let fail_first = config.fail_first_n_requests;
         let world = Arc::new(MockWorld::new(config, &base_url));
+        let faults = Arc::new(FaultInjector::new());
         let state = Arc::new(ServerState {
             world,
             ely: ElyAuthStore::default(),
+            faults,
             request_count: AtomicUsize::new(0),
             remaining_failures: AtomicUsize::new(fail_first),
         });
@@ -120,6 +124,79 @@ impl MockServer {
     /// Dynamically configures the server to fail the next `count` incoming requests with `503`.
     pub fn set_fail_next_requests(&self, count: usize) {
         self.state.remaining_failures.store(count, Ordering::SeqCst);
+    }
+
+    /// Access the underlying [`FaultInjector`].
+    pub fn faults(&self) -> &Arc<FaultInjector> {
+        &self.state.faults
+    }
+
+    /// Helper to inject an arbitrary HTTP status code for the next `count` matching requests.
+    pub fn inject_status(&self, path_filter: Option<&str>, status: StatusCode, count: usize) {
+        self.state.faults.inject_status(path_filter, status, count);
+    }
+
+    /// Helper to inject HTTP 404 Not Found.
+    pub fn inject_404(&self, path_filter: Option<&str>, count: usize) {
+        self.state.faults.inject_404(path_filter, count);
+    }
+
+    /// Helper to inject HTTP 403 Forbidden.
+    pub fn inject_403(&self, path_filter: Option<&str>, count: usize) {
+        self.state.faults.inject_403(path_filter, count);
+    }
+
+    /// Helper to inject HTTP 429 Too Many Requests with a `Retry-After` header.
+    pub fn inject_429(&self, path_filter: Option<&str>, retry_after_secs: u64, count: usize) {
+        self.state
+            .faults
+            .inject_429(path_filter, retry_after_secs, count);
+    }
+
+    /// Helper to inject HTTP 500 Internal Server Error.
+    pub fn inject_500(&self, path_filter: Option<&str>, count: usize) {
+        self.state.faults.inject_500(path_filter, count);
+    }
+
+    /// Helper to inject HTTP 503 Service Unavailable.
+    pub fn inject_503(
+        &self,
+        path_filter: Option<&str>,
+        retry_after_secs: Option<u64>,
+        count: usize,
+    ) {
+        self.state
+            .faults
+            .inject_503(path_filter, retry_after_secs, count);
+    }
+
+    /// Helper to inject body truncation mid-file.
+    pub fn inject_truncation(&self, path_filter: Option<&str>, bytes_to_send: usize, count: usize) {
+        self.state
+            .faults
+            .inject_truncation(path_filter, bytes_to_send, count);
+    }
+
+    /// Helper to inject SHA-1 byte corruption.
+    pub fn inject_corrupt_sha1(&self, path_filter: Option<&str>, count: usize) {
+        self.state.faults.inject_corrupt_sha1(path_filter, count);
+    }
+
+    /// Helper to inject invalid Content-Length header mismatch.
+    pub fn inject_invalid_content_length(
+        &self,
+        path_filter: Option<&str>,
+        claimed_len: usize,
+        count: usize,
+    ) {
+        self.state
+            .faults
+            .inject_invalid_content_length(path_filter, claimed_len, count);
+    }
+
+    /// Clear all active fault rules.
+    pub fn clear_faults(&self) {
+        self.state.faults.clear();
     }
 
     /// Builds the Modrinth `.mrpack` bytes pointing to this server's `base_url`.
@@ -330,6 +407,24 @@ async fn request_gate_middleware(
 ) -> Response {
     state.request_count.fetch_add(1, Ordering::SeqCst);
 
+    let path = req.uri().path().to_string();
+    let fault = state.faults.evaluate(&path);
+
+    if let Some(FaultAction::HttpStatus {
+        status,
+        retry_after_secs,
+        message,
+    }) = fault
+    {
+        let mut resp = (status, message).into_response();
+        if let Some(secs) = retry_after_secs {
+            if let Ok(val) = secs.to_string().parse() {
+                resp.headers_mut().insert(header::RETRY_AFTER, val);
+            }
+        }
+        return resp;
+    }
+
     let mut should_fail = false;
     let mut current = state.remaining_failures.load(Ordering::SeqCst);
     while current > 0 {
@@ -356,7 +451,13 @@ async fn request_gate_middleware(
             .into_response();
     }
 
-    next.run(req).await
+    let resp = next.run(req).await;
+
+    if let Some(action) = fault {
+        apply_body_fault(resp, action).await
+    } else {
+        resp
+    }
 }
 
 async fn handle_version_manifest(State(state): State<Arc<ServerState>>) -> Response {
