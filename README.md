@@ -1,36 +1,83 @@
-# MQ — High-Performance Multithreaded Minecraft Launcher for Linux
+# MQ — High-Performance Multithreaded Minecraft Launcher (Solid Edition)
 
 > **Disclaimer:** MQ is an unofficial, independent open-source launcher for Minecraft: Java Edition. It is not affiliated with, endorsed by, or associated with Mojang Studios, Microsoft Corporation, or any of their subsidiaries. All trademarks and registered trademarks belong to their respective owners.
 
-MQ is an autonomous, high-performance modular launcher written from scratch in Rust, specifically tailored for Arch Linux and modern Wayland/X11 desktop environments (Hyprland, Sway, KDE, GNOME). It delivers ultra-fast game installations and modpack resolution by saturating all available CPU cores on hash verification, archive extractions, and metadata scanning without freezing the UI or exceeding strict memory budgets.
+MQ is an autonomous, high-performance modular launcher written from scratch in Rust with full functional parity across **Linux** (Wayland/X11) and **Windows 10/11 x64**. It delivers ultra-fast game installations and modpack resolution by saturating all available CPU cores on hash verification, archive extractions, and metadata scanning without freezing the UI or exceeding strict memory budgets.
 
 ---
 
-## ⚡ Быстрая установка одной командой (Universal 1-Command Install)
+## ⚡ Быстрая установка в 1 команду (1-Command Installers)
 
+### 🐧 Linux (Arch / Ubuntu / Fedora / Debian / NixOS)
 Установка актуального релиза лаунчера вместе с иконками и системной интеграцией (`.desktop` файл):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MrQuster/mq/main/install.sh | bash
+curl -fsSL https://github.com/MrQuster/mq/releases/latest/download/install.sh | sh
 ```
 
-> Скрипт автоматически скачивает оптимизированный бинарник из GitHub Releases, устанавливает его в `~/.local/bin/mq`, настраивает иконки и меню приложений. В случае отсутствия бинарника под вашу платформу — автоматически компилирует из исходников через `cargo`.
+### 🪟 Windows 10 / 11 (PowerShell)
+Установка актуального релиза в профиль пользователя (`%LOCALAPPDATA%\Programs\MQ`) с созданием ярлыков и добавлением в PATH (права администратора UAC не требуются):
+
+```powershell
+irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1 | iex
+```
+
+#### Другие варианты установки на Windows:
+* **Inno Setup Installer:** скачайте [`MQ-Setup-2.2.0.exe`](https://github.com/MrQuster/mq/releases/latest) (поддерживает тихую установку `/VERYSILENT`).
+* **Портативный ZIP:** скачайте [`mq-windows-x86_64-portable.zip`](https://github.com/MrQuster/mq/releases/latest) (работает с USB-флешек без установки в систему благодаря маркеру `portable.flag`).
+* **Пакетный менеджер Windows (winget):** `winget install MrQuster.MQ` (манифесты в `packaging/winget`).
+* **Scoop:** `scoop install https://raw.githubusercontent.com/MrQuster/mq/main/packaging/scoop/mq.json`.
+
+---
+
+## 🔐 Верификация релиза и криптографическая подпись (Minisign Ed25519)
+
+Каждый официальный релиз MQ Launcher компилируется в изолированных раннерах GitHub Actions и подписывается цифровой подписью **Minisign (Ed25519)** с генерацией аттестаций сборки Sigstore:
+
+### Официальный публичный ключ Minisign:
+```
+untrusted comment: minisign public key: AB8B07260EB5C665
+RWRlxrUOJgeLq7AIndJRG9ZhsdT5QiHy9usykXvxt1C49a1h/km3h9lt
+```
+
+### Проверка целостности и подписи:
+```bash
+# Проверка подписи контрольных сумм
+minisign -Vm SHA256SUMS -P RWRlxrUOJgeLq7AIndJRG9ZhsdT5QiHy9usykXvxt1C49a1h/km3h9lt
+sha256sum -c SHA256SUMS
+
+# Проверка аттестации цепочки поставок через GitHub CLI
+gh attestation verify mq-linux-x86_64 --repo MrQuster/mq
+```
+
+Подробнее о модели безопасности, приватности и политике уязвимостей читайте в:
+* [Политика безопасности (SECURITY.md)](SECURITY.md)
+* [Модель угроз (THREAT_MODEL.md)](docs/THREAT_MODEL.md)
+* [Политика конфиденциальности и нулевой телеметрии (PRIVACY.md)](docs/PRIVACY.md)
 
 ---
 
 ## Ключевые возможности
 
+* **Полный паритет Linux и Windows 10/11 x64:**
+  * Корректный разделитель classpath (`;` на Windows, `:` на Unix) и нативные библиотеки Minecraft (`natives-windows`).
+  * Подавление паразитных консольных окон JVM через флаг `CREATE_NO_WINDOW` (`0x08000000`).
+  * Корректное завершение дерева процессов через `taskkill /PID <pid> /T /F` на Windows.
+  * Автоматический поиск и загрузка OpenJDK (Adoptium Temurin ZIP) без ручной установки Java.
+  * Системные шрифты Windows (Segoe UI, Consolas) и корректный рендеринг Per-Monitor DPI.
+  * Поддержка путей с пробелами, кириллицей и префиксом длинных путей `\\?\`.
 * **Полная независимость и свобода авторизации:**
   * **Пиратский Offline-режим:** детерминированный ванильный UUID v3 (`OfflinePlayer:<nickname>`) без обращений к серверам Mojang.
-  * **Ely.by скины и плащи:** встроенный клиент авторизации Yggdrasil, автоматическая загрузка CAS и подключение Java-агента `authlib-injector` (`-javaagent:.../authlib-injector.jar=https://account.ely.by/api/authlib-injector`).
-  * **Microsoft (MSA / Xbox Live):** поддержка Device Code Flow с безопасным хранением токенов (`0600`).
+  * **Ely.by скины и плащи:** вход строго через браузер по протоколу OAuth2 + PKCE S256 (`client_id = "mq-launcher"`), локальный loopback-сервер `127.0.0.1:<port>/callback` с 5-минутным таймаутом, автоматическая инъекция `authlib-injector` (`-javaagent:...`).
+  * **Microsoft (MSA / Xbox Live):** вход через стандартный браузерный Device Code Flow с безопасным хранением токенов (`0600` на POSIX, `%LOCALAPPDATA%` на Windows).
+  * **Безопасность:** полное отсутствие форм ввода логинов и паролей внутри лаунчера.
 * **Мощный конвейер модов и модпаков:**
-  * **Modrinth API v2** и **CurseForge API v1** каталог с рекурсивным авто-разрешением зависимостей.
+  * Каталоги **Modrinth API v2** и **CurseForge API v1** с рекурсивным авто-разрешением зависимостей.
   * Установка модпаков `.mrpack` и CurseForge `.zip` с валидацией `SHA-1` и `SHA-512` в параллельном пуле `Rayon`.
-  * Встроенная защита от **Zip-Slip** и символических ссылок (`zip_safe.rs`).
+  * Встроенная защита от **Zip-Slip**, санитизация путей и отключение небезопасных команд `wrapper_cmd` / `PreLaunchCommand`.
   * Локальный менеджер модов: переключение `.jar` ↔ `.jar.disabled` в один клик, детекция дубликатов `mod_id` и отсутствующих зависимостей.
 * **Строгая трёхдоменная архитектура потоков:**
-  * **UI Domain:** `eframe` / `egui`, целевой бюджет кадра `< 1 мс`, сторож `UiWatchdog` предупреждает о задержках `> 8 мс`.
+  * **UI Domain:** `eframe` / `egui` (Solid Matte Dark стиль без эмодзи и полупрозрачностей), целевой бюджет кадра `< 1 мс`.
   * **Async I/O Domain:** Tokio с ограничением сетевого пула (`Semaphore(32)`) и HTTP/2 мультиплексированием.
   * **CPU Compute Domain:** Rayon с контролем потоков (`--threads N`) для параллельного SHA-хеширования, десериализации JSON и распаковки ZIP/JAR.
 * **CAS (Content-Addressable Storage):**

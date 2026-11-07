@@ -2288,7 +2288,7 @@ dependencies = [
 
 [[package]]
 name = "mq-auth"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2309,7 +2309,7 @@ dependencies = [
 
 [[package]]
 name = "mq-benches"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "criterion",
  "mq-core",
@@ -2326,7 +2326,7 @@ dependencies = [
 
 [[package]]
 name = "mq-cli"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2363,7 +2363,7 @@ dependencies = [
 
 [[package]]
 name = "mq-core"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "chrono",
  "directories",
@@ -2381,7 +2381,7 @@ dependencies = [
 
 [[package]]
 name = "mq-install"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "dashmap",
  "hex",
@@ -2403,7 +2403,7 @@ dependencies = [
 
 [[package]]
 name = "mq-instances"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "chrono",
  "flate2",
@@ -2419,7 +2419,7 @@ dependencies = [
 
 [[package]]
 name = "mq-launch"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "flate2",
  "flume",
@@ -2441,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "mq-meta"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "hex",
  "mq-core",
@@ -2457,7 +2457,7 @@ dependencies = [
 
 [[package]]
 name = "mq-mods"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2483,7 +2483,7 @@ dependencies = [
 
 [[package]]
 name = "mq-net"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -2506,7 +2506,7 @@ dependencies = [
 
 [[package]]
 name = "mq-sched"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "bytes",
  "crossbeam-channel",
@@ -2524,7 +2524,7 @@ dependencies = [
 
 [[package]]
 name = "mq-ui"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2557,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "mq-update"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -4243,7 +4243,7 @@ dependencies = [
 
 [[package]]
 name = "testsupport"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "axum",
  "bytes",

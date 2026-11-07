@@ -5,6 +5,45 @@
 
 ---
 
+## [v2.2.0] — 2026-11-07 ("Solid Edition — Full Windows 10/11 & Linux Parity")
+
+Релиз **MQ v2.2.0 "Solid Edition"** обеспечивает полный функциональный паритет лаунчера для операционных систем Windows 10/11 x64 и Linux, надежную кроссплатформенную установку в одну команду, криптографическую защиту цепочки поставок через цифровые подписи Minisign Ed25519, аттестации Sigstore и авторизацию Ely.by через браузер по протоколу OAuth2 + PKCE S256.
+
+### Добавлено
+- **Полный паритет для Windows 10/11 x64:**
+  - Кроссплатформенные пути данных (`%LOCALAPPDATA%\MQ` на Windows, `~/.local/share/mq` и `~/.config/mq` на Linux).
+  - Автоматическое определение разделителя classpath (`;` на Windows, `:` на Linux).
+  - Разрешение правил манифеста Minecraft для `natives-windows` (`RuleContext::windows_x86_64()`).
+  - Флаг создания процессов `CREATE_NO_WINDOW` (`0x08000000`) для подавления паразитных консольных окон JVM.
+  - Надежное завершение дерева процессов через `taskkill /PID <pid> /T /F` на Windows.
+  - Поиск и автоматическая загрузка Adoptium Temurin OpenJDK в формате `.zip` с распаковкой на Windows.
+  - Системные шрифты Windows (Segoe UI, Consolas) и корректная поддержка Per-Monitor DPI.
+  - Безопасная работа с путями, содержащими пробелы, кириллицу и префикс длинных путей `\\?\`.
+  - Портативный режим работы через маркер `portable.flag` (изоляция всех данных рядом с `mq.exe`).
+- **Установка в одну команду и дистрибуция:**
+  - Скрипт 1-командной установки для Linux: `curl -fsSL https://github.com/MrQuster/mq/releases/latest/download/install.sh | sh`.
+  - Скрипт 1-командной установки для Windows PowerShell: `irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1 | iex`.
+  - Установщик Inno Setup (`MQ-Setup-2.2.0.exe`) с установкой per-user (`%LOCALAPPDATA%\Programs\MQ`, без требования прав администратора UAC) и поддержкой тихого обновления `/VERYSILENT`.
+  - Портативный архив `mq-windows-x86_64-portable.zip` для запуска с USB-накопителей.
+  - Манифесты пакетов для Windows Package Manager (`winget`) и Scoop (`packaging/scoop`).
+- **Безопасность и целостность цепочки поставок (Supply Chain Integrity):**
+  - Цифровая подпись релизов Ed25519 Minisign (`SHA256SUMS.minisig`) с официальным публичным ключом:
+    `RWRlxrUOJgeLq7AIndJRG9ZhsdT5QiHy9usykXvxt1C49a1h/km3h9lt`.
+  - Интеграция проверки Minisign в подсистему самообновления лаунчера (`crates/mq-update`).
+  - Защита от даунгрейда (отказ от установки версий ниже текущей).
+  - Аттестация сборки бинарных файлов через GitHub OIDC Sigstore (`actions/attest-build-provenance`).
+  - Комплексная модель угроз (`docs/THREAT_MODEL.md`) и политика безопасности (`SECURITY.md`).
+  - Политика строгой нулевой телеметрии и реестр внешних доменов (`docs/PRIVACY.md`).
+  - Санитизация импортируемых сборок: автоматическое отключение `wrapper_cmd` и скриптов `PreLaunchCommand`/`PostExitCommand` из MultiMC/Prism архивов с предупреждением в логах.
+- **Авторизация Ely.by по стандарту OAuth2 + PKCE S256:**
+  - Полный переход на браузерный вход через `oauth2_browser_authorize_url_pkce` с публичным `client_id = "mq-launcher"`.
+  - Генерация криптографических PKCE пар verifier/challenge (RFC 7636) методом S256.
+  - Локальный HTTP loopback-сервер (`127.0.0.1:<port>/callback`) с валидацией CSRF-токена и автоматическим закрытием через 5 минут.
+  - Автоматическое обновление токенов через `/api/oauth2/v1/token` (`grant_type=refresh_token`).
+  - Загрузка и инъекция актуальной версии `authlib-injector` (`-javaagent`) с проверкой SHA-256.
+
+---
+
 ## [v2.1.0] — 2026-11-07 ("Solid Edition")
 
 Релиз **MQ v2.1.0 "Solid Edition"** сосредоточен на максимальной надежности, абсолютной монолитности интерфейса (Solid Dark, отказ от полупрозрачности и AI-slop эффектов), безопасной авторизации через браузер, системе самообновления в один клик и полной поддержке версий Minecraft линейки `26.x`.
