@@ -9,7 +9,6 @@
 //! - Transient retryable failure count
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};

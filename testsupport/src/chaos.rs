@@ -9,8 +9,8 @@
 use std::fs::Permissions;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::process::{Command, Output, Stdio};
+use std::time::Duration;
 
 /// RAII guard that temporarily restricts permissions on a directory (e.g. `0o555` read-only)
 /// and restores the original permissions upon drop.
@@ -128,7 +128,7 @@ pub fn run_concurrent_installs(
     instance_name: &str,
     version: &str,
 ) -> std::io::Result<(Output, Output)> {
-    let mut child1 = Command::new(mq_bin)
+    let child1 = Command::new(mq_bin)
         .env("MQ_DATA_DIR", data_dir)
         .arg("instances")
         .arg("create")
@@ -139,7 +139,7 @@ pub fn run_concurrent_installs(
         .stderr(Stdio::piped())
         .spawn()?;
 
-    let mut child2 = Command::new(mq_bin)
+    let child2 = Command::new(mq_bin)
         .env("MQ_DATA_DIR", data_dir)
         .arg("instances")
         .arg("create")
