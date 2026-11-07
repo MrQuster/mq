@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
 
       - name: Install system dependencies
         run: |
@@ -27,12 +27,12 @@ jobs:
           sudo apt-get install -y libwayland-dev libxkbcommon-dev libx11-dev libx11-xcb-dev tar gzip
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@e0d9b439c2982d6b38466e3eb33f9261a9ec15e0 # master
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
 
       - name: Rust Cache
-        uses: actions/cache@0c907a75c2c80ebcb7f088228285e798b750cf8f # v4.2.1
+        uses: actions/cache@3edfce9056124e459a23f683a21433670d47daca
         with:
           path: |
             ~/.cargo/bin/
@@ -62,7 +62,7 @@ jobs:
           rm -rf dist/package
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb99ba8afd # v4.6.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-linux
           path: |
@@ -74,15 +74,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@e0d9b439c2982d6b38466e3eb33f9261a9ec15e0 # master
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: stable
 
       - name: Rust Cache
-        uses: actions/cache@0c907a75c2c80ebcb7f088228285e798b750cf8f # v4.2.1
+        uses: actions/cache@3edfce9056124e459a23f683a21433670d47daca
         with:
           path: |
             ~/.cargo/bin/
@@ -128,7 +128,7 @@ jobs:
           iscc /DMyAppVersion="$ver" packaging\windows\mq.iss
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb99ba8afd # v4.6.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: release-windows
           path: |
@@ -142,10 +142,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
 
       - name: Download all artifacts
-        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           path: release-temp
 
@@ -181,12 +181,12 @@ jobs:
           minisign -Vm release-assets/SHA256SUMS -x release-assets/SHA256SUMS.minisig -P RWRlxrUOJgeLq7AIndJRG9ZhsdT5QiHy9usykXvxt1C49a1h/km3h9lt
 
       - name: Attest Build Provenance
-        uses: actions/attest-build-provenance@c074443f1b5fb2a2817da07137973044a038437e # v2.2.3
+        uses: actions/attest-build-provenance@9d57eef8c06cd9d6b433effeeb7a6a77b3ff94ad
         with:
           subject-path: 'release-assets/*'
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@c062e49c716900f074742a7a8d5f470530730d09 # v2.2.1
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3
         with:
           tag_name: ${{ github.ref_name }}
           name: "MQ Launcher ${{ github.ref_name }} (Solid Edition)"
