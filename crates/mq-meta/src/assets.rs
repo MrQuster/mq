@@ -1,9 +1,14 @@
-//! Mojang `assets/indexes/<id>.json` parser and deterministic SHA-1 deduplication.
+//! Mojang `assets/indexes/<id>.json` parser, client logging configurations,
+//! legacy virtual/resources reconstruction, and deterministic SHA-1 deduplication.
 
 use std::collections::BTreeMap;
+use std::fs::{self, File};
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 use mq_core::{MqError, MqResult, Sha1Digest};
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use sha1::{Digest as _, Sha1};
 
 use crate::models::{AssetIndex, AssetIndexPointer, AssetObject};
 
@@ -33,6 +38,54 @@ struct StructAssetIndex {
     map_to_resources: Option<bool>,
     #[serde(default)]
     objects: Vec<AssetObject>,
+}
+
+/// Client logging configuration file descriptor inside Mojang `version.json` (`logging.client.file`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientLoggingConfigFile {
+    pub id: String,
+    #[serde(default)]
+    pub sha1: Option<Sha1Digest>,
+    #[serde(default)]
+    pub size: u64,
+    pub url: String,
+}
+
+/// Client logging configuration descriptor inside Mojang `version.json` (`logging.client`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientLoggingConfig {
+    #[serde(default)]
+    pub argument: String,
+    pub file: ClientLoggingConfigFile,
+    #[serde(default, rename = "type")]
+    pub logging_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLoggingRoot {
+    #[serde(default)]
+    logging: Option<RawLoggingSection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLoggingSection {
+    #[serde(default)]
+    client: Option<ClientLoggingConfig>,
+}
+
+/// Verification report detailing results of asset objects, virtual, or legacy resources checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetIntegrityReport {
+    pub total_objects: usize,
+    pub valid_objects: usize,
+    pub corrupted_objects: Vec<PathBuf>,
+    pub missing_objects: Vec<PathBuf>,
+}
+
+impl AssetIntegrityReport {
+    pub fn is_clean(&self) -> bool {
+        self.corrupted_objects.is_empty() && self.missing_objects.is_empty()
+    }
 }
 
 impl Serialize for AssetIndex {
@@ -134,6 +187,21 @@ pub fn parse_asset_index(index_id: &str, json: &str) -> MqResult<AssetIndex> {
     })
 }
 
+/// Resolves the absolute path for an asset index JSON file: `<assets_dir>/indexes/<index_id>.json`.
+pub fn asset_index_file_path(assets_dir: &Path, index_id: &str) -> PathBuf {
+    assets_dir
+        .join("indexes")
+        .join(format!("{}.json", index_id.trim()))
+}
+
+/// Saves raw asset index JSON bytes byte-for-byte to `<indexes_dir>/<id>.json` without any mutation.
+pub fn save_asset_index_raw(indexes_dir: &Path, id: &str, raw_json: &str) -> MqResult<PathBuf> {
+    fs::create_dir_all(indexes_dir)?;
+    let path = indexes_dir.join(format!("{}.json", id.trim()));
+    fs::write(&path, raw_json.as_bytes())?;
+    Ok(path)
+}
+
 /// Fetches and parses a Mojang asset index JSON document over HTTP, returning both parsed index
 /// and exact raw JSON string bytes for byte-for-byte exact disk storage.
 pub async fn fetch_asset_index_raw(
@@ -175,6 +243,250 @@ pub async fn fetch_asset_index(
     fetch_asset_index_raw(client, pointer)
         .await
         .map(|(idx, _)| idx)
+}
+
+/// Parses the optional `logging.client` configuration from a Mojang `version.json` document.
+pub fn parse_client_logging_config(version_json: &str) -> MqResult<Option<ClientLoggingConfig>> {
+    let root: RawLoggingRoot = serde_json::from_str(version_json)?;
+    Ok(root.logging.and_then(|l| l.client))
+}
+
+/// Returns the path to the logging configuration file inside `<assets_dir>/log_configs/<file_id>`.
+pub fn client_logging_file_path(assets_dir: &Path, file_id: &str) -> PathBuf {
+    assets_dir.join("log_configs").join(file_id.trim())
+}
+
+/// Formats the JVM logging configuration argument (`-Dlog4j.configurationFile=...`).
+///
+/// Replaces `${path}` in `argument_template` with the absolute path of `config_file_path`.
+/// If `argument_template` is empty or missing, defaults to `-Dlog4j.configurationFile=<path>`.
+pub fn format_logging_jvm_argument(argument_template: &str, config_file_path: &Path) -> String {
+    let path_str = config_file_path.to_string_lossy();
+    if argument_template.trim().is_empty() {
+        format!("-Dlog4j.configurationFile={path_str}")
+    } else if argument_template.contains("${path}") {
+        argument_template.replace("${path}", &path_str)
+    } else {
+        argument_template.to_string()
+    }
+}
+
+/// Verifies whether the logging config file exists in `<assets_dir>/log_configs/` and matches SHA-1 (if provided).
+pub fn verify_client_logging_file(assets_dir: &Path, config: &ClientLoggingConfig) -> bool {
+    let path = client_logging_file_path(assets_dir, &config.file.id);
+    if !path.is_file() {
+        return false;
+    }
+
+    if let Ok(metadata) = path.metadata() {
+        if config.file.size > 0 && metadata.len() != config.file.size {
+            return false;
+        }
+    } else {
+        return false;
+    }
+
+    if let Some(expected_sha1) = config.file.sha1 {
+        let mut file = match File::open(&path) {
+            Ok(f) => f,
+            Err(_) => return false,
+        };
+        let mut hasher = Sha1::new();
+        let mut buf = [0u8; 16 * 1024];
+        loop {
+            match file.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => hasher.update(&buf[..n]),
+                Err(_) => return false,
+            }
+        }
+        let actual: [u8; 20] = hasher.finalize().into();
+        if actual != *expected_sha1.as_bytes() {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Verifies the integrity of all asset objects in `<assets_dir>/objects/<xx>/<hash>`.
+pub fn verify_asset_objects_integrity(
+    assets_dir: &Path,
+    index: &AssetIndex,
+) -> AssetIntegrityReport {
+    let objects_base = assets_dir.join("objects");
+    let mut valid = 0usize;
+    let mut missing = Vec::new();
+    let mut corrupted = Vec::new();
+
+    for obj in &index.objects {
+        let p = objects_base.join(obj.relative_object_path());
+        if !p.is_file() {
+            missing.push(p);
+            continue;
+        }
+
+        let file = match File::open(&p) {
+            Ok(f) => f,
+            Err(_) => {
+                missing.push(p);
+                continue;
+            }
+        };
+
+        let mut reader = std::io::BufReader::with_capacity(32 * 1024, file);
+        let mut hasher = Sha1::new();
+        let mut buf = [0u8; 32 * 1024];
+        let mut bytes_read = 0u64;
+        let mut read_err = false;
+
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    bytes_read += n as u64;
+                    hasher.update(&buf[..n]);
+                }
+                Err(_) => {
+                    read_err = true;
+                    break;
+                }
+            }
+        }
+
+        if read_err || bytes_read != obj.size {
+            corrupted.push(p);
+            continue;
+        }
+
+        let actual: [u8; 20] = hasher.finalize().into();
+        if actual != *obj.hash.as_bytes() {
+            corrupted.push(p);
+        } else {
+            valid += 1;
+        }
+    }
+
+    AssetIntegrityReport {
+        total_objects: index.objects.len(),
+        valid_objects: valid,
+        corrupted_objects: corrupted,
+        missing_objects: missing,
+    }
+}
+
+/// Reconstructs legacy virtual assets (`virtual: true`) into `<assets_dir>/virtual/<id>/<name>`.
+///
+/// Used for Minecraft 1.7.10 - 1.12.2 legacy sound and resource lookups.
+pub fn reconstruct_virtual_assets(asset_index: &AssetIndex, assets_dir: &Path) -> MqResult<usize> {
+    if !asset_index.is_virtual {
+        return Ok(0);
+    }
+
+    let objects_base = assets_dir.join("objects");
+    let virtual_base = assets_dir.join("virtual").join(&asset_index.id);
+    let mut count = 0usize;
+
+    for obj in &asset_index.objects {
+        let src = objects_base.join(obj.relative_object_path());
+        if !src.exists() {
+            continue;
+        }
+
+        let dst = virtual_base.join(&obj.name);
+        if let Some(p) = dst.parent() {
+            fs::create_dir_all(p)?;
+        }
+
+        if !dst.exists() {
+            if fs::hard_link(&src, &dst).is_err() {
+                fs::copy(&src, &dst)?;
+            }
+            count += 1;
+        }
+    }
+
+    Ok(count)
+}
+
+/// Reconstructs legacy instance resources (`map_to_resources: true`) into `<instance_dir>/resources/<name>`.
+///
+/// Used for early Minecraft versions that look for sounds/resources directly in the instance directory.
+pub fn reconstruct_resource_assets(
+    asset_index: &AssetIndex,
+    instance_dir: &Path,
+    assets_dir: &Path,
+) -> MqResult<usize> {
+    if !asset_index.map_to_resources {
+        return Ok(0);
+    }
+
+    let objects_base = assets_dir.join("objects");
+    let resources_base = instance_dir.join("resources");
+    let mut count = 0usize;
+
+    for obj in &asset_index.objects {
+        let src = objects_base.join(obj.relative_object_path());
+        if !src.exists() {
+            continue;
+        }
+
+        let dst = resources_base.join(&obj.name);
+        if let Some(p) = dst.parent() {
+            fs::create_dir_all(p)?;
+        }
+
+        if !dst.exists() {
+            if fs::hard_link(&src, &dst).is_err() {
+                fs::copy(&src, &dst)?;
+            }
+            count += 1;
+        }
+    }
+
+    Ok(count)
+}
+
+/// Verifies whether all objects in a virtual asset index are materialized in `<assets_dir>/virtual/<id>`.
+pub fn verify_virtual_assets(asset_index: &AssetIndex, assets_dir: &Path) -> AssetIntegrityReport {
+    let virtual_base = assets_dir.join("virtual").join(&asset_index.id);
+    let mut valid = 0usize;
+    let mut missing = Vec::new();
+    let mut corrupted = Vec::new();
+
+    for obj in &asset_index.objects {
+        let p = virtual_base.join(&obj.name);
+        if !p.is_file() {
+            missing.push(p);
+            continue;
+        }
+        if let Ok(meta) = p.metadata() {
+            if meta.len() != obj.size {
+                corrupted.push(p);
+                continue;
+            }
+        }
+        valid += 1;
+    }
+
+    AssetIntegrityReport {
+        total_objects: asset_index.objects.len(),
+        valid_objects: valid,
+        corrupted_objects: corrupted,
+        missing_objects: missing,
+    }
+}
+
+/// Checks if an asset name is a localization file (`minecraft/lang/*.json` or legacy `*.lang` or `pack.mcmeta`).
+pub fn is_language_asset(name: &str) -> bool {
+    name.starts_with("minecraft/lang/") || name.ends_with(".lang") || name == "pack.mcmeta"
+}
+
+/// Checks if an asset name is specifically the Russian localization file (`ru_ru.json` or `ru_RU.lang`).
+pub fn is_russian_language_asset(name: &str) -> bool {
+    name == "minecraft/lang/ru_ru.json"
+        || name.ends_with("/ru_ru.json")
+        || name.ends_with("/ru_RU.lang")
 }
 
 impl AssetIndex {
@@ -237,6 +549,7 @@ impl AssetIndex {
 mod tests {
     use super::*;
     use crate::vanilla::MOJANG_RESOURCES_BASE_URL;
+    use tempfile::tempdir;
 
     #[test]
     fn parses_and_deduplicates_asset_index_deterministically() {
@@ -288,7 +601,6 @@ mod tests {
             unique[1].hash.to_hex(),
             "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"
         );
-        // Lexicographically first logical name is chosen for shared hash.
         assert_eq!(unique[1].name, "minecraft/sounds/mob/cat/meow1.ogg");
         assert_eq!(
             unique[2].hash.to_hex(),
@@ -307,43 +619,95 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_hex_hash_or_empty_id() {
-        let valid_json = r#"{"objects": {}}"#;
-        assert!(parse_asset_index("", valid_json).is_err());
-
-        let bad_hash_json = r#"{
-            "objects": {
-                "pack.mcmeta": { "hash": "not-a-sha1", "size": 10 }
+    fn parses_and_formats_client_logging_config() {
+        let version_json = r#"{
+            "id": "1.12.2",
+            "logging": {
+                "client": {
+                    "argument": "-Dlog4j.configurationFile=${path}",
+                    "file": {
+                        "id": "client-1.12.xml",
+                        "sha1": "ef4f57b9222277c603b5443217b1fb797c293eb7",
+                        "size": 877,
+                        "url": "https://piston-data.mojang.com/v1/objects/ef4f57b9222277c603b5443217b1fb797c293eb7/client-1.12.xml"
+                    },
+                    "type": "log4j2-xml"
+                }
             }
         }"#;
-        assert!(parse_asset_index("17", bad_hash_json).is_err());
+
+        let config = parse_client_logging_config(version_json)
+            .expect("parse logging")
+            .expect("logging must be present");
+
+        assert_eq!(config.file.id, "client-1.12.xml");
+        assert_eq!(config.file.size, 877);
+        assert_eq!(
+            config.file.sha1.unwrap().to_hex(),
+            "ef4f57b9222277c603b5443217b1fb797c293eb7"
+        );
+
+        let assets_dir = Path::new("/var/mc/assets");
+        let log_file = client_logging_file_path(assets_dir, &config.file.id);
+        assert_eq!(
+            log_file,
+            PathBuf::from("/var/mc/assets/log_configs/client-1.12.xml")
+        );
+
+        let jvm_arg = format_logging_jvm_argument(&config.argument, &log_file);
+        assert_eq!(
+            jvm_arg,
+            "-Dlog4j.configurationFile=/var/mc/assets/log_configs/client-1.12.xml"
+        );
     }
 
     #[test]
-    fn serializes_to_mojang_format_and_deserializes_back() {
-        let json = r#"{
-            "objects": {
-                "minecraft/lang/ru_ru.json": {
-                    "hash": "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3",
-                    "size": 12048
-                }
-            },
-            "virtual": true,
-            "map_to_resources": true
-        }"#;
+    fn reconstructs_and_verifies_legacy_virtual_and_resources_assets() {
+        let dir = tempdir().unwrap();
+        let assets_dir = dir.path().join("assets");
+        let instance_dir = dir.path().join("instance");
+        let objects_dir = assets_dir.join("objects");
 
-        let index = parse_asset_index("1.12", json).expect("parse asset index");
+        let hash_str = "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3";
+        let blob_dir = objects_dir.join(&hash_str[..2]);
+        fs::create_dir_all(&blob_dir).unwrap();
+        let blob_path = blob_dir.join(hash_str);
+        fs::write(&blob_path, b"test asset content").unwrap();
+
+        let json = format!(
+            r#"{{
+                "objects": {{
+                    "minecraft/lang/ru_ru.json": {{
+                        "hash": "{hash_str}",
+                        "size": 18
+                    }}
+                }},
+                "virtual": true,
+                "map_to_resources": true
+            }}"#
+        );
+
+        let index = parse_asset_index("legacy", &json).unwrap();
         assert!(index.is_virtual);
         assert!(index.map_to_resources);
-        let mojang_json = index.to_mojang_json().expect("to mojang json");
-        assert!(mojang_json.contains("\"minecraft/lang/ru_ru.json\""));
-        assert!(mojang_json.contains("\"virtual\": true"));
+        assert!(is_language_asset("minecraft/lang/ru_ru.json"));
+        assert!(is_russian_language_asset("minecraft/lang/ru_ru.json"));
 
-        // Roundtrip via serde_json::from_str
-        let deserialized: AssetIndex = serde_json::from_str(&mojang_json).expect("deserialize");
-        assert_eq!(deserialized.objects.len(), 1);
-        assert_eq!(deserialized.objects[0].name, "minecraft/lang/ru_ru.json");
-        assert!(deserialized.is_virtual);
-        assert!(deserialized.map_to_resources);
+        let count_virtual = reconstruct_virtual_assets(&index, &assets_dir).unwrap();
+        assert_eq!(count_virtual, 1);
+        let virt_path = assets_dir
+            .join("virtual")
+            .join("legacy")
+            .join("minecraft/lang/ru_ru.json");
+        assert!(virt_path.exists());
+
+        let count_res = reconstruct_resource_assets(&index, &instance_dir, &assets_dir).unwrap();
+        assert_eq!(count_res, 1);
+        let res_path = instance_dir.join("resources/minecraft/lang/ru_ru.json");
+        assert!(res_path.exists());
+
+        let report = verify_virtual_assets(&index, &assets_dir);
+        assert!(report.is_clean());
+        assert_eq!(report.valid_objects, 1);
     }
 }

@@ -87,6 +87,11 @@ pub fn merge_inherits_from(
         .cloned()
         .unwrap_or_else(|| parent.client_jar.clone());
 
+    let java_version = child
+        .java_version
+        .clone()
+        .unwrap_or_else(|| parent.java_version.clone());
+
     Ok(ResolvedVersion {
         id,
         mc_version: parent.mc_version.clone(),
@@ -94,7 +99,7 @@ pub fn merge_inherits_from(
         loader_version,
         inherits_from,
         main_class,
-        java_version: parent.java_version.clone(),
+        java_version,
         asset_index,
         client_jar,
         libraries,
@@ -382,6 +387,8 @@ mod tests {
             game_arguments: Vec::new(),
             asset_index: None,
             client_jar: None,
+            java_version: None,
+            logging: None,
         };
 
         let err = merge_inherits_from(&parent, &bad_child).expect_err("mismatch must fail");
@@ -413,6 +420,8 @@ mod tests {
             game_arguments: Vec::new(),
             asset_index: None,
             client_jar: None,
+            java_version: None,
+            logging: None,
         };
 
         let merged = merge_inherits_from(&parent, &child).expect("merge quilt");
@@ -444,5 +453,34 @@ mod tests {
              /opt/mq/libraries/org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar:\
              /opt/mq/versions/1.21.1/1.21.1.jar"
         );
+    }
+
+    #[test]
+    fn merge_cascades_java_version_and_inherits_vanilla_metadata() {
+        let parent = sample_vanilla_parent();
+        let custom_java = crate::models::JavaVersionSpec {
+            component: "java-runtime-epsilon".to_owned(),
+            major_version: 25,
+        };
+        let child = LoaderProfile {
+            id: "neoforge-21.1.0".to_owned(),
+            loader: ModLoaderKind::NeoForge,
+            loader_version: Some("21.1.0".to_owned()),
+            inherits_from: Some("1.21.1".to_owned()),
+            main_class: "cpw.mods.bootstraplauncher.BootstrapLauncher".to_owned(),
+            libraries: Vec::new(),
+            jvm_arguments: Vec::new(),
+            game_arguments: Vec::new(),
+            asset_index: None,
+            client_jar: None,
+            java_version: Some(custom_java.clone()),
+            logging: None,
+        };
+
+        let merged = merge_inherits_from(&parent, &child).expect("merge neoforge");
+        assert_eq!(merged.java_version, custom_java);
+        assert_eq!(merged.asset_index, parent.asset_index);
+        assert_eq!(merged.client_jar, parent.client_jar);
+        assert_eq!(merged.loader, ModLoaderKind::NeoForge);
     }
 }
