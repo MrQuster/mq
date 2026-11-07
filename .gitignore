@@ -4,7 +4,6 @@
 /.cache/
 
 # Agent, LLM transcripts and scratch files
-/.agent/
 /.agents/
 /.claude/
 /CHAT_HISTORY.md
