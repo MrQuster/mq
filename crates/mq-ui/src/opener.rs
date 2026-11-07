@@ -53,10 +53,13 @@ mod tests {
 
     #[test]
     fn test_open_that_signature() {
-        // Validate open_that accepts &str, String, Path, PathBuf
-        let _url = "https://github.com/MrQuster/mq";
-        let _path = std::path::Path::new(".");
-        // Check function signature compiles
-        let _ = open_that as fn(&str) -> std::io::Result<()>;
+        // Validate open_that accepts &str, String, Path, PathBuf at compile time
+        let check_signatures = || {
+            let _ = open_that("https://github.com/MrQuster/mq");
+            let _ = open_that(String::from("https://github.com/MrQuster/mq"));
+            let _ = open_that(std::path::Path::new("."));
+            let _ = open_that(std::path::PathBuf::from("."));
+        };
+        let _ = check_signatures;
     }
 }
