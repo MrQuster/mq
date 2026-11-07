@@ -9,20 +9,72 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VersionManifestEntry {
     pub id: String,
-    #[serde(rename = "type")]
+    #[serde(default, rename = "type")]
     pub release_type: String,
+    #[serde(default)]
     pub url: String,
     #[serde(default)]
     pub sha1: Option<String>,
     #[serde(default, rename = "releaseTime")]
     pub release_time: Option<String>,
+    #[serde(default)]
+    pub time: Option<String>,
+    #[serde(default, rename = "complianceLevel")]
+    pub compliance_level: Option<i32>,
+}
+
+impl VersionManifestEntry {
+    pub fn is_release(&self) -> bool {
+        self.release_type.eq_ignore_ascii_case("release")
+    }
+
+    pub fn is_snapshot(&self) -> bool {
+        self.release_type.eq_ignore_ascii_case("snapshot")
+    }
+
+    pub fn is_old_beta(&self) -> bool {
+        self.release_type.eq_ignore_ascii_case("old_beta")
+    }
+
+    pub fn is_old_alpha(&self) -> bool {
+        self.release_type.eq_ignore_ascii_case("old_alpha")
+    }
 }
 
 /// Top-level `version_manifest_v2.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VersionManifest {
     pub latest: LatestVersions,
+    #[serde(default)]
     pub versions: Vec<VersionManifestEntry>,
+}
+
+impl VersionManifest {
+    /// Sorts versions chronologically by `releaseTime` descending (newest first).
+    pub fn sort_by_release_time_desc(&mut self) {
+        self.versions.sort_by(|a, b| {
+            let ta = a.release_time.as_deref().or(a.time.as_deref()).unwrap_or("");
+            let tb = b.release_time.as_deref().or(b.time.as_deref()).unwrap_or("");
+            tb.cmp(ta)
+        });
+    }
+
+    /// Sorts versions chronologically by `releaseTime` ascending (oldest first).
+    pub fn sort_by_release_time_asc(&mut self) {
+        self.versions.sort_by(|a, b| {
+            let ta = a.release_time.as_deref().or(a.time.as_deref()).unwrap_or("");
+            let tb = b.release_time.as_deref().or(b.time.as_deref()).unwrap_or("");
+            ta.cmp(tb)
+        });
+    }
+
+    /// Filters versions by release type (`"release"`, `"snapshot"`, `"old_beta"`, `"old_alpha"`).
+    pub fn filter_by_type(&self, release_type: &str) -> Vec<&VersionManifestEntry> {
+        self.versions
+            .iter()
+            .filter(|v| v.release_type.eq_ignore_ascii_case(release_type))
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +89,7 @@ pub struct LatestVersions {
 pub struct RuleContext {
     pub os_name: String,
     pub os_arch: String,
+    pub os_version: Option<String>,
     pub features: BTreeMap<String, bool>,
 }
 
@@ -51,6 +104,16 @@ impl RuleContext {
         Self {
             os_name: "linux".to_string(),
             os_arch: "x86_64".to_string(),
+            os_version: None,
+            features: BTreeMap::new(),
+        }
+    }
+
+    pub fn linux_arm64() -> Self {
+        Self {
+            os_name: "linux".to_string(),
+            os_arch: "arm64".to_string(),
+            os_version: None,
             features: BTreeMap::new(),
         }
     }
@@ -59,6 +122,34 @@ impl RuleContext {
         Self {
             os_name: "windows".to_string(),
             os_arch: "x86_64".to_string(),
+            os_version: Some("10.0".to_string()),
+            features: BTreeMap::new(),
+        }
+    }
+
+    pub fn windows_arm64() -> Self {
+        Self {
+            os_name: "windows".to_string(),
+            os_arch: "arm64".to_string(),
+            os_version: Some("10.0".to_string()),
+            features: BTreeMap::new(),
+        }
+    }
+
+    pub fn macos_arm64() -> Self {
+        Self {
+            os_name: "osx".to_string(),
+            os_arch: "arm64".to_string(),
+            os_version: None,
+            features: BTreeMap::new(),
+        }
+    }
+
+    pub fn macos_x86_64() -> Self {
+        Self {
+            os_name: "osx".to_string(),
+            os_arch: "x86_64".to_string(),
+            os_version: None,
             features: BTreeMap::new(),
         }
     }
@@ -71,9 +162,15 @@ impl RuleContext {
             "x86" => "x86",
             other => other,
         };
+        let os_version = if os == "windows" {
+            Some("10.0".to_string())
+        } else {
+            None
+        };
         Self {
             os_name: os.to_string(),
             os_arch: arch.to_string(),
+            os_version,
             features: BTreeMap::new(),
         }
     }
@@ -84,7 +181,7 @@ impl RuleContext {
 pub struct JavaVersionSpec {
     #[serde(default = "default_java_component")]
     pub component: String,
-    #[serde(rename = "majorVersion")]
+    #[serde(default, rename = "majorVersion")]
     pub major_version: u32,
 }
 
@@ -93,11 +190,15 @@ fn default_java_component() -> String {
 }
 
 /// Resolved artifact download metadata (deterministic).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ArtifactDownload {
+    #[serde(default)]
     pub path: String,
+    #[serde(default)]
     pub url: String,
+    #[serde(default)]
     pub sha1: Option<Sha1Digest>,
+    #[serde(default)]
     pub size: u64,
 }
 
@@ -130,14 +231,37 @@ impl ResolvedLibrary {
 }
 
 /// Asset index pointer in `version.json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct AssetIndexPointer {
     pub id: String,
+    #[serde(default)]
     pub sha1: Option<Sha1Digest>,
+    #[serde(default)]
     pub size: u64,
     #[serde(default, rename = "totalSize")]
     pub total_size: u64,
+    #[serde(default)]
     pub url: String,
+}
+
+/// Resolved client logging configuration from `version.json` (`logging.client`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LoggingConfig {
+    #[serde(default)]
+    pub client: Option<LoggingClientConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct LoggingClientConfig {
+    /// JVM argument template (e.g. `"-Dlog4j.configurationFile=${path}"`).
+    #[serde(default)]
+    pub argument: String,
+    /// Downloadable logging configuration file.
+    #[serde(default)]
+    pub file: ArtifactDownload,
+    /// Type of logging config (e.g. `"log4j2-xml"`).
+    #[serde(default, rename = "type")]
+    pub logging_type: String,
 }
 
 /// Fully resolved, deterministic Minecraft + Modloader version specification (Lesson E8).
@@ -159,6 +283,9 @@ pub struct ResolvedVersion {
     pub jvm_arguments: Vec<String>,
     /// Ordered game arguments (with `${...}` placeholders preserved for `mq-launch`).
     pub game_arguments: Vec<String>,
+    /// Client logging configuration (`logging.client`), if present.
+    #[serde(default)]
+    pub logging: Option<LoggingConfig>,
 }
 
 /// Single asset object in `assets/indexes/<id>.json`.

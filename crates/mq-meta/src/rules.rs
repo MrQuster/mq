@@ -73,6 +73,24 @@ pub fn normalize_arch(raw: &str) -> &str {
     }
 }
 
+/// Evaluates whether an OS version pattern matches the given actual version string.
+/// Handles Mojang patterns like `^10\\.`, `10\\..*`, and simple version prefixes/regex.
+pub fn os_version_matches(pattern: &str, actual: &str) -> bool {
+    let clean_pat = pattern.trim();
+    if clean_pat.is_empty() {
+        return true;
+    }
+    let unescaped = clean_pat.replace("\\.", ".");
+    if let Some(prefix) = unescaped.strip_prefix('^') {
+        let prefix_clean = prefix.trim_end_matches(".*").trim_end_matches('*');
+        actual.starts_with(prefix_clean)
+    } else if let Some(prefix) = unescaped.strip_suffix(".*") {
+        actual.starts_with(prefix)
+    } else {
+        actual == unescaped || actual.contains(&unescaped)
+    }
+}
+
 /// Returns `true` if a single [`RawRule`]'s predicates match the given [`RuleContext`].
 pub fn rule_matches(rule: &RawRule, ctx: &RuleContext) -> bool {
     if let Some(ref os_cond) = rule.os {
@@ -90,10 +108,23 @@ pub fn rule_matches(rule: &RawRule, ctx: &RuleContext) -> bool {
                 return false;
             }
         }
+        if let Some(ref ver_pattern) = os_cond.version {
+            if let Some(ref actual_ver) = ctx.os_version {
+                if !os_version_matches(ver_pattern, actual_ver) {
+                    return false;
+                }
+            } else {
+                // If the rule specifically requires an OS version and we have none,
+                // do not match the rule.
+                return false;
+            }
+        }
     }
 
     if let Some(ref req_features) = rule.features {
         for (feature_key, expected_val) in req_features {
+            // Features (is_demo_user, has_custom_resolution, quick_play_path, etc.)
+            // are strictly false by default if not set in ctx.features
             let actual_val = ctx.features.get(feature_key).copied().unwrap_or(false);
             if actual_val != *expected_val {
                 return false;
@@ -150,6 +181,7 @@ mod tests {
         let mac_ctx = RuleContext {
             os_name: "macos".to_string(),
             os_arch: "aarch64".to_string(),
+            os_version: None,
             features: BTreeMap::new(),
         };
         assert!(!evaluate_rules(Some(&rules), &mac_ctx));
@@ -183,6 +215,7 @@ mod tests {
         let linux_arm64 = RuleContext {
             os_name: "linux".to_string(),
             os_arch: "aarch64".to_string(),
+            os_version: None,
             features: BTreeMap::new(),
         };
         assert!(!evaluate_rules(Some(&rules), &linux_arm64));
@@ -210,5 +243,41 @@ mod tests {
 
         ctx.features.insert("is_demo_user".to_string(), false);
         assert!(!evaluate_rules(Some(&rules), &ctx));
+    }
+
+    #[test]
+    fn features_default_to_false() {
+        let json = r#"[
+            { "action": "allow", "features": { "has_custom_resolution": true } }
+        ]"#;
+        let rules: Vec<RawRule> = serde_json::from_str(json).expect("parse rules");
+        let ctx = RuleContext::linux_x86_64();
+        // Disabled by default
+        assert!(!evaluate_rules(Some(&rules), &ctx));
+
+        let qp_json = r#"[
+            { "action": "allow", "features": { "quick_play_path": true } }
+        ]"#;
+        let qp_rules: Vec<RawRule> = serde_json::from_str(qp_json).expect("parse qp rules");
+        assert!(!evaluate_rules(Some(&qp_rules), &ctx));
+    }
+
+    #[test]
+    fn os_version_rules_match_pattern() {
+        let json = r#"[
+            { "action": "allow", "os": { "name": "windows", "version": "^10\\." } }
+        ]"#;
+        let rules: Vec<RawRule> = serde_json::from_str(json).expect("parse rules");
+
+        let mut win10 = RuleContext::windows_x86_64();
+        win10.os_version = Some("10.0.19041".to_string());
+        assert!(evaluate_rules(Some(&rules), &win10));
+
+        let mut win7 = RuleContext::windows_x86_64();
+        win7.os_version = Some("6.1.7601".to_string());
+        assert!(!evaluate_rules(Some(&rules), &win7));
+
+        let linux = RuleContext::linux_x86_64();
+        assert!(!evaluate_rules(Some(&rules), &linux));
     }
 }

@@ -130,6 +130,7 @@ mod tests {
                 "--userProperties".to_owned(),
                 "${user_properties}".to_owned(),
             ],
+            logging: None,
         }
     }
 
