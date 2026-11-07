@@ -28,8 +28,9 @@ use mq_install::{
 };
 use mq_instances::InstanceManager;
 use mq_launch::{
-    build_launch_command, discover_java_runtimes, required_java_major_for_mc, select_java_runtime,
-    spawn_and_stream_game, LaunchContext,
+    build_launch_command, discover_java_runtimes, ensure_prelaunch_assets,
+    required_java_major_for_mc, select_java_runtime, spawn_and_stream_game,
+    sync_minecraft_options_lang, LaunchContext,
 };
 use mq_mods::{
     delete_mod, install_curseforge_zip, install_mrpack, resolve_mod_with_dependencies,
@@ -621,6 +622,11 @@ async fn cmd_launch(args: LaunchArgs, paths: MqPaths) -> Result<()> {
         );
         return Ok(());
     }
+
+    let inst_dir = paths.instance_dir(inst.id.as_str());
+    let _ = ensure_prelaunch_assets(&paths, &inst_dir, &launch_ctx.version).await;
+    let target_locale = inst.mc_locale.as_deref().unwrap_or("ru_ru");
+    let _ = sync_minecraft_options_lang(&inst_dir, target_locale);
 
     println!(
         "[MQ] Запуск Minecraft ({}) с помощью Java {}...",

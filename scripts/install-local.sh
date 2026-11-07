@@ -23,7 +23,10 @@ echo "Установка иконки в ${ICON_DIR}/mq.svg..."
 install -m 644 "${REPO_ROOT}/packaging/mq.svg" "${ICON_DIR}/mq.svg"
 
 echo "Установка desktop-ярлыка в ${APP_DIR}/mq.desktop..."
-install -m 644 "${REPO_ROOT}/packaging/mq.desktop" "${APP_DIR}/mq.desktop"
+sed -e "s|^Exec=mq|Exec=${BIN_DIR}/mq|" \
+    -e "s|^TryExec=mq|TryExec=${BIN_DIR}/mq|" \
+    "${REPO_ROOT}/packaging/mq.desktop" > "${APP_DIR}/mq.desktop"
+chmod 644 "${APP_DIR}/mq.desktop"
 
 # Update desktop and icon databases if tools exist
 if command -v update-desktop-database >/dev/null 2>&1; then

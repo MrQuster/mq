@@ -1002,113 +1002,116 @@ impl InstancesView {
                                             );
                                         }
                                     }
-
-                                    ui.add_space(10.0);
-
-                                    if !is_downloading {
-                                        if is_installed {
-                                            if secondary_glass_button(
-                                                ui,
-                                                Some(VectorIcon::Refresh),
-                                                "Переустановить",
-                                            )
-                                            .clicked()
-                                            {
-                                                let _ = state.cmd_sender.send(
-                                                    UiWorkerCommand::InstallInstance {
-                                                        instance_id: inst_id.clone(),
-                                                    },
-                                                );
-                                            }
-                                            if secondary_glass_button(
-                                                ui,
-                                                Some(VectorIcon::Verify),
-                                                "Проверить",
-                                            )
-                                            .clicked()
-                                            {
-                                                let _ = state.cmd_sender.send(
-                                                    UiWorkerCommand::VerifyInstance {
-                                                        instance_id: inst_id.clone(),
-                                                    },
-                                                );
-                                            }
-                                        } else if secondary_glass_button(
-                                            ui,
-                                            Some(VectorIcon::Download),
-                                            "Установить",
-                                        )
-                                        .clicked()
-                                        {
-                                            let _ = state.cmd_sender.send(
-                                                UiWorkerCommand::InstallInstance {
-                                                    instance_id: inst_id.clone(),
-                                                },
-                                            );
-                                        }
-                                    }
-
-                                    if secondary_glass_button(
-                                        ui,
-                                        Some(VectorIcon::Folder),
-                                        "Папка игры",
-                                    )
-                                    .clicked()
-                                    {
-                                        let inst_dir = state.paths.instance_dir(inst_id.as_str());
-                                        let _ = std::process::Command::new("xdg-open")
-                                            .arg(inst_dir)
-                                            .spawn();
-                                    }
-                                    if secondary_glass_button(
-                                        ui,
-                                        Some(VectorIcon::Folder),
-                                        "Папка mods",
-                                    )
-                                    .clicked()
-                                    {
-                                        let mods_dir =
-                                            state.paths.instance_dir(inst_id.as_str()).join("mods");
-                                        let _ = std::fs::create_dir_all(&mods_dir);
-                                        let _ = std::process::Command::new("xdg-open")
-                                            .arg(mods_dir)
-                                            .spawn();
-                                    }
-                                    if secondary_glass_button(
-                                        ui,
-                                        Some(VectorIcon::Download),
-                                        "Экспорт .zip",
-                                    )
-                                    .clicked()
-                                    {
-                                        let inst_dir = state.paths.instance_dir(inst_id.as_str());
-                                        let out_path = state
-                                            .paths
-                                            .backups_dir()
-                                            .join(format!("{}.zip", inst_id.as_str()));
-                                        if let Err(e) = export_instance_to_zip(&inst_dir, &out_path)
-                                        {
-                                            state.status_message =
-                                                Some((format!("Ошибка экспорта: {e}"), true));
-                                        } else {
-                                            state.status_message = Some((
-                                                format!("Экспортировано в {}", out_path.display()),
-                                                false,
-                                            ));
-                                        }
-                                    }
-                                    if secondary_glass_button(
-                                        ui,
-                                        Some(VectorIcon::Layers),
-                                        "Дублировать",
-                                    )
-                                    .clicked()
-                                    {
-                                        self.show_duplicate_dialog = true;
-                                        self.duplicate_name = format!("{} (Копия)", inst_name);
-                                    }
                                 },
                             );
+                        });
+
+                        ui.add_space(8.0);
+
+                        // Secondary actions toolbar row
+                        ui.horizontal_wrapped(|ui| {
+                            if !is_downloading {
+                                if is_installed {
+                                    if secondary_glass_button(
+                                        ui,
+                                        Some(VectorIcon::Refresh),
+                                        "Переустановить",
+                                    )
+                                    .clicked()
+                                    {
+                                        let _ = state.cmd_sender.send(
+                                            UiWorkerCommand::InstallInstance {
+                                                instance_id: inst_id.clone(),
+                                            },
+                                        );
+                                    }
+                                    if secondary_glass_button(
+                                        ui,
+                                        Some(VectorIcon::Verify),
+                                        "Проверить",
+                                    )
+                                    .clicked()
+                                    {
+                                        let _ = state.cmd_sender.send(
+                                            UiWorkerCommand::VerifyInstance {
+                                                instance_id: inst_id.clone(),
+                                            },
+                                        );
+                                    }
+                                } else if secondary_glass_button(
+                                    ui,
+                                    Some(VectorIcon::Download),
+                                    "Установить",
+                                )
+                                .clicked()
+                                {
+                                    let _ = state.cmd_sender.send(
+                                        UiWorkerCommand::InstallInstance {
+                                            instance_id: inst_id.clone(),
+                                        },
+                                    );
+                                }
+                            }
+
+                            if secondary_glass_button(
+                                ui,
+                                Some(VectorIcon::Folder),
+                                "Папка игры",
+                            )
+                            .clicked()
+                            {
+                                let inst_dir = state.paths.instance_dir(inst_id.as_str());
+                                let _ = std::process::Command::new("xdg-open")
+                                    .arg(inst_dir)
+                                    .spawn();
+                            }
+                            if secondary_glass_button(
+                                ui,
+                                Some(VectorIcon::Folder),
+                                "Папка mods",
+                            )
+                            .clicked()
+                            {
+                                let mods_dir =
+                                    state.paths.instance_dir(inst_id.as_str()).join("mods");
+                                let _ = std::fs::create_dir_all(&mods_dir);
+                                let _ = std::process::Command::new("xdg-open")
+                                    .arg(mods_dir)
+                                    .spawn();
+                            }
+                            if secondary_glass_button(
+                                ui,
+                                Some(VectorIcon::Download),
+                                "Экспорт .zip",
+                            )
+                            .clicked()
+                            {
+                                let inst_dir = state.paths.instance_dir(inst_id.as_str());
+                                let out_path = state
+                                    .paths
+                                    .backups_dir()
+                                    .join(format!("{}.zip", inst_id.as_str()));
+                                if let Err(e) = export_instance_to_zip(&inst_dir, &out_path)
+                                {
+                                    state.status_message =
+                                        Some((format!("Ошибка экспорта: {e}"), true));
+                                } else {
+                                    state.status_message = Some((
+                                        format!("Экспортировано в {}", out_path.display()),
+                                        false,
+                                    ));
+                                }
+                            }
+                            if secondary_glass_button(
+                                ui,
+                                Some(VectorIcon::Layers),
+                                "Дублировать",
+                            )
+                            .clicked()
+                            {
+                                self.show_duplicate_dialog = true;
+                                self.duplicate_name = format!("{} (Копия)", inst_name);
+                            }
                         });
                     });
 

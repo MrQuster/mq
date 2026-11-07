@@ -463,6 +463,14 @@ impl MqApp {
                                 let _ = resp_tx
                                     .send(UiWorkerResponse::GameStarted(instance_id.clone()));
 
+                                // Ensure valid assets/indexes/<id>.json and lang assets before game starts
+                                let _ = mq_launch::ensure_prelaunch_assets(
+                                    &launch_ctx.paths,
+                                    &inst_dir,
+                                    &launch_ctx.version,
+                                )
+                                .await;
+
                                 // Auto-synchronize options.txt language
                                 let target_mc_lang =
                                     inst.mc_locale.as_deref().unwrap_or(default_mc_loc.as_str());
