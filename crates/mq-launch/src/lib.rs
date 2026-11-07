@@ -25,7 +25,7 @@ pub use options::{
     read_minecraft_options_lang, sync_minecraft_options_lang,
 };
 pub use prelaunch::ensure_prelaunch_assets;
-pub use runner::spawn_and_stream_game;
+pub use runner::{kill_process_tree, spawn_and_stream_game};
 
 #[cfg(test)]
 mod tests {

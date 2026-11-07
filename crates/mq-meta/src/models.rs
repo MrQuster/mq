@@ -42,7 +42,7 @@ pub struct RuleContext {
 
 impl Default for RuleContext {
     fn default() -> Self {
-        Self::linux_x86_64()
+        Self::current()
     }
 }
 
@@ -51,6 +51,29 @@ impl RuleContext {
         Self {
             os_name: "linux".to_string(),
             os_arch: "x86_64".to_string(),
+            features: BTreeMap::new(),
+        }
+    }
+
+    pub fn windows_x86_64() -> Self {
+        Self {
+            os_name: "windows".to_string(),
+            os_arch: "x86_64".to_string(),
+            features: BTreeMap::new(),
+        }
+    }
+
+    pub fn current() -> Self {
+        let os = mq_core::platform::os_name();
+        let arch = match std::env::consts::ARCH {
+            "x86_64" => "x86_64",
+            "aarch64" => "arm64",
+            "x86" => "x86",
+            other => other,
+        };
+        Self {
+            os_name: os.to_string(),
+            os_arch: arch.to_string(),
             features: BTreeMap::new(),
         }
     }

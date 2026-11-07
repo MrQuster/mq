@@ -187,13 +187,20 @@ pub fn build_deterministic_classpath(
     classpath
 }
 
-/// Joins ordered classpath entries using `:` (standard Unix/Linux JVM path separator).
+/// Joins ordered classpath entries using the platform-specific JVM separator (`;` on Windows, `:` on Unix).
 pub fn format_classpath_string<P: AsRef<Path>>(entries: &[P]) -> String {
+    format_classpath_string_separator(entries, mq_core::platform::classpath_separator())
+}
+
+/// Joins ordered classpath entries with an explicit separator character.
+pub fn format_classpath_string_separator<P: AsRef<Path>>(entries: &[P], sep: char) -> String {
+    let mut sep_buf = [0u8; 4];
+    let sep_str = sep.encode_utf8(&mut sep_buf);
     entries
         .iter()
         .map(|entry| entry.as_ref().to_string_lossy())
         .collect::<Vec<_>>()
-        .join(":")
+        .join(sep_str)
 }
 
 #[cfg(test)]

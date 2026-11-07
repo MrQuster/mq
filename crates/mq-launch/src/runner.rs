@@ -38,6 +38,13 @@ pub async fn spawn_and_stream_game(
         command.current_dir(&cmd.working_dir);
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        // 0x08000000 = CREATE_NO_WINDOW: prevent console window popup for Minecraft javaw/java
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+
     let mut child = command.spawn().map_err(|err| {
         MqError::Process(format!(
             "failed to spawn game process '{}': {err}",
@@ -105,5 +112,25 @@ async fn stream_log_lines<R>(
         if let Some(ref bus) = event_bus {
             bus.publish(Event::GameLog(entry));
         }
+    }
+}
+
+/// Terminates a game process and all of its descendant child processes.
+/// On Windows, executes `taskkill /F /T /PID <pid>`.
+/// On Unix, terminates the process via SIGKILL.
+pub fn kill_process_tree(pid: u32) -> Result<(), std::io::Error> {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .output();
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output();
+        Ok(())
     }
 }

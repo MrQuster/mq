@@ -30,18 +30,44 @@ pub struct JavaRuntime {
     pub vendor: String,
 }
 
-/// Discovers all installed Java runtimes across `/usr/lib/jvm/*`, `~/.local/share/mq/java/*`, `$JAVA_HOME`, and `$PATH`.
+/// Discovers all installed Java runtimes across system directories, `~/.local/share/mq/java/*`
+/// (or Windows `%LOCALAPPDATA%\MQ\java`), `$JAVA_HOME`, and `$PATH`.
 ///
 /// Deduplicates runtimes by canonical binary path and sorts deterministically by
 /// `(major_version, path)`.
 pub fn discover_java_runtimes() -> Vec<JavaRuntime> {
-    let mut jvm_roots: Vec<PathBuf> = SYSTEM_JVM_DIRS.iter().map(PathBuf::from).collect();
-    if let Ok(home) = env::var("HOME") {
-        let mq_java = PathBuf::from(home).join(".local/share/mq/java");
+    let mut jvm_roots: Vec<PathBuf> = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        for env_var in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
+            if let Ok(dir) = env::var(env_var) {
+                let base = PathBuf::from(dir);
+                jvm_roots.push(base.join("Java"));
+                jvm_roots.push(base.join("Eclipse Adoptium"));
+                jvm_roots.push(base.join("AdoptOpenJDK"));
+                jvm_roots.push(base.join("Zulu"));
+                jvm_roots.push(base.join("BellSoft"));
+                jvm_roots.push(base.join("Programs").join("Eclipse Adoptium"));
+            }
+        }
+        let mq_java = mq_core::platform::default_data_dir().join("java");
         if mq_java.exists() {
             jvm_roots.push(mq_java);
         }
     }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        jvm_roots.extend(SYSTEM_JVM_DIRS.iter().map(PathBuf::from));
+        if let Ok(home) = env::var("HOME") {
+            let mq_java = PathBuf::from(home).join(".local/share/mq/java");
+            if mq_java.exists() {
+                jvm_roots.push(mq_java);
+            }
+        }
+    }
+
     let roots_ref: Vec<&Path> = jvm_roots.iter().map(PathBuf::as_path).collect();
     let java_home = env::var_os("JAVA_HOME").map(PathBuf::from);
     let path_env = env::var_os("PATH");
@@ -56,8 +82,13 @@ pub fn discover_java_runtimes_from_sources(
     path_env: Option<&OsStr>,
 ) -> Vec<JavaRuntime> {
     let mut candidates: Vec<PathBuf> = Vec::new();
+    let java_bin_names: &[&str] = if cfg!(target_os = "windows") {
+        &["java.exe", "javaw.exe", "java"]
+    } else {
+        &["java"]
+    };
 
-    // 1. Scan /usr/lib/jvm/* (and /usr/lib64/jvm/*)
+    // 1. Scan JVM roots
     for root in jvm_roots {
         if let Ok(entries) = fs::read_dir(root) {
             let mut dir_paths: Vec<PathBuf> = entries
@@ -69,13 +100,15 @@ pub fn discover_java_runtimes_from_sources(
                 if !entry_path.is_dir() {
                     continue;
                 }
-                let bin_java = entry_path.join("bin").join("java");
-                if is_executable_file(&bin_java) {
-                    candidates.push(bin_java);
-                }
-                let jre_bin_java = entry_path.join("jre").join("bin").join("java");
-                if is_executable_file(&jre_bin_java) {
-                    candidates.push(jre_bin_java);
+                for &bin_name in java_bin_names {
+                    let bin_java = entry_path.join("bin").join(bin_name);
+                    if is_executable_file(&bin_java) {
+                        candidates.push(bin_java);
+                    }
+                    let jre_bin_java = entry_path.join("jre").join("bin").join(bin_name);
+                    if is_executable_file(&jre_bin_java) {
+                        candidates.push(jre_bin_java);
+                    }
                 }
             }
         }
@@ -83,10 +116,13 @@ pub fn discover_java_runtimes_from_sources(
 
     // 2. Check $JAVA_HOME
     if let Some(home) = java_home.filter(|p| !p.as_os_str().is_empty()) {
-        let bin_java = home.join("bin").join("java");
-        if is_executable_file(&bin_java) {
-            candidates.push(bin_java);
-        } else if is_executable_file(home) {
+        for &bin_name in java_bin_names {
+            let bin_java = home.join("bin").join(bin_name);
+            if is_executable_file(&bin_java) {
+                candidates.push(bin_java);
+            }
+        }
+        if is_executable_file(home) {
             candidates.push(home.to_path_buf());
         }
     }
@@ -97,9 +133,11 @@ pub fn discover_java_runtimes_from_sources(
             if dir.as_os_str().is_empty() {
                 continue;
             }
-            let bin_java = dir.join("java");
-            if is_executable_file(&bin_java) {
-                candidates.push(bin_java);
+            for &bin_name in java_bin_names {
+                let bin_java = dir.join(bin_name);
+                if is_executable_file(&bin_java) {
+                    candidates.push(bin_java);
+                }
             }
         }
     }
@@ -515,9 +553,11 @@ pub async fn download_adoptium_java(
         }
     };
 
+    let target_os = if cfg!(target_os = "windows") { "windows" } else { "linux" };
+    let bin_name = if cfg!(target_os = "windows") { "java.exe" } else { "java" };
     let dest_dir_name = format!("temurin-{feature_version}-{arch}");
     let dest_dir = target_parent_dir.join(&dest_dir_name);
-    let bin_java = dest_dir.join("bin").join("java");
+    let bin_java = dest_dir.join("bin").join(bin_name);
 
     // If already installed and probeable, return existing
     if bin_java.is_file() {
@@ -530,7 +570,7 @@ pub async fn download_adoptium_java(
 
     // 1. Fetch checksum if available
     let checksum_url = format!(
-        "https://api.adoptium.net/v3/assets/latest/{feature_version}/hotspot?architecture={arch}&image_type=jre&os=linux"
+        "https://api.adoptium.net/v3/assets/latest/{feature_version}/hotspot?architecture={arch}&image_type=jre&os={target_os}"
     );
     let mut expected_checksum = None;
     if let Ok(resp) = client.get(&checksum_url).send().await {
@@ -551,9 +591,9 @@ pub async fn download_adoptium_java(
         }
     }
 
-    // 2. Download binary tar.gz
+    // 2. Download binary (zip for Windows, tar.gz for Linux)
     let binary_url = format!(
-        "https://api.adoptium.net/v3/binary/latest/{feature_version}/ga/linux/{arch}/jre/hotspot/normal/eclipse"
+        "https://api.adoptium.net/v3/binary/latest/{feature_version}/ga/{target_os}/{arch}/jre/hotspot/normal/eclipse"
     );
     let resp = client
         .get(&binary_url)
@@ -568,7 +608,7 @@ pub async fn download_adoptium_java(
         )));
     }
 
-    let tar_gz_bytes = resp
+    let archive_bytes = resp
         .bytes()
         .await
         .map_err(|e| MqError::Network(format!("failed to download Adoptium archive: {e}")))?;
@@ -576,7 +616,7 @@ pub async fn download_adoptium_java(
     // 3. Verify SHA-256 if expected checksum is found
     if let Some(ref expected) = expected_checksum {
         let mut hasher = Sha256::new();
-        hasher.update(&tar_gz_bytes);
+        hasher.update(&archive_bytes);
         let actual = hex::encode(hasher.finalize()).to_lowercase();
         if actual != *expected {
             return Err(MqError::Internal(format!(
@@ -585,7 +625,7 @@ pub async fn download_adoptium_java(
         }
     }
 
-    // 4. Safely extract tar.gz
+    // 4. Safely extract archive
     let temp_extract = target_parent_dir.join(format!(
         ".tmp_extract_{feature_version}_{}",
         std::process::id()
@@ -595,12 +635,24 @@ pub async fn download_adoptium_java(
     }
     fs::create_dir_all(&temp_extract)?;
 
-    let gz_decoder = flate2::read::GzDecoder::new(&tar_gz_bytes[..]);
-    let mut archive = tar::Archive::new(gz_decoder);
-    archive.unpack(&temp_extract).map_err(|e| {
-        let _ = fs::remove_dir_all(&temp_extract);
-        MqError::Internal(format!("failed to unpack Adoptium archive: {e}"))
-    })?;
+    if target_os == "windows" {
+        let cursor = std::io::Cursor::new(&archive_bytes[..]);
+        let mut zip_archive = zip::ZipArchive::new(cursor).map_err(|e| {
+            let _ = fs::remove_dir_all(&temp_extract);
+            MqError::Internal(format!("failed to parse Adoptium zip: {e}"))
+        })?;
+        zip_archive.extract(&temp_extract).map_err(|e| {
+            let _ = fs::remove_dir_all(&temp_extract);
+            MqError::Internal(format!("failed to unpack Adoptium zip archive: {e}"))
+        })?;
+    } else {
+        let gz_decoder = flate2::read::GzDecoder::new(&archive_bytes[..]);
+        let mut archive = tar::Archive::new(gz_decoder);
+        archive.unpack(&temp_extract).map_err(|e| {
+            let _ = fs::remove_dir_all(&temp_extract);
+            MqError::Internal(format!("failed to unpack Adoptium archive: {e}"))
+        })?;
+    }
 
     // Adoptium tarballs extract into a single root folder (e.g. `jdk-21.0.5+11-jre`)
     let mut root_extracted = temp_extract.clone();

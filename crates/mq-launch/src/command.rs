@@ -189,6 +189,11 @@ pub fn build_launch_command(ctx: &LaunchContext) -> MqResult<BuiltLaunchCommand>
     // 5. Main class.
     jvm_flags.push(ctx.version.main_class.trim().to_owned());
 
+    // 5.1 Ensure UTF-8 file encoding on Windows for Cyrillic username/path safety
+    if cfg!(target_os = "windows") && !jvm_flags.iter().any(|f| f.starts_with("-Dfile.encoding=")) {
+        jvm_flags.push("-Dfile.encoding=UTF-8".to_string());
+    }
+
     // 6. Expanded game arguments.
     let game_dir_str = game_dir.to_string_lossy();
     let assets_dir_str = assets_dir.to_string_lossy();
@@ -222,14 +227,18 @@ pub fn build_launch_command(ctx: &LaunchContext) -> MqResult<BuiltLaunchCommand>
         jvm_flags.push(expanded);
     }
 
-    // 7. Apply optional wrapper command prefix (`gamemoderun`, `mangohud`, `prime-run`).
-    let (program, args) = match ctx
-        .instance
-        .wrapper_cmd
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    // 7. Apply optional wrapper command prefix (Linux only: `gamemoderun`, `mangohud`, `prime-run`).
+    let wrapper_effective = if cfg!(target_os = "windows") {
+        None
+    } else {
+        ctx.instance
+            .wrapper_cmd
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+
+    let (program, args) = match wrapper_effective {
         Some(wrapper_raw) => {
             let mut wrapper_tokens = wrapper_raw.split_whitespace();
             let first_bin = wrapper_tokens.next().expect("non-empty wrapper");
@@ -297,13 +306,15 @@ fn expand_jvm_placeholder(
     if !template.contains("${") {
         return template.to_owned();
     }
+    let mut cp_sep_buf = [0u8; 4];
+    let cp_sep = mq_core::platform::classpath_separator().encode_utf8(&mut cp_sep_buf);
     template
         .replace("${natives_directory}", natives_dir)
         .replace("${launcher_name}", LAUNCHER_NAME)
         .replace("${launcher_version}", LAUNCHER_VERSION)
         .replace("${classpath}", classpath)
         .replace("${library_directory}", libraries_dir)
-        .replace("${classpath_separator}", ":")
+        .replace("${classpath_separator}", cp_sep)
         .replace("${version_name}", version_name)
 }
 
