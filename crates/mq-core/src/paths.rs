@@ -24,6 +24,39 @@ pub struct MqPaths {
 }
 
 impl MqPaths {
+    /// Resolves canonical paths for the active platform:
+    /// - Checks for `portable.flag` adjacent to `current_exe()`; if found, runs in portable mode rooted at the executable's directory.
+    /// - On Windows: `%LOCALAPPDATA%\MQ` (data), `%APPDATA%\MQ` (config), `%LOCALAPPDATA%\MQ\cache` (cache).
+    /// - On Linux: strictly follows XDG Base Directory specification (`~/.local/share/mq`, `~/.config/mq`, `~/.cache/mq`).
+    pub fn platform_default() -> MqResult<Self> {
+        if let Ok(exe) = env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                if exe_dir.join("portable.flag").is_file() {
+                    return Ok(Self::with_root(exe_dir));
+                }
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            Ok(Self {
+                data_dir: crate::platform::default_data_dir(),
+                config_dir: crate::platform::default_config_dir(),
+                cache_dir: crate::platform::default_cache_dir(),
+            })
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Self::xdg_default()
+        }
+    }
+
+    /// Standard entry point resolving platform-default directories.
+    #[inline]
+    pub fn default_paths() -> MqResult<Self> {
+        Self::platform_default()
+    }
+
     /// Resolves paths strictly following the XDG Base Directory Specification:
     /// - `$XDG_DATA_HOME/mq` or `$HOME/.local/share/mq`
     /// - `$XDG_CONFIG_HOME/mq` or `$HOME/.config/mq`

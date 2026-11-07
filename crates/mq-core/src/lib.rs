@@ -6,6 +6,7 @@ pub mod error;
 pub mod events;
 pub mod ids;
 pub mod paths;
+pub mod platform;
 pub mod secret;
 
 pub use config::{
@@ -21,6 +22,11 @@ pub use ids::{
     AccountId, InstanceId, ModLoaderKind, Sha1Digest, Sha1Hash, Sha512Digest, Sha512Hash,
 };
 pub use paths::{resolve_safe_path, MqPaths};
+pub use platform::{
+    atomic_write, classpath_separator, default_cache_dir, default_config_dir, default_data_dir,
+    ensure_long_path_prefix, is_windows_reserved_name, link_or_copy, open_folder, open_url,
+    os_name, sanitize_filename,
+};
 pub use secret::{redact_text, SecretString, REDACTED_PLACEHOLDER};
 
 #[cfg(test)]
