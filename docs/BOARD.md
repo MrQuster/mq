@@ -1,73 +1,24 @@
-# MQ Swarm Engineering Board (v2.1.0)
+# MQ v2.2.0 Swarm Task Board
 
-Append-only tracking board for blockers, cross-agent coordination, and verification gates.
+Общая координационная доска для 10 субагентов.
+
+## 📋 Статусы задач
+
+| ID | Агент | Задача | Статус | Блокеры / Заметки |
+|:---|:---|:---|:---:|:---|
+| **TASK-01** | `ag-01` | Модуль `platform`: пути `%LOCALAPPDATA%`/`%APPDATA%`, санитизация имен, long paths, хардлинки/копии | `In Progress` | - |
+| **TASK-02** | `ag-02` | Запуск игры на Windows: classpath `;`, `rules`, natives-windows, `CREATE_NO_WINDOW`, Adoptium Java | `In Progress` | Зависит от TASK-01 (`platform`) |
+| **TASK-03** | `ag-03` | Windows UI: fallback рендерера, `AttachConsole`, шрифты Segoe UI, замена `xdg-open` | `In Progress` | - |
+| **TASK-04** | `ag-04` | Ely.by OAuth2 PKCE browser-only, удаление старых паролей, хранилище Windows Credential / DPAPI | `In Progress` | - |
+| **TASK-05** | `ag-05` | Универсальный `install.sh`: функция `main()`, sha256sum check, `--uninstall`, `shellcheck` | `In Progress` | - |
+| **TASK-06** | `ag-06` | Inno Setup `mq.iss`, PowerShell `install.ps1`, портативный ZIP, winget/scoop, `WINDOWS_SIGNING.md` | `In Progress` | - |
+| **TASK-07** | `ag-07` | CI матрица Ubuntu/Windows, закрепление SHA Actions, smoke тесты установки, аттестации | `In Progress` | - |
+| **TASK-08** | `ag-08` | Minisign подпись `SHA256SUMS.minisig`, секрет `MQ_SIGNING_KEY`, самообновление на Windows (`.old`) | `In Progress` | - |
+| **TASK-09** | `ag-09` | Харденинг: `SECURITY.md`, `THREAT_MODEL.md`, `PRIVACY.md`, `deny.toml`, защита от zip-бомб и команд | `In Progress` | - |
+| **TASK-10** | `ag-10` | Слияние веток, гейты fmt/clippy/test, zero-stubs, обновление README, CHANGELOG, релиз | `In Progress` | Координация |
 
 ---
 
-## `ag-01-instances-screen`
-- **Status:** Initialized.
-- **Goals:** Implement B1, B4, B6, B8, B10, B13, B14 on `instances_view.rs`.
-
-## `ag-02-instance-tabs-console`
-- **Status:** Initialized.
-- **Goals:** Implement B3 (full-height console with ScrollArea), B5 (underline tabs), B7 (filter chips with counts).
-
-## `ag-03-shell-sidebar-statusbar`
-- **Status:** Initialized.
-- **Goals:** Implement B2 (mascot removal from main UI), B9 (sentence case, no RU/EN mix), B11 (unified 16px icons), B12 (status-bar labels & monospaced stats), update notification badge in sidebar.
-
-## `ag-04-design-system`
-- **Status:** Initialized.
-- **Goals:** Deliver clean components (`SearchField`, `Select`, `Segmented`, `FilterChip`, `UnderlineTabs`, `EmptyState`) in `crates/mq-ui/src/components/`.
-
-## `ag-05-catalog-downloads-settings-ui`
-- **Status:** Initialized.
-- **Goals:** Catalog search layout, Adoptium downloads UI, Settings screens ("Обновления" and "О программе" with author `MrQuster`), responsive layout checks.
-
-## `ag-06-mod-deps-resolver`
-- **Status:** Initialized.
-- **Goals:** Recursive Modrinth dependency resolver, lockfile `mods/.mq-lock.json`, client/server side filters, unused dependency pruning.
-
-## `ag-07-mod-preflight-crash`
-- **Status:** Initialized.
-- **Goals:** Fast mod preflight (<1s), metadata parsing (`fabric.mod.json`, `mods.toml`), auto-fix dialog, localized crash analyzer for mods and shaders.
-
-## `ag-08-shaders`
-- **Status:** Initialized.
-- **Goals:** Iris + Sodium / NeoForge Iris / Oculus + Embeddium engine resolver, auto-prompt to install shader engine, `config/iris.properties` manager, GPU diagnostics.
-
-## `ag-09-resourcepacks-updates`
-- **Status:** Initialized.
-- **Goals:** `options.txt` `resourcePacks` atomic ordering, mod update check with `.mq-backup/` and 1-click rollback.
-
-## `ag-10-versions-java-loaders`
-- **Status:** Initialized.
-- **Goals:** Minecraft `26.x` version schema support (chronological order from manifest, not semver), dynamic Java major version resolution and Adoptium Temurin / Zulu download, dynamic loader availability.
-
-## `ag-11-e2e-fabric-quilt`
-- **Status:** Initialized.
-- **Goals:** Scenarios A, B, D, E, G test suite in `scripts/e2e-mods.sh`.
-
-## `ag-12-e2e-forge-shaders-packs`
-- **Status:** Initialized.
-- **Goals:** Scenarios C, F in `scripts/e2e-forge.sh`, verified shader configurations.
-
-## `ag-13-worlds-servers-screens-modpacks`
-- **Status:** Initialized.
-- **Goals:** Modpack import/export (.mrpack, CurseForge zip) with zip-slip prevention, worlds/servers tabs polish.
-
-## `ag-14-accounts-elyby-browser`
-- **Status:** Initialized.
-- **Goals:** Remove legacy password forms; implement loopback OAuth2 browser flow for Ely.by (`minecraft_server_session` scope), token storage in keyring / 0600 file, mock OAuth2 integration tests.
-
-## `ag-15-self-update-stability`
-- **Status:** Initialized.
-- **Goals:** Create `crates/mq-update`, GitHub Releases API checking, SHA-256 verification, atomic `<exe>.new` replacement and rollback, package manager detection, mock tests.
-
-## `ag-16-visual-qa`
-- **Status:** Initialized.
-- **Goals:** Capture multi-resolution baseline snapshots (960x600, 1180x740, 1920x1080), audit B1–B15, document >=20 UI defects in `docs/UI_DEFECTS.md`.
-
-## `ag-17-integrator-release`
-- **Status:** Initialized.
-- **Goals:** Coordinated branch merges, quality gates (`fmt`, `clippy`, `test`), metadata updates, release packaging for v2.1.0.
+## 💬 Сообщения и запросы между агентами
+- `ag-01`: Готовит `mq_core::platform` с `classpath_separator()` и `sanitize_filename()`.
+- `ag-08`: Готовит пару ключей minisign. Публичный ключ будет экспортирован в `mq-update`.

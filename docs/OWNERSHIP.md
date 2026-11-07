@@ -1,55 +1,22 @@
-# MQ Workspace Ownership Matrix (v2.1.0)
+# MQ v2.2.0 File Ownership Matrix
 
-This document establishes strict file ownership boundaries across all 17 subagents.
-Shared files must only be modified by their designated owner or via coordinated integration requests.
+В целях предотвращения конфликтов каждый файл в репозитории закреплен за конкретным субагентом:
 
----
-
-## 1. Shared Files Ownership
-
-| File | Designated Owner | Purpose / Rules |
-|---|---|---|
-| `Cargo.toml` (root workspace) | `ag-17-integrator-release` | Workspace members, dependencies, metadata |
-| `Cargo.lock` | `ag-17-integrator-release` | Dependency locking |
-| `crates/mq-cli/src/main.rs` | `ag-17-integrator-release` | Root CLI entrypoint |
-| `crates/mq-ui/src/theme.rs` | `ag-04-design-system` | Design tokens, color palette, typography |
-| `crates/mq-ui/src/components/*` | `ag-04-design-system` | Shared atomic UI components |
-| `docs/FEATURE_MATRIX.md` | `ag-17-integrator-release` | Verification statuses across all test matrices |
-| `docs/BOARD.md` | All Agents | Append-only status, blockers, and bug reports |
+| Субагент | Закрепленные файлы и области |
+|:---|:---|
+| `ag-01-platform-paths-fs` | `crates/mq-core/src/platform.rs`, `crates/mq-core/src/paths.rs`, `crates/mq-install/src/cas.rs` |
+| `ag-02-launch-java-windows` | `crates/mq-launch/src/command.rs`, `crates/mq-launch/src/java.rs`, `crates/mq-launch/src/runner.rs`, `crates/mq-meta/src/rules.rs` |
+| `ag-03-windows-ui-integration` | `crates/mq-ui/src/fonts.rs`, `crates/mq-ui/src/widgets.rs`, `crates/mq-cli/src/main.rs` (GUI/CLI subsys), иконки окна |
+| `ag-04-elyby-browser-auth` | `crates/mq-auth/src/elyby.rs`, `crates/mq-auth/src/store.rs`, `crates/mq-ui/src/accounts_view.rs` |
+| `ag-05-linux-installer` | `install.sh`, `packaging/PKGBUILD`, `packaging/mq.desktop`, `scripts/install-local.sh` |
+| `ag-06-windows-installer` | `packaging/windows/`, `packaging/winget/`, `packaging/scoop/`, `install.ps1`, `docs/WINDOWS_SIGNING.md` |
+| `ag-07-ci-release-pipeline` | `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.github/dependabot.yml` |
+| `ag-08-update-signing` | `crates/mq-update/src/lib.rs`, подпись Minisign, генерация ключей, логика обновления на Windows |
+| `ag-09-security-hardening` | `docs/SECURITY.md`, `docs/THREAT_MODEL.md`, `docs/PRIVACY.md`, `deny.toml` |
+| `ag-10-integrator-qa-docs` | `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`, `README.md`, `docs/FEATURE_MATRIX.md`, общая координация |
 
 ---
 
-## 2. Agent Subsystem Ownership
-
-| Agent ID | Role | Owned Source Files / Paths |
-|---|---|---|
-| `ag-01-instances-screen` | Instances View & Cards | `crates/mq-ui/src/instances_view.rs` (instance grid, cards, list mode, header controls) |
-| `ag-02-instance-tabs-console` | Tabs & Live Console | `crates/mq-ui/src/instances_view.rs` (tab underline bar, console view, log filters), `components/tabs.rs` |
-| `ag-03-shell-sidebar-statusbar` | Shell, Sidebar & HUD | `crates/mq-ui/src/sidebar.rs`, `crates/mq-ui/src/hud.rs`, update notification badge |
-| `ag-04-design-system` | Design System Lead | `crates/mq-ui/src/theme.rs`, `crates/mq-ui/src/components/*`, `crates/mq-ui/src/widgets.rs` |
-| `ag-05-catalog-downloads-settings-ui` | Catalog & Settings Views | `crates/mq-ui/src/catalog_view.rs`, `crates/mq-ui/src/settings_view.rs`, instance creation dialog |
-| `ag-06-mod-deps-resolver` | Mod Dependencies & Lockfile | `crates/mq-mods/src/resolver.rs`, `crates/mq-mods/src/lockfile.rs`, Modrinth deps |
-| `ag-07-mod-preflight-crash` | Preflight & Crash Analysis | `crates/mq-launch/src/prelaunch.rs`, `crates/mq-launch/src/crash_analyzer.rs`, mod metadata parsers |
-| `ag-08-shaders` | Shaders & GPU Diagnostics | `crates/mq-mods/src/shaders.rs`, `crates/mq-launch/src/gpu.rs`, Shaders tab UI |
-| `ag-09-resourcepacks-updates` | Resourcepacks & Mod Backups | `crates/mq-launch/src/options.rs`, `crates/mq-instances/src/options.rs`, mod updater & backup |
-| `ag-10-versions-java-loaders` | Java & Version Schema (26.x) | `crates/mq-meta/src/vanilla.rs`, `crates/mq-meta/src/loaders.rs`, `crates/mq-launch/src/java.rs` |
-| `ag-11-e2e-fabric-quilt` | Fabric & Quilt E2E Pipeline | `scripts/e2e-mods.sh` (Fabric/Quilt scenarios A, B, D, E, G), `crates/mq-launch/src/runner.rs` |
-| `ag-12-e2e-forge-shaders-packs` | Forge/NeoForge & Shaders E2E | `scripts/e2e-forge.sh` (Scenarios C, F), Iris/Oculus real config tests |
-| `ag-13-worlds-servers-screens-modpacks` | Worlds, Servers, Modpacks | `crates/mq-instances/src/worlds.rs`, `crates/mq-instances/src/servers.rs`, `crates/mq-mods/src/mrpack.rs`, `cfpack.rs` |
-| `ag-14-accounts-elyby-browser` | Ely.by Browser OAuth2 Flow | `crates/mq-auth/src/elyby.rs`, `crates/mq-auth/src/oauth.rs`, `crates/mq-ui/src/accounts_view.rs` |
-| `ag-15-self-update-stability` | Self-Update & Process Lifecycle | `crates/mq-update/*`, atomic file swaps, single-instance lock, crash hooks |
-| `ag-16-visual-qa` | Visual QA & Snapshot Auditor | `crates/mq-ui/src/snapshot.rs`, `docs/UI_DEFECTS.md`, visual regression baseline & diffing |
-| `ag-17-integrator-release` | Integrator, Clippy & Release | Integration branch merges, release builds, package manifests, GitHub release publishing |
-
----
-
-## 3. Localization Strings
-
-To avoid merge conflicts, localization strings are placed in subsystem-specific files under `i18n/ru/`:
-- `i18n/ru/instances.toml`
-- `i18n/ru/console.toml`
-- `i18n/ru/shell.toml`
-- `i18n/ru/settings.toml`
-- `i18n/ru/mods.toml`
-- `i18n/ru/accounts.toml`
-- `i18n/ru/update.toml`
+### Правила изменения общих файлов:
+- `Cargo.toml` и `Cargo.lock` модифицируются исключительно через согласование с интегратором `ag-10`.
+- Запрещено напрямую модифицировать файлы других агентов без записи в `docs/BOARD.md`.

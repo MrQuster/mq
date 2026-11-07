@@ -1,27 +1,41 @@
 ---
 name: mq-elyby-auth
-description: Official Ely.by OAuth2 browser authentication, loopback listener, and authlib-injector
+description: Ely.by OAuth2 PKCE browser-only flow and authlib-injector specification
 ---
 
-# Ely.by OAuth2 Browser-Only Authentication
+# Ely.by Browser OAuth2 & authlib-injector Specification
 
-## Endpoint Reference
-- Authorize: `https://account.ely.by/oauth2/v1?client_id={id}&redirect_uri={uri}&response_type=code&scope=account_info%20account_email%20offline_access%20minecraft_server_session&state={state}`
-- Token Exchange: `POST https://account.ely.by/api/oauth2/v1/token`
-  - Body: `grant_type=authorization_code&client_id={id}&client_secret={secret}&code={code}&redirect_uri={uri}`
-- User Info: `GET https://account.ely.by/api/account/v1/info` (`Authorization: Bearer <access_token>`)
-  - Returns: `{ "id": 1, "uuid": "...", "username": "..." }`
-- Token Refresh: `POST https://account.ely.by/api/oauth2/v1/token`
-  - Body: `grant_type=refresh_token&client_id={id}&client_secret={secret}&refresh_token={token}`
+## 1. Application Registration & Credentials
+- Application Type: "Настольное приложение" (Desktop public client).
+- Default Client ID: `"mq-launcher"` (configurable via `MQ_ELYBY_CLIENT_ID` or `config.toml` `[elyby]`).
+- Public client: NO `client_secret`.
+- Flow: Authorization Code Flow with PKCE (S256).
 
-## Architecture & Security
-- Loopback TCP Server on `127.0.0.1:<port>` (e.g. port 25585 or ephemeral).
-- CSRF protection: validate `state` parameter matches.
-- Returns HTML response: "Вход выполнен. Можно вернуться в лаунчер".
-- Token storage: Linux Secret Service (`keyring`), fallback file `0600`.
-- Zero credentials in UI: no password / email / username text inputs.
-- Minecraft Launch Argument:
-  `-javaagent:<path_to_authlib_injector>.jar=https://authserver.ely.by`
-  `--username <username>`
-  `--uuid <uuid>`
-  `--accessToken <access_token>`
+## 2. Authorization URL Generation
+- Base URL: `https://account.ely.by/oauth2/v1`
+- Query Parameters:
+  - `client_id`: `mq-launcher`
+  - `redirect_uri`: `http://127.0.0.1:<port>/callback` (ephemeral or fixed 25585 loopback)
+  - `response_type`: `code`
+  - `scope`: `account_info account_email minecraft_server_session`
+  - `state`: 32-byte cryptographically random hex/UUID string
+  - `code_challenge`: Base64URL(SHA256(code_verifier))
+  - `code_challenge_method`: `S256`
+
+## 3. Loopback Callback & Token Exchange
+- Ephemeral listener on `127.0.0.1:<port>` with timeout (5 minutes).
+- Return localized Russian HTML page in user browser: "Успешный вход в MQ Launcher. Вы можете закрыть эту вкладку."
+- Exchange code at `POST https://account.ely.by/api/oauth2/v1/token`:
+  - `grant_type`: `authorization_code`
+  - `client_id`: `mq-launcher`
+  - `code`: captured code
+  - `redirect_uri`: exact matching loopback URL
+  - `code_verifier`: original PKCE verifier string
+- Response: `access_token`, `refresh_token`, `expires_in`.
+- User Profile fetch: `GET https://account.ely.by/api/account/v1/info` with `Bearer <access_token>`.
+
+## 4. Minecraft Launch Integration
+- Download verified `authlib-injector.jar` with SHA-256 verification from official repository.
+- Pass Java agent first in JVM args:
+  `-javaagent:<path>/authlib-injector.jar=ely.by` (or `-javaagent:<path>/authlib-injector.jar=https://authserver.ely.by/api/yggdrasil`)
+- Pass `--username <username> --uuid <uuid> --accessToken <access_token>` to Minecraft client.
