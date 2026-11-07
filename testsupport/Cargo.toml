@@ -19,5 +19,6 @@ parking_lot.workspace = true
 bytes.workspace = true
 
 [dev-dependencies]
+mq-launch = { path = "../crates/mq-launch" }
 tempfile.workspace = true
 tokio.workspace = true

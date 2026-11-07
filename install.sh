@@ -28,7 +28,7 @@ RED="\033[1;31m"
 RESET="\033[0m"
 
 echo -e "${CYAN}================================================================================"
-echo -e "         MQ Launcher — Liquid Glass Edition (1-Command Installer)"
+echo -e "         MQ Launcher — Solid Edition (1-Command Installer)"
 echo -e "================================================================================${RESET}"
 
 # 1. Architecture & OS Check
@@ -127,5 +127,5 @@ echo -e "=======================================================================
 echo -e " ${CYAN}Исполняемый файл:${RESET}  ${BIN_DIR}/mq"
 echo -e " ${CYAN}Команда запуска:${RESET}   ${BOLD}mq${RESET} (или ${HOME}/.local/bin/mq)"
 echo -e " ${CYAN}Ярлык меню:${RESET}        ~/.local/share/applications/mq.desktop"
-echo -e " ${CYAN}Особенности:${RESET}       Liquid Glass UI, Оффлайн (Пиратка) в 1 клик, Ely.by, Modrinth & CurseForge"
+echo -e " ${CYAN}Особенности:${RESET}       Solid Matte UI, Оффлайн (Пиратка) в 1 клик, Ely.by, Modrinth & CurseForge"
 echo -e "${GREEN}================================================================================${RESET}\n"

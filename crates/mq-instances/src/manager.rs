@@ -312,6 +312,9 @@ impl InstanceManager {
             playtime_secs: 0,
             modpack_source: src_manifest.modpack_source,
             mc_locale: src_manifest.mc_locale,
+            lang_initialized: src_manifest.lang_initialized,
+            icon: src_manifest.icon,
+            group: src_manifest.group,
         };
 
         self.save_instance(&cloned_manifest)?;

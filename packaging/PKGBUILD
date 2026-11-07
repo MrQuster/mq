@@ -1,6 +1,6 @@
 # Maintainer: MQ Systems Team <dev@mq-launcher.local>
 pkgname=mq-launcher
-pkgver=0.1.0
+pkgver=2.0.0
 pkgrel=1
 pkgdesc="Autonomous multithreaded Minecraft: Java Edition launcher for Linux"
 arch=('x86_64')

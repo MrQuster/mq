@@ -155,6 +155,6 @@ mq bench
 * `crates/mq-mods`: Парсинг `.mrpack` и CurseForge `.zip`, Zip-Slip защита, сканер `.jar` модов.
 * `crates/mq-instances`: Менеджер изолированных инстансов Minecraft.
 * `crates/mq-launch`: Детерминированный генератор команды запуска, обнаружение Java.
-* `crates/mq-ui`: Графический интерфейс на `eframe` / `egui` (стиль Dark Glass, без эмодзи).
+* `crates/mq-ui`: Графический интерфейс на `eframe` / `egui` (стиль Matte Dark Solid, без AI-слопа и эмодзи, чистые векторные иконки Painter, 6 непрозрачных пресетов оформления).
 * `crates/mq-cli`: Главная консольная точка входа.
 * `testsupport`: Локальный mock-сервер для автономных тестов без доступа в Интернет.

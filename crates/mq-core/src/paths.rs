@@ -93,6 +93,8 @@ impl MqPaths {
             self.libraries_dir(),
             self.temp_dir(),
             self.data_dir.join("cache"),
+            self.java_dir(),
+            self.backups_dir(),
         ];
 
         for dir in dirs {
@@ -143,6 +145,18 @@ impl MqPaths {
     #[inline]
     pub fn libraries_dir(&self) -> PathBuf {
         self.data_dir.join("libraries")
+    }
+
+    /// Launcher-managed Java runtimes directory (`<data_dir>/java`).
+    #[inline]
+    pub fn java_dir(&self) -> PathBuf {
+        self.data_dir.join("java")
+    }
+
+    /// World backups directory (`<data_dir>/backups`).
+    #[inline]
+    pub fn backups_dir(&self) -> PathBuf {
+        self.data_dir.join("backups")
     }
 
     /// Stored player accounts file (`<data_dir>/accounts.json`).

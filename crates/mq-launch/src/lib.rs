@@ -5,19 +5,26 @@
 #![deny(clippy::await_holding_lock)]
 
 pub mod command;
+pub mod crash_analyzer;
 pub mod java;
 pub mod options;
+pub mod prelaunch;
 pub mod runner;
 
 pub use command::{
     build_launch_command, BuiltLaunchCommand, LaunchContext, LAUNCHER_NAME, LAUNCHER_VERSION,
 };
+pub use crash_analyzer::{analyze_crash, upload_to_mclogs, CrashAnalysis};
 pub use java::{
-    discover_java_runtimes, discover_java_runtimes_from_sources, parse_java_release_file,
-    parse_java_version_output, parse_java_version_str, probe_java_binary,
+    discover_java_runtimes, discover_java_runtimes_from_sources, download_adoptium_java,
+    parse_java_release_file, parse_java_version_output, parse_java_version_str, probe_java_binary,
     required_java_major_for_mc, select_java_runtime, JavaRuntime, SYSTEM_JVM_DIRS,
 };
-pub use options::{read_minecraft_options_lang, sync_minecraft_options_lang};
+pub use options::{
+    default_mc_locale_for_version, is_legacy_mc_version, patch_minecraft_options_lang,
+    read_minecraft_options_lang, sync_minecraft_options_lang,
+};
+pub use prelaunch::ensure_prelaunch_assets;
 pub use runner::spawn_and_stream_game;
 
 #[cfg(test)]

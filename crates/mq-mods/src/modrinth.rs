@@ -1,6 +1,7 @@
 //! Modrinth API v2 client (`https://api.modrinth.com/v2`) supporting faceted search,
 //! project lookup, version filtering, and mock base-URL overrides.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use mq_core::{AppConfig, ModLoaderKind, MqError, MqResult, Sha1Digest, Sha512Digest};
@@ -208,6 +209,57 @@ impl ModrinthClient {
         debug!(url = %url, version_id, "fetching Modrinth version by id");
         let dto: ModrinthVersionDto = self.get_json(url).await?;
         dto.into_project_version()
+    }
+
+    /// Checks for updates for a set of installed mod files via Modrinth `POST /v2/version_files/update`.
+    ///
+    /// Maps current SHA-1 hash -> new [`ProjectVersion`].
+    pub async fn check_version_updates(
+        &self,
+        hashes: &[String],
+        loader: ModLoaderKind,
+        mc_version: &str,
+    ) -> MqResult<BTreeMap<String, ProjectVersion>> {
+        if hashes.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+
+        let url = format!("{}/version_files/update", self.base_url);
+        let body = serde_json::json!({
+            "hashes": hashes,
+            "algorithm": "sha1",
+            "loaders": [loader.as_str().to_ascii_lowercase()],
+            "game_versions": [mc_version],
+        });
+
+        let resp = self
+            .http
+            .post(&url)
+            .json(&body)
+            .header(ACCEPT, "application/json")
+            .send()
+            .await
+            .map_err(|e| MqError::Network(format!("Modrinth update request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            return Err(MqError::Network(format!(
+                "Modrinth returned HTTP status {} on version_files/update",
+                resp.status()
+            )));
+        }
+
+        let raw_map: BTreeMap<String, ModrinthVersionDto> = resp.json().await.map_err(|e| {
+            MqError::Network(format!("failed to parse Modrinth updates response: {e}"))
+        })?;
+
+        let mut out = BTreeMap::new();
+        for (hash, dto) in raw_map {
+            if let Ok(pv) = dto.into_project_version() {
+                out.insert(hash, pv);
+            }
+        }
+
+        Ok(out)
     }
 
     /// Resolves a project and all transitive required dependencies into a deterministic download plan.

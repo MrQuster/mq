@@ -71,31 +71,34 @@ impl FromStr for GuiBackend {
 #[serde(rename_all = "snake_case")]
 pub enum ThemePreset {
     #[default]
-    LiquidGlass,
-    ObsidianOled,
+    MatteDark,
+    PrismClassicDark,
+    ModrinthEmerald,
     CatppuccinMocha,
-    NordicFrost,
-    GruvboxMaterial,
+    Nord,
+    LightClean,
+    #[serde(other)]
     Custom,
 }
 
 impl ThemePreset {
     pub const ALL: [Self; 6] = [
-        Self::LiquidGlass,
-        Self::ObsidianOled,
+        Self::MatteDark,
+        Self::PrismClassicDark,
+        Self::ModrinthEmerald,
         Self::CatppuccinMocha,
-        Self::NordicFrost,
-        Self::GruvboxMaterial,
-        Self::Custom,
+        Self::Nord,
+        Self::LightClean,
     ];
 
     pub const fn label(&self) -> &'static str {
         match self {
-            Self::LiquidGlass => "Liquid Glass (По умолчанию)",
-            Self::ObsidianOled => "Obsidian OLED",
+            Self::MatteDark => "Matte Dark (По умолчанию)",
+            Self::PrismClassicDark => "Prism Classic Dark",
+            Self::ModrinthEmerald => "Modrinth Emerald",
             Self::CatppuccinMocha => "Catppuccin Mocha",
-            Self::NordicFrost => "Nordic Frost",
-            Self::GruvboxMaterial => "Gruvbox Material",
+            Self::Nord => "Nord",
+            Self::LightClean => "Light Clean",
             Self::Custom => "Custom (Пользовательская)",
         }
     }
@@ -149,55 +152,79 @@ pub struct ThemeConfig {
 
 impl Default for ThemeConfig {
     fn default() -> Self {
-        Self::preset_liquid_glass()
+        Self::preset_matte_dark()
     }
 }
 
 impl ThemeConfig {
-    pub fn preset_liquid_glass() -> Self {
+    pub fn preset_matte_dark() -> Self {
         Self {
-            preset: ThemePreset::LiquidGlass,
-            window_opacity: 0.82,
-            card_opacity: 0.75,
-            border_glow: 0.45,
-            bg_window: [0x0D, 0x0F, 0x14],
-            bg_card: [0x15, 0x18, 0x21],
-            accent_primary: [0x10, 0xB9, 0x81],   // Emerald
-            accent_secondary: [0x3B, 0x82, 0xF6], // Cobalt
-            text_primary: [0xF3, 0xF4, 0xF6],
-            text_muted: [0x9C, 0xA3, 0xAF],
-            status_success: [0x10, 0xB9, 0x81],
-            status_error: [0xEF, 0x44, 0x44],
+            preset: ThemePreset::MatteDark,
+            window_opacity: 1.0,
+            card_opacity: 1.0,
+            border_glow: 0.0,
+            bg_window: [0x0F, 0x11, 0x15],
+            bg_card: [0x1A, 0x1E, 0x26],
+            accent_primary: [0x3D, 0xDC, 0x97],
+            accent_secondary: [0x34, 0xC3, 0x86],
+            text_primary: [0xE6, 0xE8, 0xEE],
+            text_muted: [0x9A, 0xA1, 0xB2],
+            status_success: [0x3D, 0xDC, 0x97],
+            status_error: [0xE5, 0x48, 0x4D],
             corner_radius: 8.0,
             density: UiDensity::Comfortable,
             ui_scale: 1.0,
             font_size: 14.0,
             backdrop_path: None,
-            backdrop_dim: 0.70,
+            backdrop_dim: 0.0,
             launch_action: LaunchAction::KeepOpen,
         }
     }
 
-    pub fn preset_obsidian_oled() -> Self {
+    pub fn preset_prism_classic_dark() -> Self {
         Self {
-            preset: ThemePreset::ObsidianOled,
+            preset: ThemePreset::PrismClassicDark,
             window_opacity: 1.0,
-            card_opacity: 0.95,
-            border_glow: 0.20,
-            bg_window: [0x05, 0x05, 0x07],
-            bg_card: [0x0E, 0x10, 0x15],
-            accent_primary: [0x3B, 0x82, 0xF6], // Cobalt
-            accent_secondary: [0x60, 0xA5, 0xFA],
-            text_primary: [0xF9, 0xFA, 0xFB],
-            text_muted: [0x6B, 0x72, 0x80],
-            status_success: [0x10, 0xB9, 0x81],
-            status_error: [0xEF, 0x44, 0x44],
-            corner_radius: 6.0,
+            card_opacity: 1.0,
+            border_glow: 0.0,
+            bg_window: [0x19, 0x19, 0x19],
+            bg_card: [0x24, 0x24, 0x24],
+            accent_primary: [0x5B, 0x8D, 0xEF],
+            accent_secondary: [0x4A, 0x7C, 0xD8],
+            text_primary: [0xEA, 0xEA, 0xEA],
+            text_muted: [0xA0, 0xA0, 0xA0],
+            status_success: [0x3D, 0xDC, 0x97],
+            status_error: [0xE5, 0x48, 0x4D],
+            corner_radius: 8.0,
             density: UiDensity::Comfortable,
             ui_scale: 1.0,
             font_size: 14.0,
             backdrop_path: None,
-            backdrop_dim: 0.85,
+            backdrop_dim: 0.0,
+            launch_action: LaunchAction::KeepOpen,
+        }
+    }
+
+    pub fn preset_modrinth_emerald() -> Self {
+        Self {
+            preset: ThemePreset::ModrinthEmerald,
+            window_opacity: 1.0,
+            card_opacity: 1.0,
+            border_glow: 0.0,
+            bg_window: [0x11, 0x12, 0x15],
+            bg_card: [0x1C, 0x1F, 0x26],
+            accent_primary: [0x1B, 0xD9, 0x6A],
+            accent_secondary: [0x17, 0xBF, 0x5D],
+            text_primary: [0xED, 0xED, 0xED],
+            text_muted: [0x9D, 0xA3, 0xAF],
+            status_success: [0x1B, 0xD9, 0x6A],
+            status_error: [0xE5, 0x48, 0x4D],
+            corner_radius: 8.0,
+            density: UiDensity::Comfortable,
+            ui_scale: 1.0,
+            font_size: 14.0,
+            backdrop_path: None,
+            backdrop_dim: 0.0,
             launch_action: LaunchAction::KeepOpen,
         }
     }
@@ -205,36 +232,36 @@ impl ThemeConfig {
     pub fn preset_catppuccin_mocha() -> Self {
         Self {
             preset: ThemePreset::CatppuccinMocha,
-            window_opacity: 0.88,
-            card_opacity: 0.82,
-            border_glow: 0.40,
+            window_opacity: 1.0,
+            card_opacity: 1.0,
+            border_glow: 0.0,
             bg_window: [0x1E, 0x1E, 0x2E],
-            bg_card: [0x18, 0x18, 0x25],
-            accent_primary: [0xCB, 0xA6, 0xF7], // Lavender
-            accent_secondary: [0x89, 0xB4, 0xFA],
+            bg_card: [0x31, 0x32, 0x44],
+            accent_primary: [0x89, 0xB4, 0xFA],
+            accent_secondary: [0x74, 0xC7, 0xEC],
             text_primary: [0xCD, 0xD6, 0xF4],
             text_muted: [0xA6, 0xAD, 0xC8],
             status_success: [0xA6, 0xE3, 0xA1],
             status_error: [0xF3, 0x8B, 0xA8],
-            corner_radius: 10.0,
+            corner_radius: 8.0,
             density: UiDensity::Comfortable,
             ui_scale: 1.0,
             font_size: 14.0,
             backdrop_path: None,
-            backdrop_dim: 0.70,
+            backdrop_dim: 0.0,
             launch_action: LaunchAction::KeepOpen,
         }
     }
 
-    pub fn preset_nordic_frost() -> Self {
+    pub fn preset_nord() -> Self {
         Self {
-            preset: ThemePreset::NordicFrost,
-            window_opacity: 0.85,
-            card_opacity: 0.80,
-            border_glow: 0.50,
-            bg_window: [0x2E, 0x34, 0x40],
+            preset: ThemePreset::Nord,
+            window_opacity: 1.0,
+            card_opacity: 1.0,
+            border_glow: 0.0,
+            bg_window: [0x24, 0x29, 0x33],
             bg_card: [0x3B, 0x42, 0x52],
-            accent_primary: [0x88, 0xC0, 0xD0], // Ice
+            accent_primary: [0x88, 0xC0, 0xD0],
             accent_secondary: [0x81, 0xA1, 0xC1],
             text_primary: [0xEC, 0xEF, 0xF4],
             text_muted: [0xD8, 0xDE, 0xE9],
@@ -245,42 +272,43 @@ impl ThemeConfig {
             ui_scale: 1.0,
             font_size: 14.0,
             backdrop_path: None,
-            backdrop_dim: 0.70,
+            backdrop_dim: 0.0,
             launch_action: LaunchAction::KeepOpen,
         }
     }
 
-    pub fn preset_gruvbox_material() -> Self {
+    pub fn preset_light_clean() -> Self {
         Self {
-            preset: ThemePreset::GruvboxMaterial,
-            window_opacity: 0.88,
-            card_opacity: 0.82,
-            border_glow: 0.35,
-            bg_window: [0x28, 0x28, 0x28],
-            bg_card: [0x32, 0x30, 0x2F],
-            accent_primary: [0xFA, 0xBD, 0x2F], // Amber
-            accent_secondary: [0x83, 0xA5, 0x98],
-            text_primary: [0xEB, 0xDB, 0xB2],
-            text_muted: [0xA8, 0x99, 0x84],
-            status_success: [0xB8, 0xBB, 0x26],
-            status_error: [0xFB, 0x49, 0x34],
-            corner_radius: 6.0,
+            preset: ThemePreset::LightClean,
+            window_opacity: 1.0,
+            card_opacity: 1.0,
+            border_glow: 0.0,
+            bg_window: [0xF4, 0xF5, 0xF7],
+            bg_card: [0xFF, 0xFF, 0xFF],
+            accent_primary: [0x05, 0x96, 0x69],
+            accent_secondary: [0x04, 0x78, 0x57],
+            text_primary: [0x11, 0x18, 0x27],
+            text_muted: [0x4B, 0x55, 0x63],
+            status_success: [0x05, 0x96, 0x69],
+            status_error: [0xDC, 0x26, 0x26],
+            corner_radius: 8.0,
             density: UiDensity::Comfortable,
             ui_scale: 1.0,
             font_size: 14.0,
             backdrop_path: None,
-            backdrop_dim: 0.70,
+            backdrop_dim: 0.0,
             launch_action: LaunchAction::KeepOpen,
         }
     }
 
     pub fn apply_preset(&mut self, preset: ThemePreset) {
         let mut new_cfg = match preset {
-            ThemePreset::LiquidGlass => Self::preset_liquid_glass(),
-            ThemePreset::ObsidianOled => Self::preset_obsidian_oled(),
+            ThemePreset::MatteDark => Self::preset_matte_dark(),
+            ThemePreset::PrismClassicDark => Self::preset_prism_classic_dark(),
+            ThemePreset::ModrinthEmerald => Self::preset_modrinth_emerald(),
             ThemePreset::CatppuccinMocha => Self::preset_catppuccin_mocha(),
-            ThemePreset::NordicFrost => Self::preset_nordic_frost(),
-            ThemePreset::GruvboxMaterial => Self::preset_gruvbox_material(),
+            ThemePreset::Nord => Self::preset_nord(),
+            ThemePreset::LightClean => Self::preset_light_clean(),
             ThemePreset::Custom => {
                 self.preset = ThemePreset::Custom;
                 return;
@@ -319,11 +347,11 @@ impl ThemeConfig {
 }
 
 fn default_launcher_locale() -> String {
-    "uk_UA".to_string()
+    "ru_RU".to_string()
 }
 
 fn default_mc_locale() -> String {
-    "uk_ua".to_string()
+    "ru_ru".to_string()
 }
 
 /// Global application configuration persisted in `~/.config/mq/config.toml`.
@@ -402,8 +430,13 @@ impl AppConfig {
         let config_path = paths.config_file();
         let mut cfg = if config_path.exists() {
             let raw = fs::read_to_string(&config_path)?;
-            let parsed: Self = toml::from_str(&raw)?;
-            parsed
+            match toml::from_str(&raw) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    tracing::warn!("Failed to parse config.toml ({e}), falling back to default");
+                    Self::default()
+                }
+            }
         } else {
             Self::default()
         };
@@ -518,7 +551,7 @@ mod tests {
         assert_eq!(initial.default_memory_max_mb, 4096);
         assert!(initial.default_jvm_args.is_empty());
         assert_eq!(initial.ui_backend, GuiBackend::Auto);
-        assert_eq!(initial.theme.preset, ThemePreset::LiquidGlass);
+        assert_eq!(initial.theme.preset, ThemePreset::MatteDark);
 
         let populated = AppConfig {
             threads: Some(12),
@@ -531,9 +564,9 @@ mod tests {
             default_wrapper: Some("gamemoderun".into()),
             ui_backend: GuiBackend::Vulkan,
             mock_url: Some("http://127.0.0.1:8080".into()),
-            launcher_locale: "uk_UA".into(),
-            default_mc_locale: "uk_ua".into(),
-            theme: ThemeConfig::preset_obsidian_oled(),
+            launcher_locale: "ru_RU".into(),
+            default_mc_locale: "ru_ru".into(),
+            theme: ThemeConfig::preset_prism_classic_dark(),
         };
 
         // Ensure Debug never leaks the CurseForge API key.
@@ -562,28 +595,33 @@ mod tests {
 
     #[test]
     fn theme_presets_match_specification() {
-        let lg = ThemeConfig::preset_liquid_glass();
-        assert_eq!(lg.preset, ThemePreset::LiquidGlass);
-        assert!((lg.window_opacity - 0.82).abs() < 0.001);
-        assert!((lg.card_opacity - 0.75).abs() < 0.001);
-        assert_eq!(lg.accent_primary, [0x10, 0xB9, 0x81]);
+        let md = ThemeConfig::preset_matte_dark();
+        assert_eq!(md.preset, ThemePreset::MatteDark);
+        assert_eq!(md.window_opacity, 1.0);
+        assert_eq!(md.card_opacity, 1.0);
+        assert_eq!(md.bg_window, [0x0F, 0x11, 0x15]);
+        assert_eq!(md.accent_primary, [0x3D, 0xDC, 0x97]);
 
-        let oled = ThemeConfig::preset_obsidian_oled();
-        assert_eq!(oled.preset, ThemePreset::ObsidianOled);
-        assert_eq!(oled.bg_window, [0x05, 0x05, 0x07]);
-        assert_eq!(oled.accent_primary, [0x3B, 0x82, 0xF6]);
+        let prism = ThemeConfig::preset_prism_classic_dark();
+        assert_eq!(prism.preset, ThemePreset::PrismClassicDark);
+        assert_eq!(prism.bg_window, [0x19, 0x19, 0x19]);
+        assert_eq!(prism.accent_primary, [0x5B, 0x8D, 0xEF]);
+
+        let modrinth = ThemeConfig::preset_modrinth_emerald();
+        assert_eq!(modrinth.preset, ThemePreset::ModrinthEmerald);
+        assert_eq!(modrinth.accent_primary, [0x1B, 0xD9, 0x6A]);
 
         let cat = ThemeConfig::preset_catppuccin_mocha();
         assert_eq!(cat.preset, ThemePreset::CatppuccinMocha);
-        assert_eq!(cat.accent_primary, [0xCB, 0xA6, 0xF7]);
+        assert_eq!(cat.accent_primary, [0x89, 0xB4, 0xFA]);
 
-        let nord = ThemeConfig::preset_nordic_frost();
-        assert_eq!(nord.preset, ThemePreset::NordicFrost);
+        let nord = ThemeConfig::preset_nord();
+        assert_eq!(nord.preset, ThemePreset::Nord);
         assert_eq!(nord.accent_primary, [0x88, 0xC0, 0xD0]);
 
-        let gruv = ThemeConfig::preset_gruvbox_material();
-        assert_eq!(gruv.preset, ThemePreset::GruvboxMaterial);
-        assert_eq!(gruv.accent_primary, [0xFA, 0xBD, 0x2F]);
+        let light = ThemeConfig::preset_light_clean();
+        assert_eq!(light.preset, ThemePreset::LightClean);
+        assert_eq!(light.accent_primary, [0x05, 0x96, 0x69]);
     }
 
     #[test]

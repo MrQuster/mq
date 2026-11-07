@@ -151,11 +151,7 @@ impl SettingsView {
             ui.add_space(10.0);
 
             // 2. Live Preview Card
-            ui.label(
-                RichText::new("Живое превью стиля Liquid Glass")
-                    .strong()
-                    .size(13.0),
-            );
+            ui.label(RichText::new("Живое превью стиля темы").strong().size(13.0));
             ui.add_space(4.0);
 
             let preview_card = egui::Frame::new()
@@ -717,6 +713,91 @@ impl SettingsView {
                     LaunchAction::HideUntilExit,
                     "Скрыть до выхода из игры",
                 );
+            });
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(10.0);
+
+            // 5. Java Runtimes & 1-Click Adoptium Downloader
+            ui.label(
+                RichText::new("Управление Java (JRE / JDK)")
+                    .strong()
+                    .size(14.0),
+            );
+            ui.add_space(4.0);
+
+            let runtimes = mq_launch::discover_java_runtimes();
+            if runtimes.is_empty() {
+                ui.label(
+                    RichText::new("Установленные версии Java не найдены в системе")
+                        .color(TEXT_MUTED),
+                );
+            } else {
+                ui.label(
+                    RichText::new(format!("Найдено JVM в системе: {}", runtimes.len()))
+                        .color(TEXT_MUTED)
+                        .small(),
+                );
+                for rt in runtimes.iter().take(5) {
+                    ui.horizontal(|ui| {
+                        version_badge(
+                            ui,
+                            &format!("Java {}", rt.major_version),
+                            crate::theme::ACCENT_COBALT,
+                        );
+                        ui.label(RichText::new(&rt.vendor).color(TEXT_PRIMARY).strong());
+                        ui.label(
+                            RichText::new(rt.path.display().to_string())
+                                .color(TEXT_MUTED)
+                                .small(),
+                        );
+                    });
+                }
+            }
+
+            ui.add_space(6.0);
+            ui.label("Скачать проверенную Eclipse Temurin JRE напрямую из Adoptium:");
+            ui.horizontal(|ui| {
+                for &ver in &[8u32, 17u32, 21u32] {
+                    let btn_label = match ver {
+                        8 => "Скачать Java 8 (<= 1.16.5)",
+                        17 => "Скачать Java 17 (1.17 - 1.20.4)",
+                        21 => "Скачать Java 21 (1.20.5+)",
+                        _ => "Скачать Java",
+                    };
+                    if secondary_glass_button(ui, Some(VectorIcon::Download), btn_label).clicked() {
+                        let java_dir = state.paths.java_dir();
+                        let bus = state.event_bus.clone();
+                        tokio::spawn(async move {
+                            bus.publish(mq_core::Event::PhaseStarted {
+                                phase: format!("Скачивание Eclipse Temurin Java {ver}"),
+                                total_items: 1,
+                            });
+                            let client = reqwest::Client::builder()
+                                .timeout(std::time::Duration::from_secs(120))
+                                .build()
+                                .unwrap_or_default();
+                            match mq_launch::download_adoptium_java(&client, ver, &java_dir).await {
+                                Ok(rt) => {
+                                    bus.publish(mq_core::Event::PhaseCompleted {
+                                        phase: format!(
+                                            "Java {ver} успешно установлена: {}",
+                                            rt.full_version
+                                        ),
+                                        elapsed_ms: 0,
+                                    });
+                                }
+                                Err(e) => {
+                                    bus.publish(mq_core::Event::TaskError {
+                                        context: format!("Загрузка Java {ver}"),
+                                        message: e.to_string(),
+                                    });
+                                }
+                            }
+                        });
+                    }
+                }
             });
         });
     }

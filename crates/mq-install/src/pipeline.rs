@@ -8,10 +8,10 @@ use std::time::Instant;
 
 use mq_core::{Event, EventBus, ModLoaderKind, MqError, MqPaths, MqResult};
 use mq_meta::{
-    fetch_asset_index, fetch_fabric_loader_versions, fetch_fabric_profile,
+    fetch_asset_index_raw, fetch_fabric_loader_versions, fetch_fabric_profile,
     fetch_quilt_loader_versions, fetch_quilt_profile, fetch_vanilla_version,
-    fetch_version_manifest, find_version_entry, merge_inherits_from, AssetIndex, ResolvedVersion,
-    RuleContext,
+    fetch_version_manifest, find_version_entry, merge_inherits_from, parse_asset_index, AssetIndex,
+    ResolvedVersion, RuleContext,
 };
 use mq_net::{DownloadSpec, NetEngine};
 use mq_sched::{ComputePool, DagNodeSpec, DagPlan, EpochGuard};
@@ -284,17 +284,30 @@ pub async fn install_game(
     }
 
     // 4. Fetch Asset Index
-    let asset_index = fetch_asset_index(&client, &resolved_ver.asset_index).await?;
-
-    // Save asset index JSON
     let asset_index_path = paths
         .assets_dir()
         .join("indexes")
         .join(format!("{}.json", resolved_ver.asset_index.id));
+
+    let (asset_index, raw_index_json) = if asset_index_path.is_file() {
+        if let Ok(content) = fs::read_to_string(&asset_index_path) {
+            if let Ok(idx) = parse_asset_index(&resolved_ver.asset_index.id, &content) {
+                (idx, content)
+            } else {
+                fetch_asset_index_raw(&client, &resolved_ver.asset_index).await?
+            }
+        } else {
+            fetch_asset_index_raw(&client, &resolved_ver.asset_index).await?
+        }
+    } else {
+        fetch_asset_index_raw(&client, &resolved_ver.asset_index).await?
+    };
+
+    // Save asset index JSON byte-for-byte without changes
     if let Some(p) = asset_index_path.parent() {
         fs::create_dir_all(p)?;
     }
-    fs::write(&asset_index_path, serde_json::to_vec_pretty(&asset_index)?)?;
+    fs::write(&asset_index_path, raw_index_json.as_bytes())?;
 
     // 5. Build Download Specs
     let mut download_specs = Vec::new();
@@ -392,7 +405,7 @@ pub async fn install_game(
     let all_unique = asset_index.unique_objects_by_hash();
     let (lang_objs, mut other_objs): (Vec<_>, Vec<_>) = all_unique
         .into_iter()
-        .partition(|o| o.name.starts_with("minecraft/lang/"));
+        .partition(|o| o.name.starts_with("minecraft/lang/") || o.name == "pack.mcmeta");
 
     let mut prioritized_objs = lang_objs;
     prioritized_objs.append(&mut other_objs);
@@ -438,6 +451,35 @@ pub async fn install_game(
             hardlinks_created += 1;
         } else {
             let _ = fs::copy(&src, &dst);
+        }
+    }
+
+    // 7b. Legacy virtual / map_to_resources asset reconstruction (1.7.10 - 1.12.2)
+    if asset_index.is_virtual {
+        let virtual_base = paths.assets_dir().join("virtual").join(&asset_index.id);
+        for obj in &asset_index.objects {
+            let src = cas.blob_path(&obj.hash);
+            let dst = virtual_base.join(&obj.name);
+            if let Some(p) = dst.parent() {
+                let _ = fs::create_dir_all(p);
+            }
+            if !dst.exists() && fs::hard_link(&src, &dst).is_err() {
+                let _ = fs::copy(&src, &dst);
+            }
+        }
+    }
+
+    if asset_index.map_to_resources {
+        let resources_base = req.instance_dir.join("resources");
+        for obj in &asset_index.objects {
+            let src = cas.blob_path(&obj.hash);
+            let dst = resources_base.join(&obj.name);
+            if let Some(p) = dst.parent() {
+                let _ = fs::create_dir_all(p);
+            }
+            if !dst.exists() && fs::hard_link(&src, &dst).is_err() {
+                let _ = fs::copy(&src, &dst);
+            }
         }
     }
 

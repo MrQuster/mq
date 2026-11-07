@@ -949,9 +949,15 @@ fn render_asset_index_string(assets: &[AssetMeta]) -> String {
             out.push(',');
         }
         let hex_hash = sha1_hex(&meta.sha1);
+        let key = match i {
+            2 => "minecraft/lang/ru_ru.json".to_string(),
+            3 => "pack.mcmeta".to_string(),
+            4 => "minecraft/lang/en_us.json".to_string(),
+            _ => format!("mq/sound_{i}.ogg"),
+        };
         let _ = write!(
             out,
-            "\"mq/sound_{i}.ogg\":{{\"hash\":\"{hex_hash}\",\"size\":{}}}",
+            "\"{key}\":{{\"hash\":\"{hex_hash}\",\"size\":{}}}",
             meta.size
         );
     }

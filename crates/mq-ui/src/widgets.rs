@@ -41,6 +41,12 @@ pub enum VectorIcon {
     Cross,
     Terminal,
     Globe,
+    Eye,
+    Edit,
+    Cube,
+    Server,
+    Key,
+    Info,
 }
 
 #[inline]
@@ -288,6 +294,67 @@ pub fn paint_vector_icon(painter: &Painter, rect: Rect, icon: VectorIcon, color:
             }
             painter.add(Shape::line(left_arc, stroke));
             painter.add(Shape::line(right_arc, stroke));
+        }
+        VectorIcon::Eye => {
+            let left = rel_pos(r, 0.15, 0.50);
+            let right = rel_pos(r, 0.85, 0.50);
+            let top = rel_pos(r, 0.50, 0.22);
+            let bottom = rel_pos(r, 0.50, 0.78);
+            painter.add(Shape::closed_line(vec![left, top, right, bottom], stroke));
+            painter.circle_stroke(r.center(), r.width().min(r.height()) * 0.15, stroke);
+        }
+        VectorIcon::Edit => {
+            let p1 = rel_pos(r, 0.22, 0.78);
+            let p2 = rel_pos(r, 0.22, 0.62);
+            let p3 = rel_pos(r, 0.65, 0.18);
+            let p4 = rel_pos(r, 0.82, 0.35);
+            let p5 = rel_pos(r, 0.38, 0.78);
+            painter.add(Shape::closed_line(vec![p1, p2, p3, p4, p5], stroke));
+            painter.line_segment([rel_pos(r, 0.55, 0.28), rel_pos(r, 0.72, 0.45)], stroke);
+        }
+        VectorIcon::Cube => {
+            let top_v = rel_pos(r, 0.50, 0.12);
+            let tr_v = rel_pos(r, 0.85, 0.32);
+            let br_v = rel_pos(r, 0.85, 0.68);
+            let bot_v = rel_pos(r, 0.50, 0.88);
+            let bl_v = rel_pos(r, 0.15, 0.68);
+            let tl_v = rel_pos(r, 0.15, 0.32);
+            let center = rel_pos(r, 0.50, 0.50);
+            painter.add(Shape::closed_line(
+                vec![top_v, tr_v, br_v, bot_v, bl_v, tl_v],
+                stroke,
+            ));
+            painter.line_segment([center, top_v], stroke);
+            painter.line_segment([center, br_v], stroke);
+            painter.line_segment([center, bl_v], stroke);
+        }
+        VectorIcon::Server => {
+            let b1 = Rect::from_min_max(rel_pos(r, 0.15, 0.15), rel_pos(r, 0.85, 0.35));
+            let b2 = Rect::from_min_max(rel_pos(r, 0.15, 0.40), rel_pos(r, 0.85, 0.60));
+            let b3 = Rect::from_min_max(rel_pos(r, 0.15, 0.65), rel_pos(r, 0.85, 0.85));
+            painter.rect_stroke(b1, CornerRadius::same(2), stroke, StrokeKind::Inside);
+            painter.rect_stroke(b2, CornerRadius::same(2), stroke, StrokeKind::Inside);
+            painter.rect_stroke(b3, CornerRadius::same(2), stroke, StrokeKind::Inside);
+            painter.circle_filled(rel_pos(r, 0.28, 0.25), 1.5, color);
+            painter.circle_filled(rel_pos(r, 0.28, 0.50), 1.5, color);
+            painter.circle_filled(rel_pos(r, 0.28, 0.75), 1.5, color);
+        }
+        VectorIcon::Key => {
+            let center = rel_pos(r, 0.35, 0.45);
+            let rad = r.width().min(r.height()) * 0.22;
+            painter.circle_stroke(center, rad, stroke);
+            let stem_start = rel_pos(r, 0.55, 0.45);
+            let stem_end = rel_pos(r, 0.85, 0.45);
+            painter.line_segment([stem_start, stem_end], stroke);
+            painter.line_segment([rel_pos(r, 0.72, 0.45), rel_pos(r, 0.72, 0.68)], stroke);
+            painter.line_segment([rel_pos(r, 0.85, 0.45), rel_pos(r, 0.85, 0.62)], stroke);
+        }
+        VectorIcon::Info => {
+            let center = r.center();
+            let rad = r.width().min(r.height()) * 0.42;
+            painter.circle_stroke(center, rad, stroke);
+            painter.circle_filled(rel_pos(r, 0.50, 0.32), 1.5, color);
+            painter.line_segment([rel_pos(r, 0.50, 0.46), rel_pos(r, 0.50, 0.72)], stroke);
         }
     }
 }

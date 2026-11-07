@@ -6,7 +6,7 @@
 //! - Background tasks communicate via bounded `flume` channels.
 //! - Frame times are monitored by `UiWatchdog` (>8 ms logs warning).
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use mq_auth::AccountStore;
@@ -20,8 +20,8 @@ use mq_mods::{CatalogHit, InstalledModEntry, ModConflict, ProjectKind, SearchQue
 use mq_net::NetEngine;
 use mq_sched::{CancelEpoch, ComputePool, UiWatchdog};
 
-/// Max lines retained in memory for live game log console.
-pub const MAX_GAME_LOG_LINES: usize = 2000;
+/// Max lines retained in memory for live game log console (10,000 lines).
+pub const MAX_GAME_LOG_LINES: usize = 10000;
 
 /// Background responses delivered back to UI thread without blocking.
 pub enum UiWorkerResponse {
@@ -147,6 +147,29 @@ pub struct UiState {
     pub create_inst_ram_mb: u32,
     pub remote_versions: Vec<(String, String)>, // (id, release_type)
     pub is_fetching_manifest: bool,
+
+    // Crash Diagnostics
+    pub crash_analysis: Option<mq_launch::CrashAnalysis>,
+    pub mclogs_url: Option<String>,
+    pub is_uploading_mclogs: bool,
+
+    // Mod Updates
+    pub mod_updates: BTreeMap<String, mq_mods::ProjectVersion>,
+    pub is_checking_mod_updates: bool,
+
+    // Live Server Pings
+    pub server_pings: HashMap<String, mq_instances::ServerPingResult>,
+
+    // Favorites
+    pub favorite_instances: HashSet<String>,
+
+    // Dialogs
+    pub show_import_dialog: bool,
+    pub import_archive_path: String,
+    pub import_instance_name: String,
+    pub show_duplicate_dialog: bool,
+    pub duplicate_target_name: String,
+    pub show_delete_confirm_dialog: bool,
 }
 
 impl UiState {
@@ -225,6 +248,19 @@ impl UiState {
             create_inst_ram_mb: 4096,
             remote_versions: Vec::new(),
             is_fetching_manifest: false,
+            crash_analysis: None,
+            mclogs_url: None,
+            is_uploading_mclogs: false,
+            mod_updates: BTreeMap::new(),
+            is_checking_mod_updates: false,
+            server_pings: HashMap::new(),
+            favorite_instances: HashSet::new(),
+            show_import_dialog: false,
+            import_archive_path: String::new(),
+            import_instance_name: String::new(),
+            show_duplicate_dialog: false,
+            duplicate_target_name: String::new(),
+            show_delete_confirm_dialog: false,
         })
     }
 
@@ -270,7 +306,7 @@ impl UiState {
                     self.running_instance = Some(id);
                 }
                 UiWorkerResponse::GameExited {
-                    instance_id: _,
+                    instance_id,
                     exit_code,
                 } => {
                     self.game_running = false;
@@ -280,6 +316,15 @@ impl UiState {
                         format!("Игра завершилась с кодом выхода {}", exit_code),
                         exit_code != 0,
                     ));
+                    if exit_code != 0 {
+                        let inst_dir = self.paths.instance_dir(instance_id.as_str());
+                        let lines: Vec<String> =
+                            self.game_logs.iter().map(|l| l.line.clone()).collect();
+                        let analysis = mq_launch::analyze_crash(&inst_dir, Some(exit_code), &lines);
+                        self.crash_analysis = Some(analysis);
+                    } else {
+                        self.crash_analysis = None;
+                    }
                 }
             }
         }

@@ -733,4 +733,63 @@ mod tests {
         let bomb_entry = bomb_zip.by_name("overrides/bomb.bin").unwrap();
         assert_eq!(bomb_entry.size(), 8 * 1024 * 1024);
     }
+
+    #[tokio::test]
+    async fn test_language_assets_and_options_txt_patching() {
+        let config = MockConfig {
+            asset_count: 50,
+            ..Default::default()
+        };
+        let server = MockServer::start(config).await;
+        let addr = server.addr();
+
+        // 1. Fetch asset index and check ru_ru.json and pack.mcmeta are present
+        let resp = raw_http_request(addr, "GET", "/mc/assets/indexes/1.21.1.json", &[], None).await;
+        assert_eq!(resp.status, 200);
+        let index_json: serde_json::Value = serde_json::from_slice(&resp.body).expect("json");
+        let objects = index_json["objects"].as_object().expect("objects");
+
+        assert!(objects.contains_key("minecraft/lang/ru_ru.json"));
+        assert!(objects.contains_key("pack.mcmeta"));
+
+        let ru_hash = objects["minecraft/lang/ru_ru.json"]["hash"]
+            .as_str()
+            .unwrap();
+        let ru_path = format!("/mc/assets/objects/{}/{ru_hash}", &ru_hash[..2]);
+        let ru_resp = raw_http_request(addr, "GET", &ru_path, &[], None).await;
+        assert_eq!(ru_resp.status, 200);
+
+        // 2. Test options.txt patching
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let inst_dir = tmp.path();
+
+        // Fresh instance: creates options.txt with lang:ru_ru
+        let initialized =
+            mq_launch::patch_minecraft_options_lang(inst_dir, "1.21.1", false).expect("patch");
+        assert!(initialized);
+        let opts = std::fs::read_to_string(inst_dir.join("options.txt")).expect("read options");
+        assert_eq!(opts.trim(), "lang:ru_ru");
+
+        // Legacy instance (1.7.10): creates options.txt with uppercase lang:ru_RU
+        let tmp_legacy = tempfile::tempdir().expect("tempdir");
+        let init_legacy =
+            mq_launch::patch_minecraft_options_lang(tmp_legacy.path(), "1.7.10", false)
+                .expect("patch");
+        assert!(init_legacy);
+        let opts_legacy =
+            std::fs::read_to_string(tmp_legacy.path().join("options.txt")).expect("read options");
+        assert_eq!(opts_legacy.trim(), "lang:ru_RU");
+
+        // Initialized instance with custom lang is never overwritten
+        std::fs::write(inst_dir.join("options.txt"), "fov:90.0\nlang:en_us\n").expect("write");
+        let init_existing =
+            mq_launch::patch_minecraft_options_lang(inst_dir, "1.21.1", true).expect("patch");
+        assert!(init_existing);
+        let opts_existing =
+            std::fs::read_to_string(inst_dir.join("options.txt")).expect("read options");
+        assert!(opts_existing.contains("lang:en_us"));
+        assert!(!opts_existing.contains("lang:ru_ru"));
+
+        server.shutdown().await;
+    }
 }

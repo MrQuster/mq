@@ -95,6 +95,18 @@ pub struct InstanceManifest {
     /// Optional Minecraft game locale override (e.g. `Some("uk_ua")` or `Some("ru_ru")`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mc_locale: Option<String>,
+
+    /// Whether the language was already initialized in options.txt, so launcher won't overwrite user changes.
+    #[serde(default)]
+    pub lang_initialized: bool,
+
+    /// Optional instance icon (name of built-in vector icon or relative path).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+
+    /// Optional category group for collapsible organization in UI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 impl InstanceManifest {
@@ -125,6 +137,9 @@ impl InstanceManifest {
             playtime_secs: 0,
             modpack_source: None,
             mc_locale: None,
+            lang_initialized: false,
+            icon: None,
+            group: None,
         }
     }
 
@@ -231,5 +246,15 @@ impl InstanceManifest {
         let raw = fs::read_to_string(&path)?;
         let parsed = serde_json::from_str(&raw)?;
         Ok(parsed)
+    }
+
+    /// Persists this manifest to `<dir>/instance.toml`.
+    pub fn save_to_dir(&self, dir: &std::path::Path) -> MqResult<()> {
+        let manifest_path = dir.join(INSTANCE_MANIFEST_FILE);
+        let toml_str = toml::to_string_pretty(self).map_err(|e| {
+            MqError::Internal(format!("failed to serialize instance manifest: {e}"))
+        })?;
+        fs::write(manifest_path, toml_str)?;
+        Ok(())
     }
 }

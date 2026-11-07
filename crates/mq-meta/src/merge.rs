@@ -73,6 +73,20 @@ pub fn merge_inherits_from(
     let game_arguments =
         merge_arguments_deterministically(&parent.game_arguments, &child.game_arguments);
 
+    let asset_index = child
+        .asset_index
+        .as_ref()
+        .filter(|ai| !ai.id.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| parent.asset_index.clone());
+
+    let client_jar = child
+        .client_jar
+        .as_ref()
+        .filter(|cj| !cj.path.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| parent.client_jar.clone());
+
     Ok(ResolvedVersion {
         id,
         mc_version: parent.mc_version.clone(),
@@ -81,8 +95,8 @@ pub fn merge_inherits_from(
         inherits_from,
         main_class,
         java_version: parent.java_version.clone(),
-        asset_index: parent.asset_index.clone(),
-        client_jar: parent.client_jar.clone(),
+        asset_index,
+        client_jar,
         libraries,
         jvm_arguments,
         game_arguments,
@@ -359,6 +373,8 @@ mod tests {
             libraries: Vec::new(),
             jvm_arguments: Vec::new(),
             game_arguments: Vec::new(),
+            asset_index: None,
+            client_jar: None,
         };
 
         let err = merge_inherits_from(&parent, &bad_child).expect_err("mismatch must fail");
@@ -388,6 +404,8 @@ mod tests {
             )],
             jvm_arguments: Vec::new(),
             game_arguments: Vec::new(),
+            asset_index: None,
+            client_jar: None,
         };
 
         let merged = merge_inherits_from(&parent, &child).expect("merge quilt");

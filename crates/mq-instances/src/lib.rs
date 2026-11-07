@@ -6,11 +6,22 @@
 
 pub mod manager;
 pub mod manifest;
+pub mod package;
+pub mod servers;
+pub mod worlds;
 
 pub use manager::InstanceManager;
 pub use manifest::{
     InstanceManifest, DEFAULT_MEMORY_MAX_MB, DEFAULT_MEMORY_MIN_MB, INSTANCE_MANIFEST_FILE,
     INSTANCE_SUBDIRS, RESOLVED_VERSION_FILE,
+};
+pub use package::{
+    export_instance_to_zip, import_instance_from_zip, list_screenshots, ScreenshotInfo,
+};
+pub use servers::{load_servers_dat, ping_server, save_servers_dat, ServerEntry, ServerPingResult};
+pub use worlds::{
+    backup_world, compute_dir_size, delete_world, export_world_to_zip, list_backups, list_worlds,
+    restore_world, WorldBackupInfo, WorldInfo,
 };
 
 #[cfg(test)]
@@ -225,5 +236,60 @@ mod tests {
             .load_resolved_version("cloned-pack")
             .expect("load cloned resolved_version.json");
         assert_eq!(loaded_resolved, dummy_resolved);
+    }
+
+    #[test]
+    fn world_backup_restore_and_servers_dat() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let inst_dir = tmp.path().join("test_inst");
+        fs::create_dir_all(inst_dir.join("saves").join("SurvivalWorld")).unwrap();
+        fs::write(
+            inst_dir
+                .join("saves")
+                .join("SurvivalWorld")
+                .join("level.dat"),
+            b"fake_level",
+        )
+        .unwrap();
+
+        let worlds = list_worlds(&inst_dir).unwrap();
+        assert_eq!(worlds.len(), 1);
+        assert_eq!(worlds[0].folder_name, "SurvivalWorld");
+
+        let backups_root = tmp.path().join("backups");
+        let backup_path =
+            backup_world(&inst_dir, &backups_root, "test_inst", "SurvivalWorld").unwrap();
+        assert!(backup_path.is_file());
+
+        let backups = list_backups(&backups_root, "test_inst").unwrap();
+        assert_eq!(backups.len(), 1);
+
+        // Delete world and restore
+        delete_world(&inst_dir, "SurvivalWorld").unwrap();
+        assert_eq!(list_worlds(&inst_dir).unwrap().len(), 0);
+
+        let restored = restore_world(
+            &backups_root,
+            "test_inst",
+            &backups[0].file_name,
+            &inst_dir,
+            Some("RestoredWorld"),
+        )
+        .unwrap();
+        assert!(restored.is_dir());
+        assert_eq!(list_worlds(&inst_dir).unwrap().len(), 1);
+
+        // Test servers.dat
+        let servers = vec![ServerEntry {
+            name: "Hypixel".to_string(),
+            ip: "mc.hypixel.net".to_string(),
+            icon: None,
+            accept_textures: 1,
+        }];
+        save_servers_dat(&inst_dir, &servers).unwrap();
+        let loaded_servers = load_servers_dat(&inst_dir).unwrap();
+        assert_eq!(loaded_servers.len(), 1);
+        assert_eq!(loaded_servers[0].name, "Hypixel");
+        assert_eq!(loaded_servers[0].ip, "mc.hypixel.net");
     }
 }

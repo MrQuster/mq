@@ -91,11 +91,29 @@ enum Commands {
     /// Manage authentication profiles (Offline, Ely.by, Microsoft).
     Auth(AuthArgs),
 
-    /// Manage mods: scan, search, install, toggle, or delete.
+    /// Manage user accounts (Offline, Ely.by, Microsoft).
+    Accounts(AccountsArgs),
+
+    /// Manage Minecraft instances (list, create, delete, clone, export, import).
+    Instances(InstancesArgs),
+
+    /// Manage Java runtimes (list, download Adoptium Temurin JRE 8, 17, 21).
+    Java(JavaArgs),
+
+    /// Manage mods: scan, search, install, toggle, update, or delete.
     Mods(ModsArgs),
 
     /// Install a Modrinth (.mrpack) or CurseForge (.zip) modpack.
     Modpack(ModpackArgs),
+
+    /// Manage world saves: list, backup, restore.
+    Worlds(WorldsArgs),
+
+    /// System environment, drivers, Java, network, and disk diagnostics.
+    Doctor,
+
+    /// Generate pixel-perfect offscreen UI snapshot image for visual QA.
+    UiSnapshot(UiSnapshotArgs),
 
     /// Benchmark multi-core scaling, Amdahl speedup, and per-core CPU utilization.
     Bench(BenchArgs),
@@ -203,6 +221,9 @@ enum ModsSubcommand {
     /// Scan instance mods directory with Rayon and display metadata & conflicts.
     Scan { instance: String },
 
+    /// List all mod files in an instance.
+    List { instance: String },
+
     /// Search for mods in Modrinth or CurseForge catalogs.
     Search {
         query: String,
@@ -224,11 +245,178 @@ enum ModsSubcommand {
         version: Option<String>,
     },
 
+    /// Add a mod into an instance (alias for install).
+    Add {
+        instance: String,
+        project: String,
+        #[arg(long)]
+        loader: Option<String>,
+        #[arg(long)]
+        version: Option<String>,
+    },
+
     /// Enable or disable a mod jar (renaming .jar <-> .jar.disabled).
     Toggle { instance: String, file: String },
 
     /// Delete a mod jar from an instance.
     Delete { instance: String, file: String },
+
+    /// Remove a mod jar from an instance (alias for delete).
+    Remove { instance: String, file: String },
+
+    /// Check and apply updates for installed mods via Modrinth.
+    Update {
+        instance: String,
+        /// Update all outdated mods automatically.
+        #[arg(long)]
+        all: bool,
+    },
+}
+
+#[derive(Args, Debug)]
+struct InstancesArgs {
+    #[command(subcommand)]
+    action: InstancesSubcommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum InstancesSubcommand {
+    /// List all configured Minecraft instances.
+    List,
+    /// Create a new instance with specified version and mod loader.
+    Create {
+        /// Name of the instance.
+        name: String,
+        /// Minecraft version (e.g. 1.21.1, 1.20.1).
+        #[arg(long)]
+        version: String,
+        /// Mod loader (vanilla, fabric, quilt, forge, neoforge).
+        #[arg(long, default_value = "vanilla")]
+        loader: String,
+        /// Explicit loader version.
+        #[arg(long)]
+        loader_version: Option<String>,
+    },
+    /// Delete an instance and its files.
+    Delete {
+        /// Instance identifier or name.
+        instance: String,
+        /// Force deletion without confirmation.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Clone an existing instance.
+    Clone {
+        /// Source instance identifier or name.
+        instance: String,
+        /// Name for the cloned instance.
+        new_name: String,
+    },
+    /// Export an instance into a portable .zip archive.
+    Export {
+        /// Instance identifier or name.
+        instance: String,
+        /// Output .zip path.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Import an instance from a .zip archive.
+    Import {
+        /// Path to .zip archive.
+        file: PathBuf,
+        /// Optional custom name for the imported instance.
+        #[arg(long)]
+        name: Option<String>,
+    },
+}
+
+#[derive(Args, Debug)]
+struct JavaArgs {
+    #[command(subcommand)]
+    action: JavaSubcommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum JavaSubcommand {
+    /// List all discovered Java runtimes on the system.
+    List,
+    /// Download and install an Adoptium Eclipse Temurin JRE (8, 17, 21).
+    Download {
+        /// Java major version (8, 17, or 21).
+        #[arg(long)]
+        version: u32,
+    },
+}
+
+#[derive(Args, Debug)]
+struct AccountsArgs {
+    #[command(subcommand)]
+    action: AccountsSubcommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum AccountsSubcommand {
+    /// List all configured accounts.
+    List,
+    /// Add an account.
+    Add {
+        /// Player username or Ely.by username/email.
+        #[arg(long)]
+        username: String,
+        /// Create an offline account.
+        #[arg(long)]
+        offline: bool,
+        /// Authenticate via Ely.by.
+        #[arg(long)]
+        ely: bool,
+        /// Ely.by password.
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Select the active account.
+    Switch { id: String },
+    /// Remove an account.
+    Remove { id: String },
+}
+
+#[derive(Args, Debug)]
+struct WorldsArgs {
+    #[command(subcommand)]
+    action: WorldsSubcommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum WorldsSubcommand {
+    /// List world saves in an instance.
+    List { instance: String },
+    /// Create a zip backup of a world.
+    Backup {
+        instance: String,
+        world: String,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Restore a world from a zip backup archive.
+    Restore { instance: String, backup: PathBuf },
+}
+
+#[derive(Args, Debug)]
+struct UiSnapshotArgs {
+    /// Screen to snapshot (instances, detail, catalog, accounts, settings, perf).
+    #[arg(long, default_value = "instances")]
+    screen: String,
+
+    /// Output PNG file path.
+    #[arg(long)]
+    out: PathBuf,
+
+    /// Width of the snapshot viewport in pixels.
+    #[arg(long, default_value_t = 1280)]
+    width: u32,
+
+    /// Height of the snapshot viewport in pixels.
+    #[arg(long, default_value_t = 800)]
+    height: u32,
 }
 
 #[derive(Args, Debug)]
@@ -288,8 +476,14 @@ async fn main() -> Result<()> {
         Some(Commands::Verify(args)) => cmd_verify(args, paths, cli.threads).await,
         Some(Commands::Plan(args)) => cmd_plan(args, paths).await,
         Some(Commands::Auth(args)) => cmd_auth(args, paths).await,
+        Some(Commands::Accounts(args)) => cmd_accounts(args, paths).await,
+        Some(Commands::Instances(args)) => cmd_instances(args, paths).await,
+        Some(Commands::Java(args)) => cmd_java(args, paths).await,
         Some(Commands::Mods(args)) => cmd_mods(args, paths, cli.threads).await,
         Some(Commands::Modpack(args)) => cmd_modpack(args, paths, cli.threads).await,
+        Some(Commands::Worlds(args)) => cmd_worlds(args, paths).await,
+        Some(Commands::Doctor) => cmd_doctor(paths).await,
+        Some(Commands::UiSnapshot(args)) => cmd_ui_snapshot(args, paths, cli.threads).await,
         Some(Commands::Bench(args)) => cmd_bench(args).await,
     }
 }
@@ -880,6 +1074,162 @@ async fn cmd_mods(args: ModsArgs, paths: MqPaths, threads: Option<usize>) -> Res
             delete_mod(&mods_dir, &file)?;
             println!("[MQ] Мод '{}' удален.", file);
         }
+        ModsSubcommand::List { instance } => {
+            let mgr = InstanceManager::new(paths.clone());
+            let inst = mgr.load_instance(&instance)?;
+            let mods_dir = paths.instance_dir(inst.id.as_str()).join("mods");
+            if !mods_dir.exists() {
+                println!("Папка mods/ отсутствует в инстансе '{}'.", inst.name);
+                return Ok(());
+            }
+            let entries = std::fs::read_dir(&mods_dir)?;
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            println!("{:<8} {:<42} РАЗМЕР", "СТАТУС", "ИМЯ ФАЙЛА");
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            let mut count = 0;
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".jar") || name.ends_with(".jar.disabled") {
+                    let status = if name.ends_with(".disabled") {
+                        "ВЫКЛ"
+                    } else {
+                        "ВКЛ"
+                    };
+                    let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                    println!(
+                        "{:<8} {:<42} {:.2} MiB",
+                        status,
+                        name,
+                        size as f64 / (1024.0 * 1024.0)
+                    );
+                    count += 1;
+                }
+            }
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            println!("Всего модов в инстансе '{}': {}", inst.name, count);
+        }
+        ModsSubcommand::Add {
+            instance,
+            project,
+            loader,
+            version,
+        } => {
+            return Box::pin(cmd_mods(
+                ModsArgs {
+                    action: ModsSubcommand::Install {
+                        instance,
+                        project,
+                        loader,
+                        version,
+                    },
+                },
+                paths,
+                threads,
+            ))
+            .await;
+        }
+        ModsSubcommand::Remove { instance, file } => {
+            return Box::pin(cmd_mods(
+                ModsArgs {
+                    action: ModsSubcommand::Delete { instance, file },
+                },
+                paths,
+                threads,
+            ))
+            .await;
+        }
+        ModsSubcommand::Update { instance, all } => {
+            let mgr = InstanceManager::new(paths.clone());
+            let inst = mgr.load_instance(&instance)?;
+            let mods_dir = paths.instance_dir(inst.id.as_str()).join("mods");
+            if !mods_dir.exists() {
+                println!("Папка mods/ отсутствует в инстансе '{}'.", inst.name);
+                return Ok(());
+            }
+            println!("[MQ] Хэширование установленных модов и проверка обновлений на Modrinth...");
+            let mut jar_hashes = Vec::new();
+            let mut hash_to_file = std::collections::HashMap::new();
+            for entry in std::fs::read_dir(&mods_dir)?.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.ends_with(".jar") && !name.ends_with(".disabled") {
+                    if let Ok(bytes) = std::fs::read(&path) {
+                        use sha1::{Digest, Sha1};
+                        let mut hasher = Sha1::new();
+                        hasher.update(&bytes);
+                        let hex_hash = hex::encode(hasher.finalize());
+                        jar_hashes.push(hex_hash.clone());
+                        hash_to_file.insert(hex_hash, (name, path));
+                    }
+                }
+            }
+
+            if jar_hashes.is_empty() {
+                println!("[MQ] В инстансе нет установленных .jar модов.");
+                return Ok(());
+            }
+
+            let client = ModrinthClient::new()?;
+            let updates = client
+                .check_version_updates(&jar_hashes, inst.loader, &inst.mc_version)
+                .await?;
+
+            if updates.is_empty() {
+                println!(
+                    "[MQ] Все {} модов имеют актуальные версии!",
+                    jar_hashes.len()
+                );
+                return Ok(());
+            }
+
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            println!("[MQ] Найдено доступных обновлений: {}", updates.len());
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            for (old_hash, new_ver) in &updates {
+                if let Some((old_name, old_path)) = hash_to_file.get(old_hash) {
+                    let new_file = new_ver
+                        .files
+                        .iter()
+                        .find(|f| f.primary)
+                        .or_else(|| new_ver.files.first());
+                    if let Some(file_info) = new_file {
+                        println!(
+                            "  * {} -> {} (версия: {})",
+                            old_name, file_info.filename, new_ver.version_number
+                        );
+                        if all {
+                            println!("    Загрузка {}...", file_info.filename);
+                            let new_path = mods_dir.join(&file_info.filename);
+                            let bytes = reqwest::get(&file_info.url).await?.bytes().await?;
+                            std::fs::write(&new_path, bytes)?;
+                            if old_path != &new_path && old_path.exists() {
+                                let _ = std::fs::remove_file(old_path);
+                            }
+                            println!("    [OK] Обновлено: {}", file_info.filename);
+                        }
+                    }
+                }
+            }
+            if !all {
+                println!(
+                    "--------------------------------------------------------------------------------"
+                );
+                println!(
+                    "[MQ] Для применения всех обновлений выполните: mq mods update {} --all",
+                    inst.name
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -964,6 +1314,515 @@ async fn cmd_modpack(args: ModpackArgs, paths: MqPaths, threads: Option<usize>) 
             }
         }
     }
+    Ok(())
+}
+
+fn parse_loader(s: &str) -> Result<ModLoaderKind> {
+    match s.to_lowercase().as_str() {
+        "vanilla" => Ok(ModLoaderKind::Vanilla),
+        "fabric" => Ok(ModLoaderKind::Fabric),
+        "quilt" => Ok(ModLoaderKind::Quilt),
+        "forge" => Ok(ModLoaderKind::Forge),
+        "neoforge" => Ok(ModLoaderKind::NeoForge),
+        _ => bail!(
+            "Неизвестный загрузчик модов '{}'. Доступные: vanilla, fabric, quilt, forge, neoforge",
+            s
+        ),
+    }
+}
+
+async fn cmd_instances(args: InstancesArgs, paths: MqPaths) -> Result<()> {
+    let mgr = InstanceManager::new(paths.clone());
+    match args.action {
+        InstancesSubcommand::List => {
+            let instances = mgr.list_instances()?;
+            if instances.is_empty() {
+                println!("Инстансы не найдены. Создайте инстанс: mq instances create <name> --version <version>");
+                return Ok(());
+            }
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            println!(
+                "{:<24} {:<10} {:<14} {:<12} ИМЯ",
+                "ID", "ВЕРСИЯ", "МОДЛОАДЕР", "ВРЕМЯ"
+            );
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            for inst in instances {
+                let loader_str = match inst.loader {
+                    ModLoaderKind::Vanilla => "Vanilla".to_string(),
+                    ModLoaderKind::Fabric => {
+                        format!("Fabric {}", inst.loader_version.as_deref().unwrap_or(""))
+                    }
+                    ModLoaderKind::Quilt => {
+                        format!("Quilt {}", inst.loader_version.as_deref().unwrap_or(""))
+                    }
+                    ModLoaderKind::Forge => {
+                        format!("Forge {}", inst.loader_version.as_deref().unwrap_or(""))
+                    }
+                    ModLoaderKind::NeoForge => {
+                        format!("NeoForge {}", inst.loader_version.as_deref().unwrap_or(""))
+                    }
+                };
+                let hours = inst.playtime_secs / 3600;
+                let mins = (inst.playtime_secs % 3600) / 60;
+                let time_str = format!("{}ч {}м", hours, mins);
+                println!(
+                    "{:<24} {:<10} {:<14} {:<12} {}",
+                    inst.id.as_str(),
+                    inst.mc_version,
+                    loader_str,
+                    time_str,
+                    inst.name
+                );
+            }
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+        }
+        InstancesSubcommand::Create {
+            name,
+            version,
+            loader,
+            loader_version,
+        } => {
+            let ldr = parse_loader(&loader)?;
+            let created = mgr.create_instance(&name, &version, ldr, loader_version)?;
+            println!(
+                "[MQ] Инстанс '{}' успешно создан (ID: {})",
+                created.name,
+                created.id.as_str()
+            );
+        }
+        InstancesSubcommand::Delete { instance, force: _ } => {
+            mgr.delete_instance(&instance)?;
+            println!("[MQ] Инстанс '{}' успешно удалён", instance);
+        }
+        InstancesSubcommand::Clone { instance, new_name } => {
+            let cloned = mgr.clone_instance(&instance, &new_name)?;
+            println!(
+                "[MQ] Инстанс '{}' клонирован в '{}' (ID: {})",
+                instance,
+                cloned.name,
+                cloned.id.as_str()
+            );
+        }
+        InstancesSubcommand::Export { instance, out } => {
+            let inst = mgr.load_instance(&instance)?;
+            let inst_dir = paths.instance_dir(inst.id.as_str());
+            mq_instances::export_instance_to_zip(&inst_dir, &out)?;
+            println!(
+                "[MQ] Инстанс '{}' экспортирован в {}",
+                inst.name,
+                out.display()
+            );
+        }
+        InstancesSubcommand::Import { file, name } => {
+            let imported = mq_instances::import_instance_from_zip(
+                &file,
+                &paths.instances_dir(),
+                name.as_deref(),
+            )?;
+            println!(
+                "[MQ] Инстанс '{}' успешно импортирован (ID: {})",
+                imported.name,
+                imported.id.as_str()
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_java(args: JavaArgs, paths: MqPaths) -> Result<()> {
+    match args.action {
+        JavaSubcommand::List => {
+            let runtimes = discover_java_runtimes();
+            if runtimes.is_empty() {
+                println!("Java не обнаружена в системе.");
+                println!("Установите JRE автоматически: mq java download --version 21");
+                return Ok(());
+            }
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            println!("{:<8} {:<10} {:<24} ПУТЬ", "MAJOR", "ВЕРСИЯ", "ПОСТАВЩИК");
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            for rt in runtimes {
+                println!(
+                    "{:<8} {:<10} {:<24} {}",
+                    rt.major_version,
+                    rt.full_version,
+                    rt.vendor,
+                    rt.path.display()
+                );
+            }
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+        }
+        JavaSubcommand::Download { version } => {
+            if version != 8 && version != 17 && version != 21 {
+                bail!(
+                    "Поддерживаются только версии 8, 17 или 21 (указана: {})",
+                    version
+                );
+            }
+            println!("[MQ] Загрузка Adoptium Temurin JRE {}...", version);
+            let java_dir = paths.java_dir();
+            let http_client = reqwest::Client::new();
+            let installed =
+                mq_launch::download_adoptium_java(&http_client, version, &java_dir).await?;
+            println!(
+                "\n[MQ] JRE {} успешно установлена в: {}",
+                version,
+                installed.home_dir.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_accounts(args: AccountsArgs, paths: MqPaths) -> Result<()> {
+    let mut store = AccountStore::load_or_default(&paths)?;
+    match args.action {
+        AccountsSubcommand::List => {
+            let accounts = store.list_accounts();
+            if accounts.is_empty() {
+                println!("Аккаунты не найдены. Добавьте оффлайн-профиль: mq accounts add --username <имя>");
+                return Ok(());
+            }
+            let active_id = store.active_account().map(|a| a.id.to_string());
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            println!("{:<3} {:<20} {:<12} UUID", "АКТ", "ИМЯ", "ТИП");
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            for a in accounts {
+                let is_active = if active_id.as_deref() == Some(&a.id.to_string()) {
+                    "*"
+                } else {
+                    " "
+                };
+                let kind_str = match a.kind {
+                    AccountKind::Offline => "Offline",
+                    AccountKind::ElyBy => "Ely.by",
+                    AccountKind::Microsoft => "Microsoft",
+                };
+                println!(
+                    "{:<3} {:<20} {:<12} {}",
+                    is_active, a.username, kind_str, a.uuid
+                );
+            }
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+        }
+        AccountsSubcommand::Add {
+            username,
+            offline: _,
+            ely,
+            password,
+        } => {
+            if ely {
+                let client = ElyByClient::new();
+                let pass = password
+                    .ok_or_else(|| anyhow::anyhow!("Пароль обязателен для авторизации Ely.by"))?;
+                let acc = client.authenticate(&username, &pass, None, None).await?;
+                store.upsert_account(acc.clone(), true);
+                store.save(&paths)?;
+                println!(
+                    "[MQ] Аккаунт Ely.by '{}' добавлен и выбран активным",
+                    acc.username
+                );
+            } else {
+                let acc = create_offline_account(&username)?;
+                store.upsert_account(acc.clone(), true);
+                store.save(&paths)?;
+                println!(
+                    "[MQ] Оффлайн-профиль '{}' создан и выбран активным",
+                    acc.username
+                );
+            }
+        }
+        AccountsSubcommand::Switch { id } => {
+            store.select_account(&id)?;
+            store.save(&paths)?;
+            println!("[MQ] Активный аккаунт переключён на: {}", id);
+        }
+        AccountsSubcommand::Remove { id } => {
+            let removed = store.remove_account(&id);
+            if removed {
+                store.save(&paths)?;
+                println!("[MQ] Аккаунт '{}' удалён", id);
+            } else {
+                bail!("Не удалось найти или удалить аккаунт '{}'", id);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_worlds(args: WorldsArgs, paths: MqPaths) -> Result<()> {
+    let mgr = InstanceManager::new(paths.clone());
+    match args.action {
+        WorldsSubcommand::List { instance } => {
+            let inst = mgr.load_instance(&instance)?;
+            let instance_dir = paths.instance_dir(inst.id.as_str());
+            let worlds = mq_instances::list_worlds(&instance_dir)?;
+            if worlds.is_empty() {
+                println!("Миры в инстансе '{}' не найдены.", inst.name);
+                return Ok(());
+            }
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            println!(
+                "{:<24} {:<20} {:<12} ПОСЛЕДНЯЯ ИГРА",
+                "ПАПКА", "НАЗВАНИЕ", "РЕЖИМ"
+            );
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+            for w in worlds {
+                let last_str = w
+                    .last_played
+                    .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                    .unwrap_or_else(|| "Никогда".to_string());
+                println!(
+                    "{:<24} {:<20} {:<12} {}",
+                    w.folder_name, w.display_name, w.game_mode, last_str
+                );
+            }
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
+        }
+        WorldsSubcommand::Backup {
+            instance,
+            world,
+            out: _,
+        } => {
+            let inst = mgr.load_instance(&instance)?;
+            let backup_path = mq_instances::backup_world(
+                &paths.instance_dir(inst.id.as_str()),
+                &paths.backups_dir(),
+                inst.id.as_str(),
+                &world,
+            )?;
+            println!(
+                "[MQ] Резервная копия сохранена в: {}",
+                backup_path.display()
+            );
+        }
+        WorldsSubcommand::Restore { instance, backup } => {
+            let inst = mgr.load_instance(&instance)?;
+            let backup_file_name = backup
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| anyhow::anyhow!("Неверный путь к файлу резервной копии"))?;
+            let restored = mq_instances::restore_world(
+                &paths.backups_dir(),
+                inst.id.as_str(),
+                backup_file_name,
+                &paths.instance_dir(inst.id.as_str()),
+                None,
+            )?;
+            println!("[MQ] Мир успешно восстановлен в: {}", restored.display());
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_doctor(paths: MqPaths) -> Result<()> {
+    println!("================================================================================");
+    println!("                   MQ LAUNCHER v2.0.0 — СИСТЕМНЫЙ ДИАГНОСТ (DOCTOR)");
+    println!("================================================================================");
+
+    // 1. OS & Architecture
+    let os_name = std::fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|c| {
+            c.lines().find(|l| l.starts_with("PRETTY_NAME=")).map(|l| {
+                l.trim_start_matches("PRETTY_NAME=")
+                    .trim_matches('"')
+                    .to_string()
+            })
+        })
+        .unwrap_or_else(|| "Linux (Unknown)".to_string());
+    let arch = std::env::consts::ARCH;
+    println!("[СИСТЕМА]   ОС: {} | Архитектура: {}", os_name, arch);
+
+    // 2. CPU
+    let num_cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let cpu_model = std::fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|c| {
+            c.lines()
+                .find(|l| l.starts_with("model name"))
+                .and_then(|l| l.split(':').nth(1))
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_else(|| "Unknown CPU".to_string());
+    println!(
+        "[ПРОЦЕССОР] Модель: {} (Логических ядер: {})",
+        cpu_model, num_cpus
+    );
+
+    // 3. GPU & Drivers via wgpu
+    let instance = wgpu::Instance::default();
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })
+        .await;
+    match adapter {
+        Some(a) => {
+            let info = a.get_info();
+            println!(
+                "[ГРАФИКА]   Устройство: {} (Поставщик: 0x{:04x}, Бэкенд: {:?}, Драйвер: {})",
+                info.name, info.vendor, info.backend, info.driver
+            );
+        }
+        None => {
+            println!("[ГРАФИКА]   Предупреждение: Аппаратный адаптер Vulkan/OpenGL не обнаружен.");
+        }
+    }
+
+    // 4. Java Runtimes
+    let runtimes = discover_java_runtimes();
+    println!("[JAVA]      Обнаружено сред исполнения: {}", runtimes.len());
+    for rt in &runtimes {
+        println!(
+            "            * Java {:<2} ({} - {}) -> {}",
+            rt.major_version,
+            rt.full_version,
+            rt.vendor,
+            rt.path.display()
+        );
+    }
+    if runtimes.is_empty() {
+        println!("            [!] Рекомендуется загрузить JRE: mq java download --version 21");
+    }
+
+    // 5. Network Connectivity Checks
+    println!("[СЕТЬ]      Проверка доступности игровых сервисов:");
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(6))
+        .build()
+        .unwrap_or_default();
+
+    let endpoints = [
+        (
+            "Mojang Manifest",
+            "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json",
+        ),
+        (
+            "Modrinth API",
+            "https://api.modrinth.com/v2/search?query=fabric-api",
+        ),
+        ("CurseForge API", "https://api.curseforge.com/v1/categories"),
+    ];
+
+    for (name, url) in endpoints {
+        let start = Instant::now();
+        match client.get(url).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                let ms = start.elapsed().as_millis();
+                println!("            * {:<18} [{}] - {} мс", name, status, ms);
+            }
+            Err(e) => {
+                println!("            * {:<18} [НЕДОСТУПЕН: {}]", name, e);
+            }
+        }
+    }
+
+    // 6. Storage & Disk Space
+    let data_dir = &paths.data_dir;
+    let free_space = rustix::fs::statvfs(data_dir)
+        .ok()
+        .map(|s| s.f_bavail * s.f_frsize);
+    println!("[ДИСК]      Каталог данных: {}", data_dir.display());
+    if let Some(free) = free_space {
+        println!(
+            "            Свободно на диске: {:.2} GiB",
+            free as f64 / (1024.0 * 1024.0 * 1024.0)
+        );
+    }
+    println!("================================================================================");
+    println!("[MQ DOCTOR] Все ключевые подсистемы MQ v2.0.0 проанализированы.");
+    println!("================================================================================");
+    Ok(())
+}
+
+async fn cmd_ui_snapshot(
+    args: UiSnapshotArgs,
+    paths: MqPaths,
+    threads: Option<usize>,
+) -> Result<()> {
+    let config = AppConfig::load_or_default(&paths)?;
+    let num_t = threads.unwrap_or_else(default_cpu_threads);
+    let pool = Arc::new(ComputePool::new(num_t));
+    let mut state =
+        UiState::new(paths.clone(), config, pool).context("Failed to initialize UI state")?;
+
+    let mgr = InstanceManager::new(paths.clone());
+    if state.instances.is_empty() {
+        let _ = mgr.create_instance("1.21.1 Vanilla", "1.21.1", ModLoaderKind::Vanilla, None);
+        let _ = mgr.create_instance(
+            "Fabulously Optimized",
+            "1.21.1",
+            ModLoaderKind::Fabric,
+            Some("0.16.9".into()),
+        );
+        let _ = mgr.create_instance("NeoForge 1.21.1", "1.21.1", ModLoaderKind::NeoForge, None);
+        if let Ok(insts) = mgr.list_instances() {
+            state.instances = insts;
+        }
+    }
+
+    let tab = match args.screen.to_lowercase().as_str() {
+        "instances" => mq_ui::NavTab::Instances,
+        "detail" => mq_ui::NavTab::Instances,
+        "catalog" => mq_ui::NavTab::Catalog,
+        "accounts" => mq_ui::NavTab::Accounts,
+        "perf" | "performance" => mq_ui::NavTab::Performance,
+        "settings" => mq_ui::NavTab::Settings,
+        _ => mq_ui::NavTab::Instances,
+    };
+
+    let mut app = mq_ui::MqApp {
+        state,
+        current_tab: tab,
+        instances_view: mq_ui::InstancesView::default(),
+        catalog_view: mq_ui::CatalogView::default(),
+        accounts_view: mq_ui::AccountsView::default(),
+        perf_view: mq_ui::PerfView,
+        settings_view: mq_ui::SettingsView::default(),
+    };
+
+    if args.screen.to_lowercase() == "detail" {
+        if let Some(first) = app.state.instances.first() {
+            app.state.selected_instance_id = Some(first.id.clone());
+        }
+    }
+
+    println!(
+        "[MQ] Генерация снимка экрана '{}' ({}x{})...",
+        args.screen, args.width, args.height
+    );
+    mq_ui::capture_app_snapshot(&mut app, args.width, args.height, &args.out).await?;
+    println!("[MQ] Снимок сохранён: {}", args.out.display());
     Ok(())
 }
 

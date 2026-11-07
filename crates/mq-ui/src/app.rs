@@ -13,7 +13,7 @@ use crate::perf_view::PerfView;
 use crate::settings_view::SettingsView;
 use crate::sidebar::{render_sidebar, NavTab, SidebarAction};
 use crate::state::{UiState, UiWorkerCommand, UiWorkerResponse};
-use crate::theme::apply_theme;
+use crate::theme::{apply_theme, solid_sidebar_frame, Tokens};
 
 pub struct MqApp {
     pub state: UiState,
@@ -537,6 +537,77 @@ impl MqApp {
             }
         }
     }
+
+    /// Headless/offscreen frame rendering for visual QA and snapshots.
+    pub fn render_frame_for_snapshot(&mut self, ctx: &egui::Context) {
+        let accounts_list = self.state.accounts.list_accounts().to_vec();
+        let active_id = self
+            .state
+            .accounts
+            .active_account()
+            .map(|a| a.id.to_string());
+
+        let launcher_locale = self.state.config.launcher_locale.clone();
+        let tokens = Tokens::from_config(&self.state.config.theme);
+
+        SidePanel::left("mq_sidebar")
+            .resizable(false)
+            .exact_width(220.0)
+            .frame(solid_sidebar_frame(&tokens))
+            .show(ctx, |ui| {
+                let _ = render_sidebar(
+                    ui,
+                    self.current_tab,
+                    &accounts_list,
+                    active_id.as_deref(),
+                    &launcher_locale,
+                    &tokens,
+                );
+            });
+
+        let hud_data = BottomHudData {
+            active_phase: self.state.active_phase.clone(),
+            progress_fraction: self.state.phase_progress.as_ref().map(|p| {
+                if p.total_items > 0 {
+                    (p.completed_items as f32) / (p.total_items as f32)
+                } else {
+                    0.0
+                }
+            }),
+            files_per_sec: self
+                .state
+                .phase_progress
+                .as_ref()
+                .map(|p| p.files_per_sec)
+                .unwrap_or(0.0),
+            mib_per_sec: self
+                .state
+                .phase_progress
+                .as_ref()
+                .map(|p| p.mib_per_sec)
+                .unwrap_or(0.0),
+            active_dag_tasks: self
+                .state
+                .phase_progress
+                .as_ref()
+                .map(|p| p.active_tasks)
+                .unwrap_or(0),
+            cpu_snapshot: self.state.latest_cpu.clone(),
+            watchdog_violations: self.state.watchdog.violation_count(),
+        };
+
+        TopBottomPanel::bottom("mq_hud").show(ctx, |ui| {
+            render_bottom_hud(ui, &hud_data);
+        });
+
+        CentralPanel::default().show(ctx, |ui| match self.current_tab {
+            NavTab::Instances => self.instances_view.ui(ui, &mut self.state),
+            NavTab::Catalog => self.catalog_view.ui(ui, &mut self.state),
+            NavTab::Accounts => self.accounts_view.ui(ui, &mut self.state),
+            NavTab::Performance => self.perf_view.ui(ui, &self.state),
+            NavTab::Settings => self.settings_view.ui(ui, &mut self.state),
+        });
+    }
 }
 
 impl eframe::App for MqApp {
@@ -563,9 +634,11 @@ impl eframe::App for MqApp {
 
         let mut sidebar_action = None;
         let launcher_locale = self.state.config.launcher_locale.clone();
+        let tokens = Tokens::from_config(&self.state.config.theme);
         SidePanel::left("mq_sidebar")
             .resizable(false)
-            .default_width(220.0)
+            .exact_width(220.0)
+            .frame(solid_sidebar_frame(&tokens))
             .show(ctx, |ui| {
                 sidebar_action = render_sidebar(
                     ui,
@@ -573,6 +646,7 @@ impl eframe::App for MqApp {
                     &accounts_list,
                     active_id.as_deref(),
                     &launcher_locale,
+                    &tokens,
                 );
             });
 
@@ -648,9 +722,9 @@ pub fn run_gui(state: UiState, backend: GuiBackend) -> Result<(), eframe::Error>
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("MQ Launcher")
-            .with_inner_size([1120.0, 720.0])
-            .with_min_inner_size([960.0, 620.0])
-            .with_transparent(true)
+            .with_inner_size([1180.0, 740.0])
+            .with_min_inner_size([960.0, 600.0])
+            .with_transparent(false)
             .with_decorations(true),
         renderer: match backend {
             GuiBackend::Vulkan => eframe::Renderer::Wgpu,

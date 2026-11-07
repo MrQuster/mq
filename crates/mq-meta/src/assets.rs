@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use mq_core::{MqError, MqResult, Sha1Digest};
-use serde::Deserialize;
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::models::{AssetIndex, AssetIndexPointer, AssetObject};
 
@@ -11,12 +11,96 @@ use crate::models::{AssetIndex, AssetIndexPointer, AssetObject};
 struct RawAssetIndex {
     #[serde(default)]
     objects: BTreeMap<String, RawAssetObject>,
+    #[serde(default, rename = "virtual")]
+    is_virtual: Option<bool>,
+    #[serde(default)]
+    map_to_resources: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RawAssetObject {
     hash: Sha1Digest,
     size: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct StructAssetIndex {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    is_virtual: Option<bool>,
+    #[serde(default)]
+    map_to_resources: Option<bool>,
+    #[serde(default)]
+    objects: Vec<AssetObject>,
+}
+
+impl Serialize for AssetIndex {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(None)?;
+
+        let mut objects_map = BTreeMap::new();
+        for obj in &self.objects {
+            objects_map.insert(
+                &obj.name,
+                serde_json::json!({
+                    "hash": obj.hash.to_hex(),
+                    "size": obj.size,
+                }),
+            );
+        }
+        map.serialize_entry("objects", &objects_map)?;
+        if self.is_virtual {
+            map.serialize_entry("virtual", &true)?;
+        }
+        if self.map_to_resources {
+            map.serialize_entry("map_to_resources", &true)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for AssetIndex {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if let Some(obj_val) = value.get("objects") {
+            if obj_val.is_array() {
+                let parsed: StructAssetIndex =
+                    serde_json::from_value(value).map_err(de::Error::custom)?;
+                return Ok(AssetIndex {
+                    id: parsed.id.unwrap_or_default(),
+                    is_virtual: parsed.is_virtual.unwrap_or(false),
+                    map_to_resources: parsed.map_to_resources.unwrap_or(false),
+                    objects: parsed.objects,
+                });
+            }
+        }
+
+        let raw: RawAssetIndex = serde_json::from_value(value).map_err(de::Error::custom)?;
+        let mut objects = Vec::with_capacity(raw.objects.len());
+        for (name, entry) in raw.objects {
+            objects.push(AssetObject {
+                name,
+                hash: entry.hash,
+                size: entry.size,
+            });
+        }
+        objects.sort_by(|a, b| a.name.cmp(&b.name));
+
+        Ok(AssetIndex {
+            id: String::new(),
+            is_virtual: raw.is_virtual.unwrap_or(false),
+            map_to_resources: raw.map_to_resources.unwrap_or(false),
+            objects,
+        })
+    }
 }
 
 /// Parses a Mojang `assets/indexes/<id>.json` document into a deterministic [`AssetIndex`].
@@ -40,18 +124,22 @@ pub fn parse_asset_index(index_id: &str, json: &str) -> MqResult<AssetIndex> {
             size: entry.size,
         });
     }
+    objects.sort_by(|a, b| a.name.cmp(&b.name));
 
     Ok(AssetIndex {
         id: index_id.to_string(),
+        is_virtual: raw.is_virtual.unwrap_or(false),
+        map_to_resources: raw.map_to_resources.unwrap_or(false),
         objects,
     })
 }
 
-/// Fetches and parses a Mojang asset index JSON document over HTTP.
-pub async fn fetch_asset_index(
+/// Fetches and parses a Mojang asset index JSON document over HTTP, returning both parsed index
+/// and exact raw JSON string bytes for byte-for-byte exact disk storage.
+pub async fn fetch_asset_index_raw(
     client: &reqwest::Client,
     pointer: &AssetIndexPointer,
-) -> MqResult<AssetIndex> {
+) -> MqResult<(AssetIndex, String)> {
     let response = client.get(&pointer.url).send().await.map_err(|err| {
         MqError::Network(format!(
             "failed to fetch asset index '{}': {err}",
@@ -75,10 +163,46 @@ pub async fn fetch_asset_index(
         });
     }
 
-    parse_asset_index(&pointer.id, &body)
+    let parsed = parse_asset_index(&pointer.id, &body)?;
+    Ok((parsed, body))
+}
+
+/// Fetches and parses a Mojang asset index JSON document over HTTP.
+pub async fn fetch_asset_index(
+    client: &reqwest::Client,
+    pointer: &AssetIndexPointer,
+) -> MqResult<AssetIndex> {
+    fetch_asset_index_raw(client, pointer)
+        .await
+        .map(|(idx, _)| idx)
 }
 
 impl AssetIndex {
+    /// Re-serializes the asset index into official Mojang JSON format:
+    /// `{"objects": {"<path>": {"hash": "<sha1>", "size": <bytes>}}}`
+    pub fn to_mojang_json(&self) -> Result<String, serde_json::Error> {
+        let mut map = BTreeMap::new();
+        for obj in &self.objects {
+            map.insert(
+                &obj.name,
+                serde_json::json!({
+                    "hash": obj.hash.to_hex(),
+                    "size": obj.size,
+                }),
+            );
+        }
+        let mut root = serde_json::json!({
+            "objects": map,
+        });
+        if self.is_virtual {
+            root["virtual"] = serde_json::json!(true);
+        }
+        if self.map_to_resources {
+            root["map_to_resources"] = serde_json::json!(true);
+        }
+        serde_json::to_string_pretty(&root)
+    }
+
     /// Returns a deterministically ordered list of asset objects deduplicated by SHA-1 digest.
     ///
     /// In modern Minecraft asset indexes, thousands of logical asset entries share identical
@@ -193,5 +317,33 @@ mod tests {
             }
         }"#;
         assert!(parse_asset_index("17", bad_hash_json).is_err());
+    }
+
+    #[test]
+    fn serializes_to_mojang_format_and_deserializes_back() {
+        let json = r#"{
+            "objects": {
+                "minecraft/lang/ru_ru.json": {
+                    "hash": "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3",
+                    "size": 12048
+                }
+            },
+            "virtual": true,
+            "map_to_resources": true
+        }"#;
+
+        let index = parse_asset_index("1.12", json).expect("parse asset index");
+        assert!(index.is_virtual);
+        assert!(index.map_to_resources);
+        let mojang_json = index.to_mojang_json().expect("to mojang json");
+        assert!(mojang_json.contains("\"minecraft/lang/ru_ru.json\""));
+        assert!(mojang_json.contains("\"virtual\": true"));
+
+        // Roundtrip via serde_json::from_str
+        let deserialized: AssetIndex = serde_json::from_str(&mojang_json).expect("deserialize");
+        assert_eq!(deserialized.objects.len(), 1);
+        assert_eq!(deserialized.objects[0].name, "minecraft/lang/ru_ru.json");
+        assert!(deserialized.is_virtual);
+        assert!(deserialized.map_to_resources);
     }
 }

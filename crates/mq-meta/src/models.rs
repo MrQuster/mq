@@ -163,9 +163,11 @@ impl AssetObject {
 }
 
 /// Deterministic parsed Asset Index (sorted by logical name for reproducible iteration).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetIndex {
     pub id: String,
+    pub is_virtual: bool,
+    pub map_to_resources: bool,
     /// Deduplicated and deterministically ordered list of asset objects.
     pub objects: Vec<AssetObject>,
 }

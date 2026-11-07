@@ -30,6 +30,23 @@ pub struct LoaderProfile {
     pub libraries: Vec<ResolvedLibrary>,
     pub jvm_arguments: Vec<String>,
     pub game_arguments: Vec<String>,
+    #[serde(default)]
+    pub asset_index: Option<crate::models::AssetIndexPointer>,
+    #[serde(default)]
+    pub client_jar: Option<ArtifactDownload>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RawLoaderAssetIndexPointer {
+    id: String,
+    #[serde(default)]
+    sha1: Option<Sha1Digest>,
+    #[serde(default)]
+    size: Option<u64>,
+    #[serde(default, rename = "totalSize")]
+    total_size: Option<u64>,
+    #[serde(default)]
+    url: Option<String>,
 }
 
 /// Raw library entry inside a Fabric, Quilt, Forge, or NeoForge profile JSON.
@@ -107,6 +124,10 @@ struct RawLoaderProfile {
     inherits_from: Option<String>,
     #[serde(default, rename = "mainClass")]
     main_class: Option<String>,
+    #[serde(default, rename = "assetIndex")]
+    asset_index: Option<RawLoaderAssetIndexPointer>,
+    #[serde(default)]
+    assets: Option<String>,
     #[serde(default)]
     arguments: Option<RawLoaderArguments>,
     #[serde(default, rename = "minecraftArguments")]
@@ -503,6 +524,27 @@ pub fn parse_loader_profile(
         .map(|v| v.trim().to_owned())
         .filter(|v| !v.is_empty());
 
+    let asset_index = raw
+        .asset_index
+        .map(|ai| crate::models::AssetIndexPointer {
+            id: ai.id,
+            sha1: ai.sha1,
+            size: ai.size.unwrap_or(0),
+            total_size: ai.total_size.unwrap_or(0),
+            url: ai.url.unwrap_or_default(),
+        })
+        .or_else(|| {
+            raw.assets
+                .filter(|a| !a.trim().is_empty())
+                .map(|a| crate::models::AssetIndexPointer {
+                    id: a,
+                    sha1: None,
+                    size: 0,
+                    total_size: 0,
+                    url: String::new(),
+                })
+        });
+
     Ok(LoaderProfile {
         id,
         loader: loader_kind,
@@ -512,6 +554,8 @@ pub fn parse_loader_profile(
         libraries,
         jvm_arguments,
         game_arguments,
+        asset_index,
+        client_jar: None,
     })
 }
 

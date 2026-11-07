@@ -110,10 +110,16 @@ pub fn build_launch_command(ctx: &LaunchContext) -> MqResult<BuiltLaunchCommand>
     }
 
     let instance_dir = ctx.instance.instance_dir(&ctx.paths);
-    let game_dir = ctx.instance.game_dir(&ctx.paths);
+    let raw_game_dir = ctx.instance.game_dir(&ctx.paths);
+    let game_dir = raw_game_dir
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::absolute(&raw_game_dir).unwrap_or(raw_game_dir));
     let natives_dir = ctx.instance.natives_dir(&ctx.paths);
     let libraries_dir = ctx.paths.libraries_dir();
-    let assets_dir = ctx.paths.assets_dir();
+    let raw_assets_dir = ctx.paths.assets_dir();
+    let assets_dir = raw_assets_dir
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::absolute(&raw_assets_dir).unwrap_or(raw_assets_dir));
     let client_jar_path = resolve_client_jar_path(&ctx.paths, &instance_dir, &ctx.version)?;
 
     let classpath_entries =
