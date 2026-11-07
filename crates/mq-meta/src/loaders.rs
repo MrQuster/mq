@@ -1,5 +1,5 @@
-//! Fabric, Quilt, and local `inheritsFrom` (Forge / NeoForge / Fabric) modloader profile
-//! metadata resolution and Maven coordinate artifact mapping.
+//! Fabric, Quilt, Forge, NeoForge and local `inheritsFrom` modloader profile
+//! metadata resolution, Maven coordinate artifact mapping, and library duplicate resolution.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -7,7 +7,8 @@ use mq_core::{ModLoaderKind, MqError, MqResult, Sha1Digest};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use url::Url;
 
-use crate::models::{ArtifactDownload, ResolvedLibrary, RuleContext};
+use crate::assets::ClientLoggingConfig;
+use crate::models::{ArtifactDownload, JavaVersionSpec, ResolvedLibrary, RuleContext};
 
 /// Default base URL for the official Fabric Meta v2 API.
 pub const FABRIC_META_BASE_URL: &str = "https://meta.fabricmc.net";
@@ -15,8 +16,48 @@ pub const FABRIC_META_BASE_URL: &str = "https://meta.fabricmc.net";
 /// Default base URL for the official Quilt Meta v3 API.
 pub const QUILT_META_BASE_URL: &str = "https://meta.quiltmc.org";
 
+/// Default Maven repository URL for Fabric artifacts.
+pub const FABRIC_MAVEN_URL: &str = "https://maven.fabricmc.net";
+
+/// Default Maven repository URL for Quilt artifacts.
+pub const QUILT_MAVEN_URL: &str = "https://maven.quiltmc.org/repository/release";
+
+/// Default Maven repository URL for Minecraft Forge artifacts.
+pub const FORGE_MAVEN_URL: &str = "https://maven.minecraftforge.net";
+
+/// Default Maven repository URL for NeoForged artifacts.
+pub const NEOFORGE_MAVEN_URL: &str = "https://maven.neoforged.net/releases";
+
 /// Fallback Maven repository URL when a profile library omits both `downloads.artifact` and `url`.
 pub const DEFAULT_LIBRARIES_BASE_URL: &str = "https://libraries.minecraft.net";
+
+/// Returns the standard default Maven repository base URL for a given modloader kind.
+pub fn default_repo_for_loader(loader: ModLoaderKind) -> &'static str {
+    match loader {
+        ModLoaderKind::Fabric => FABRIC_MAVEN_URL,
+        ModLoaderKind::Quilt => QUILT_MAVEN_URL,
+        ModLoaderKind::Forge => FORGE_MAVEN_URL,
+        ModLoaderKind::NeoForge => NEOFORGE_MAVEN_URL,
+        ModLoaderKind::Vanilla => DEFAULT_LIBRARIES_BASE_URL,
+    }
+}
+
+/// Returns the recommended Maven repository base URL based on Maven coordinate group and loader context.
+pub fn default_repo_for_coordinate(coord: &str, loader: ModLoaderKind) -> &'static str {
+    let clean = coord.split('@').next().unwrap_or(coord).trim();
+    let group = clean.split(':').next().unwrap_or("");
+    if group.starts_with("net.fabricmc") {
+        FABRIC_MAVEN_URL
+    } else if group.starts_with("org.quiltmc") {
+        QUILT_MAVEN_URL
+    } else if group.starts_with("net.minecraftforge") {
+        FORGE_MAVEN_URL
+    } else if group.starts_with("net.neoforged") {
+        NEOFORGE_MAVEN_URL
+    } else {
+        default_repo_for_loader(loader)
+    }
+}
 
 /// Parsed and resolved representation of a modloader `version.json` / `profile/json`
 /// ready to be deterministically merged onto a parent [` crate::models::ResolvedVersion `].
@@ -34,6 +75,22 @@ pub struct LoaderProfile {
     pub asset_index: Option<crate::models::AssetIndexPointer>,
     #[serde(default)]
     pub client_jar: Option<ArtifactDownload>,
+    #[serde(default)]
+    pub java_version: Option<JavaVersionSpec>,
+    #[serde(default)]
+    pub logging: Option<ClientLoggingConfig>,
+}
+
+impl LoaderProfile {
+    /// Deterministically merges this child loader profile onto a parent [`crate::models::ResolvedVersion`].
+    /// Cascades `asset_index`, `assets`, `downloads` (`client_jar`), `java_version`, `logging`,
+    /// and resolves libraries with child precedence.
+    pub fn merge_with_parent(
+        &self,
+        parent: &crate::models::ResolvedVersion,
+    ) -> MqResult<crate::models::ResolvedVersion> {
+        crate::merge::merge_inherits_from(parent, self)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -65,6 +122,8 @@ pub struct RawLoaderLibrary {
     pub rules: Option<Vec<RawLoaderRule>>,
     #[serde(default)]
     pub extract: Option<RawLoaderExtract>,
+    #[serde(default)]
+    pub natives: Option<BTreeMap<String, String>>,
 }
 
 /// Optional `downloads` block inside a Forge, NeoForge, or Mojang-style profile library.
@@ -124,6 +183,8 @@ struct RawLoaderProfile {
     inherits_from: Option<String>,
     #[serde(default, rename = "mainClass")]
     main_class: Option<String>,
+    #[serde(default, rename = "javaVersion")]
+    java_version: Option<JavaVersionSpec>,
     #[serde(default, rename = "assetIndex")]
     asset_index: Option<RawLoaderAssetIndexPointer>,
     #[serde(default)]
@@ -134,6 +195,22 @@ struct RawLoaderProfile {
     minecraft_arguments: Option<String>,
     #[serde(default)]
     libraries: Vec<RawLoaderLibrary>,
+    #[serde(default)]
+    downloads: Option<RawLoaderProfileDownloads>,
+    #[serde(default)]
+    logging: Option<RawLoaderProfileLogging>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLoaderProfileDownloads {
+    #[serde(default)]
+    client: Option<RawLoaderArtifact>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLoaderProfileLogging {
+    #[serde(default)]
+    client: Option<ClientLoggingConfig>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -313,14 +390,33 @@ impl RawLoaderLibrary {
         (group, artifact, classifier)
     }
 
-    /// Converts this raw profile library entry into a [`ResolvedLibrary`].
+    /// Converts this raw profile library entry into a [`ResolvedLibrary`] with default repository fallback.
     pub fn to_resolved_library(&self) -> MqResult<ResolvedLibrary> {
+        self.to_resolved_library_for_loader(ModLoaderKind::Vanilla)
+    }
+
+    /// Converts this raw profile library entry into a [`ResolvedLibrary`] using the appropriate loader repository.
+    pub fn to_resolved_library_for_loader(
+        &self,
+        loader: ModLoaderKind,
+    ) -> MqResult<ResolvedLibrary> {
+        let default_repo = default_repo_for_coordinate(&self.name, loader);
+        let effective_repo = match self.url.as_deref().map(str::trim) {
+            Some(u) if !u.is_empty() => Some(u),
+            Some(_) => None, // preserve empty URL for processor artifacts
+            None => Some(default_repo),
+        };
+
         let coord_artifact = maven_coord_to_artifact(
             &self.name,
-            self.url.as_deref(),
+            effective_repo,
             self.sha1,
             self.size.unwrap_or(0),
         )?;
+
+        let is_native_linux_coord = self.name.contains(":natives-linux")
+            || self.name.ends_with(":natives-linux")
+            || self.name.contains("natives-linux@");
 
         let (artifact, native_linux) = match &self.downloads {
             Some(downloads) => {
@@ -328,7 +424,7 @@ impl RawLoaderLibrary {
                     Some(resolve_raw_artifact(
                         raw_art,
                         &coord_artifact,
-                        self.url.as_deref(),
+                        effective_repo,
                         self.sha1,
                         self.size,
                     )?)
@@ -338,13 +434,23 @@ impl RawLoaderLibrary {
                     Some(coord_artifact.clone())
                 };
 
-                let native = if let Some(raw_nat) = downloads.classifiers.get("natives-linux") {
+                let native_clf = self
+                    .natives
+                    .as_ref()
+                    .and_then(|m| m.get("linux").cloned())
+                    .unwrap_or_else(|| "natives-linux".to_string());
+
+                let native = if let Some(raw_nat) = downloads
+                    .classifiers
+                    .get(&native_clf)
+                    .or_else(|| downloads.classifiers.get("natives-linux"))
+                {
                     let fallback_native = maven_coord_to_artifact(
                         &format!(
-                            "{}:natives-linux",
+                            "{}:{native_clf}",
                             self.name.split('@').next().unwrap_or(&self.name)
                         ),
-                        self.url.as_deref(),
+                        effective_repo,
                         None,
                         0,
                     )
@@ -352,17 +458,39 @@ impl RawLoaderLibrary {
                     Some(resolve_raw_artifact(
                         raw_nat,
                         &fallback_native,
-                        self.url.as_deref(),
+                        effective_repo,
                         None,
                         None,
                     )?)
+                } else if is_native_linux_coord {
+                    primary.clone()
                 } else {
                     None
                 };
 
                 (primary, native)
             }
-            None => (Some(coord_artifact), None),
+            None => {
+                if let Some(natives_map) = &self.natives {
+                    let native_clf = natives_map
+                        .get("linux")
+                        .cloned()
+                        .unwrap_or_else(|| "natives-linux".to_string());
+                    let clean = self.name.split('@').next().unwrap_or(&self.name);
+                    let native_coord = format!("{clean}:{native_clf}");
+                    let native_artifact = maven_coord_to_artifact(
+                        &native_coord,
+                        effective_repo,
+                        self.sha1,
+                        self.size.unwrap_or(0),
+                    )?;
+                    (None, Some(native_artifact))
+                } else if is_native_linux_coord {
+                    (Some(coord_artifact.clone()), Some(coord_artifact))
+                } else {
+                    (Some(coord_artifact), None)
+                }
+            }
         };
 
         let extract_exclude = self
@@ -370,6 +498,7 @@ impl RawLoaderLibrary {
             .as_ref()
             .map(|e| e.exclude.clone())
             .unwrap_or_default();
+
         let include_in_classpath = artifact.is_some() && self.extract.is_none();
 
         Ok(ResolvedLibrary {
@@ -517,7 +646,7 @@ pub fn parse_loader_profile(
                 continue;
             }
         }
-        libraries.push(raw_lib.to_resolved_library()?);
+        libraries.push(raw_lib.to_resolved_library_for_loader(loader_kind)?);
     }
 
     let normalized_loader_version = loader_version
@@ -545,6 +674,19 @@ pub fn parse_loader_profile(
                 })
         });
 
+    let client_jar = raw.downloads.and_then(|d| d.client).map(|art| {
+        let path = art.path.unwrap_or_else(|| "client.jar".to_string());
+        let url = art.url.unwrap_or_default();
+        ArtifactDownload {
+            path,
+            url,
+            sha1: art.sha1,
+            size: art.size.unwrap_or(0),
+        }
+    });
+
+    let logging = raw.logging.and_then(|l| l.client);
+
     Ok(LoaderProfile {
         id,
         loader: loader_kind,
@@ -555,8 +697,252 @@ pub fn parse_loader_profile(
         jvm_arguments,
         game_arguments,
         asset_index,
-        client_jar: None,
+        client_jar,
+        java_version: raw.java_version,
+        logging,
     })
+}
+
+/// Compares two Maven version strings according to Maven version sorting conventions.
+///
+/// Handles numeric dot-separated tokens (`9.7.1` > `9.3.0`, `10.0` > `2.0`),
+/// qualifier ordering (`snapshot` < `alpha` < `beta` < `milestone`/`m` < `rc` < `ga`/`final`/`release`/empty < `sp`),
+/// and deterministic tie-breaking.
+pub fn compare_maven_versions(v1: &str, v2: &str) -> std::cmp::Ordering {
+    if v1 == v2 {
+        return std::cmp::Ordering::Equal;
+    }
+
+    let tokens1 = tokenize_maven_version(v1);
+    let tokens2 = tokenize_maven_version(v2);
+
+    let max_len = tokens1.len().max(tokens2.len());
+    for i in 0..max_len {
+        let t1 = tokens1.get(i);
+        let t2 = tokens2.get(i);
+        match (t1, t2) {
+            (Some(a), Some(b)) => {
+                let ord = compare_maven_token(a, b);
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+            (Some(a), None) => {
+                let ord = compare_maven_token(a, &MavenToken::Empty);
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+            (None, Some(b)) => {
+                let ord = compare_maven_token(&MavenToken::Empty, b);
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+            (None, None) => break,
+        }
+    }
+
+    v1.cmp(v2)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum MavenToken {
+    Numeric(u64),
+    Qualifier(String),
+    Empty,
+}
+
+fn tokenize_maven_version(v: &str) -> Vec<MavenToken> {
+    let mut tokens = Vec::new();
+    let parts = v.split(['.', '-', '_', '+']);
+    for part in parts {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(num) = trimmed.parse::<u64>() {
+            tokens.push(MavenToken::Numeric(num));
+        } else {
+            let mut curr = String::new();
+            let mut is_num = None;
+            for ch in trimmed.chars() {
+                let ch_num = ch.is_ascii_digit();
+                if let Some(prev_num) = is_num {
+                    if prev_num != ch_num {
+                        if prev_num {
+                            if let Ok(n) = curr.parse::<u64>() {
+                                tokens.push(MavenToken::Numeric(n));
+                            }
+                        } else {
+                            tokens.push(MavenToken::Qualifier(curr.to_ascii_lowercase()));
+                        }
+                        curr.clear();
+                    }
+                }
+                is_num = Some(ch_num);
+                curr.push(ch);
+            }
+            if !curr.is_empty() {
+                if is_num == Some(true) {
+                    if let Ok(n) = curr.parse::<u64>() {
+                        tokens.push(MavenToken::Numeric(n));
+                    }
+                } else {
+                    tokens.push(MavenToken::Qualifier(curr.to_ascii_lowercase()));
+                }
+            }
+        }
+    }
+    tokens
+}
+
+fn qualifier_rank(q: &str) -> i32 {
+    match q {
+        "snapshot" => 1,
+        "alpha" | "a" => 2,
+        "beta" | "b" => 3,
+        "milestone" | "m" => 4,
+        "rc" | "cr" => 5,
+        "" | "ga" | "final" | "release" => 6,
+        "sp" => 7,
+        _ => 5,
+    }
+}
+
+fn compare_maven_token(t1: &MavenToken, t2: &MavenToken) -> std::cmp::Ordering {
+    match (t1, t2) {
+        (MavenToken::Numeric(a), MavenToken::Numeric(b)) => a.cmp(b),
+        (MavenToken::Numeric(_), MavenToken::Qualifier(_)) => std::cmp::Ordering::Greater,
+        (MavenToken::Qualifier(_), MavenToken::Numeric(_)) => std::cmp::Ordering::Less,
+        (MavenToken::Qualifier(a), MavenToken::Qualifier(b)) => {
+            let r1 = qualifier_rank(a);
+            let r2 = qualifier_rank(b);
+            if r1 != r2 {
+                r1.cmp(&r2)
+            } else {
+                a.cmp(b)
+            }
+        }
+        (MavenToken::Numeric(a), MavenToken::Empty) => {
+            if *a == 0 {
+                std::cmp::Ordering::Equal
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        }
+        (MavenToken::Empty, MavenToken::Numeric(b)) => {
+            if *b == 0 {
+                std::cmp::Ordering::Equal
+            } else {
+                std::cmp::Ordering::Less
+            }
+        }
+        (MavenToken::Qualifier(a), MavenToken::Empty) => qualifier_rank(a).cmp(&6),
+        (MavenToken::Empty, MavenToken::Qualifier(b)) => 6.cmp(&qualifier_rank(b)),
+        (MavenToken::Empty, MavenToken::Empty) => std::cmp::Ordering::Equal,
+    }
+}
+
+/// Extracts the version portion from a Maven coordinate `group:artifact:version[:classifier]`.
+pub fn extract_version_from_maven_coord(name: &str) -> Option<&str> {
+    let clean = name.split('@').next().unwrap_or(name);
+    let parts: Vec<&str> = clean.split(':').collect();
+    parts.get(2).copied()
+}
+
+/// Strategy for resolving duplicate libraries that share `(group, artifact, classifier)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryDuplicateStrategy {
+    /// Keep the first occurrence in order (Mojang profile order).
+    FirstWins,
+    /// Keep the child/last occurrence in order (inheritsFrom overriding parent).
+    ChildOverridesParent,
+    /// Keep the library with the newer/higher Maven version.
+    PreferNewerVersion,
+}
+
+/// Deduplicates libraries sharing identical module key `(group, artifact, classifier)`
+/// using the specified resolution strategy.
+pub fn deduplicate_libraries(
+    libraries: &[ResolvedLibrary],
+    strategy: LibraryDuplicateStrategy,
+) -> Vec<ResolvedLibrary> {
+    if libraries.is_empty() {
+        return Vec::new();
+    }
+
+    match strategy {
+        LibraryDuplicateStrategy::FirstWins => {
+            let mut result = Vec::with_capacity(libraries.len());
+            let mut seen_modules = HashSet::new();
+            let mut seen_names = HashSet::new();
+            for lib in libraries {
+                if !seen_names.insert(lib.name.clone()) {
+                    continue;
+                }
+                let key = lib.module_key();
+                if !key.0.is_empty() && !key.1.is_empty() && !seen_modules.insert(key) {
+                    continue;
+                }
+                result.push(lib.clone());
+            }
+            result
+        }
+        LibraryDuplicateStrategy::ChildOverridesParent => {
+            let mut result: Vec<ResolvedLibrary> = Vec::with_capacity(libraries.len());
+            let mut seen_modules = HashSet::new();
+            let mut seen_names = HashSet::new();
+            for lib in libraries.iter().rev() {
+                if !seen_names.insert(lib.name.clone()) {
+                    continue;
+                }
+                let key = lib.module_key();
+                if !key.0.is_empty() && !key.1.is_empty() && !seen_modules.insert(key) {
+                    continue;
+                }
+                result.push(lib.clone());
+            }
+            result.reverse();
+            result
+        }
+        LibraryDuplicateStrategy::PreferNewerVersion => {
+            let mut by_module: BTreeMap<(String, String, Option<String>), ResolvedLibrary> =
+                BTreeMap::new();
+            let mut non_module = Vec::new();
+
+            for lib in libraries {
+                let key = lib.module_key();
+                if key.0.is_empty() || key.1.is_empty() {
+                    non_module.push(lib.clone());
+                    continue;
+                }
+
+                if let Some(existing) = by_module.get_mut(&key) {
+                    let v_existing = extract_version_from_maven_coord(&existing.name).unwrap_or("");
+                    let v_new = extract_version_from_maven_coord(&lib.name).unwrap_or("");
+                    if compare_maven_versions(v_new, v_existing) == std::cmp::Ordering::Greater {
+                        *existing = lib.clone();
+                    }
+                } else {
+                    by_module.insert(key, lib.clone());
+                }
+            }
+
+            let mut result = Vec::with_capacity(by_module.len() + non_module.len());
+            for lib in libraries {
+                let key = lib.module_key();
+                if key.0.is_empty() || key.1.is_empty() {
+                    continue;
+                }
+                if let Some(winner) = by_module.remove(&key) {
+                    result.push(winner);
+                }
+            }
+            result.extend(non_module);
+            result
+        }
+    }
 }
 
 fn build_meta_endpoint_url(base_url: &str, segments: &[&str]) -> MqResult<Url> {
@@ -743,6 +1129,55 @@ mod tests {
     }
 
     #[test]
+    fn maven_coord_synthesizes_paths_for_forge_and_neoforge() {
+        let forge_lib = RawLoaderLibrary {
+            name: "net.minecraftforge:forge:1.20.1-47.2.0:launcher".to_string(),
+            url: None,
+            sha1: None,
+            size: None,
+            downloads: None,
+            rules: None,
+            extract: None,
+            natives: None,
+        };
+        let resolved_forge = forge_lib
+            .to_resolved_library_for_loader(ModLoaderKind::Forge)
+            .expect("resolve forge lib");
+        let art = resolved_forge.artifact.expect("artifact");
+        assert_eq!(
+            art.path,
+            "net/minecraftforge/forge/1.20.1-47.2.0/forge-1.20.1-47.2.0-launcher.jar"
+        );
+        assert_eq!(
+            art.url,
+            "https://maven.minecraftforge.net/net/minecraftforge/forge/1.20.1-47.2.0/forge-1.20.1-47.2.0-launcher.jar"
+        );
+
+        let neo_lib = RawLoaderLibrary {
+            name: "net.neoforged:neoforge:20.4.80-beta".to_string(),
+            url: None,
+            sha1: None,
+            size: None,
+            downloads: None,
+            rules: None,
+            extract: None,
+            natives: None,
+        };
+        let resolved_neo = neo_lib
+            .to_resolved_library_for_loader(ModLoaderKind::NeoForge)
+            .expect("resolve neoforge lib");
+        let neo_art = resolved_neo.artifact.expect("neoforge artifact");
+        assert_eq!(
+            neo_art.path,
+            "net/neoforged/neoforge/20.4.80-beta/neoforge-20.4.80-beta.jar"
+        );
+        assert_eq!(
+            neo_art.url,
+            "https://maven.neoforged.net/releases/net/neoforged/neoforge/20.4.80-beta/neoforge-20.4.80-beta.jar"
+        );
+    }
+
+    #[test]
     fn maven_coord_rejects_malformed_and_traversal_inputs() {
         for bad in [
             "",
@@ -869,6 +1304,113 @@ mod tests {
         );
         assert_eq!(quilt.libraries[1].artifact.as_ref().unwrap().sha1, None);
         assert_eq!(quilt.libraries[1].artifact.as_ref().unwrap().size, 45678);
+    }
+
+    #[test]
+    fn parses_forge_and_neoforge_profiles_with_natives_and_java_version() {
+        let forge_json = r#"{
+            "id": "1.12.2-forge-14.23.5.2860",
+            "inheritsFrom": "1.12.2",
+            "mainClass": "net.minecraft.launchwrapper.Launch",
+            "javaVersion": {
+                "component": "jre-legacy",
+                "majorVersion": 8
+            },
+            "logging": {
+                "client": {
+                    "argument": "-Dlog4j.configurationFile=${path}",
+                    "file": {
+                        "id": "client-1.12.xml",
+                        "size": 877,
+                        "url": "https://piston-data.mojang.com/v1/objects/ef4f57b9222277c603b5443217b1fb797c293eb7/client-1.12.xml"
+                    },
+                    "type": "log4j2-xml"
+                }
+            },
+            "libraries": [
+                {
+                    "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
+                    "natives": {
+                        "linux": "natives-linux"
+                    },
+                    "extract": {
+                        "exclude": ["META-INF/"]
+                    }
+                }
+            ]
+        }"#;
+
+        let forge = parse_loader_profile(forge_json, ModLoaderKind::Forge, None)
+            .expect("parse forge profile");
+
+        assert_eq!(forge.loader, ModLoaderKind::Forge);
+        assert_eq!(forge.main_class, "net.minecraft.launchwrapper.Launch");
+        assert_eq!(forge.java_version.as_ref().unwrap().major_version, 8);
+        assert!(forge.logging.is_some());
+        assert_eq!(forge.libraries.len(), 1);
+
+        let lwjgl = &forge.libraries[0];
+        assert!(lwjgl.native_linux.is_some());
+        assert_eq!(
+            lwjgl.native_linux.as_ref().unwrap().path,
+            "org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-linux.jar"
+        );
+        assert_eq!(lwjgl.extract_exclude, vec!["META-INF/"]);
+        assert!(!lwjgl.include_in_classpath);
+    }
+
+    #[test]
+    fn compares_maven_versions_correctly() {
+        use std::cmp::Ordering;
+        assert_eq!(compare_maven_versions("9.7.1", "9.3.0"), Ordering::Greater);
+        assert_eq!(compare_maven_versions("10.0", "2.0"), Ordering::Greater);
+        assert_eq!(compare_maven_versions("1.21.1", "1.21.1"), Ordering::Equal);
+        assert_eq!(
+            compare_maven_versions("1.0.0-snapshot", "1.0.0"),
+            Ordering::Less
+        );
+        assert_eq!(compare_maven_versions("1.0.0-rc1", "1.0.0"), Ordering::Less);
+        assert_eq!(
+            compare_maven_versions("1.0.0-beta", "1.0.0-rc1"),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_maven_versions("20.4.80-beta", "20.4.79"),
+            Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn resolves_library_duplicates_with_mojang_and_version_strategies() {
+        let make_lib = |name: &str| ResolvedLibrary {
+            name: name.to_string(),
+            artifact: None,
+            native_linux: None,
+            extract_exclude: Vec::new(),
+            include_in_classpath: true,
+        };
+
+        let libs = vec![
+            make_lib("org.ow2.asm:asm:9.3"),
+            make_lib("com.google.code.gson:gson:2.10.1"),
+            make_lib("org.ow2.asm:asm:9.7.1"),
+        ];
+
+        // Strategy 1: FirstWins (keeps 9.3)
+        let first_wins = deduplicate_libraries(&libs, LibraryDuplicateStrategy::FirstWins);
+        assert_eq!(first_wins.len(), 2);
+        assert_eq!(first_wins[0].name, "org.ow2.asm:asm:9.3");
+
+        // Strategy 2: ChildOverridesParent (keeps 9.7.1)
+        let child_overrides =
+            deduplicate_libraries(&libs, LibraryDuplicateStrategy::ChildOverridesParent);
+        assert_eq!(child_overrides.len(), 2);
+        assert_eq!(child_overrides[1].name, "org.ow2.asm:asm:9.7.1");
+
+        // Strategy 3: PreferNewerVersion (picks 9.7.1 over 9.3)
+        let newer = deduplicate_libraries(&libs, LibraryDuplicateStrategy::PreferNewerVersion);
+        assert_eq!(newer.len(), 2);
+        assert_eq!(newer[0].name, "org.ow2.asm:asm:9.7.1");
     }
 
     #[tokio::test]

@@ -3,6 +3,8 @@
 //!
 //! Uses `rayon` parallel iteration over all targets in 64 KiB streaming chunks,
 //! saturating all available CPU cores without whole-file memory buffering.
+//! Verifies client JAR, libraries, asset index JSON, object blobs, legacy virtual/resources assets,
+//! and client logging configuration files.
 
 use std::fs::File;
 use std::io::Read;
@@ -12,7 +14,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use mq_core::{Event, EventBus, MqPaths, MqResult, PhaseProgress, Sha1Digest, Sha512Digest};
-use mq_meta::{AssetIndex, ResolvedVersion};
+use mq_meta::{AssetIndex, ClientLoggingConfig, ClientLoggingConfigFile, ResolvedVersion};
 use mq_sched::{ComputePool, EpochGuard};
 use rayon::prelude::*;
 use sha1::{Digest as _, Sha1};
@@ -44,16 +46,57 @@ impl VerifyReport {
     }
 }
 
+/// Appends a client logging config file (`assets/log_configs/<id>`) target to verification targets.
+pub fn append_logging_verify_target(
+    targets: &mut Vec<VerifyFileTarget>,
+    assets_dir: &Path,
+    logging_file: &ClientLoggingConfigFile,
+) {
+    let p = mq_meta::client_logging_file_path(assets_dir, &logging_file.id);
+    targets.push(VerifyFileTarget {
+        path: p,
+        expected_sha1: logging_file.sha1,
+        expected_sha512: None,
+        expected_size: if logging_file.size > 0 {
+            Some(logging_file.size)
+        } else {
+            None
+        },
+    });
+}
+
 /// Collects all instance verification targets in deterministic order from `ResolvedVersion` and `AssetIndex`.
+///
+/// Collects:
+/// 1. Client JAR (`client.jar`)
+/// 2. Asset index file (`assets/indexes/<id>.json`)
+/// 3. Maven and native libraries (`libraries/...`)
+/// 4. Asset object blobs (`assets/objects/<xx>/<hash>`)
+/// 5. Legacy virtual assets (`assets/virtual/<id>/<name>`) if `asset_index.is_virtual` is true
+/// 6. Legacy mapped resources (`<instance>/resources/<name>`) if `asset_index.map_to_resources` is true
 pub fn collect_instance_verify_targets(
     paths: &MqPaths,
     instance_dir: &Path,
     version: &ResolvedVersion,
     asset_index: &AssetIndex,
 ) -> Vec<VerifyFileTarget> {
-    let mut targets = Vec::with_capacity(version.libraries.len() + asset_index.objects.len() + 2);
+    let mut targets = Vec::with_capacity(
+        version.libraries.len()
+            + asset_index.objects.len()
+            + if asset_index.is_virtual {
+                asset_index.objects.len()
+            } else {
+                0
+            }
+            + if asset_index.map_to_resources {
+                asset_index.objects.len()
+            } else {
+                0
+            }
+            + 3,
+    );
 
-    // Client JAR
+    // 1. Client JAR
     let client_jar_path = instance_dir.join("client.jar");
     targets.push(VerifyFileTarget {
         path: client_jar_path,
@@ -66,7 +109,23 @@ pub fn collect_instance_verify_targets(
         },
     });
 
-    // Libraries
+    // 2. Asset Index JSON (indexes/<id>.json)
+    let asset_index_path = paths
+        .assets_dir()
+        .join("indexes")
+        .join(format!("{}.json", asset_index.id));
+    targets.push(VerifyFileTarget {
+        path: asset_index_path,
+        expected_sha1: version.asset_index.sha1,
+        expected_sha512: None,
+        expected_size: if version.asset_index.size > 0 {
+            Some(version.asset_index.size)
+        } else {
+            None
+        },
+    });
+
+    // 3. Libraries
     let lib_base = paths.libraries_dir();
     for lib in &version.libraries {
         if let Some(artifact) = &lib.artifact {
@@ -97,7 +156,7 @@ pub fn collect_instance_verify_targets(
         }
     }
 
-    // Assets
+    // 4. Asset Objects
     let assets_base = paths.assets_dir().join("objects");
     for obj in &asset_index.objects {
         let p = assets_base.join(obj.relative_object_path());
@@ -109,6 +168,49 @@ pub fn collect_instance_verify_targets(
         });
     }
 
+    // 5. Legacy virtual assets (1.7.10 - 1.12.2)
+    if asset_index.is_virtual {
+        let virtual_base = paths.assets_dir().join("virtual").join(&asset_index.id);
+        for obj in &asset_index.objects {
+            let p = virtual_base.join(&obj.name);
+            targets.push(VerifyFileTarget {
+                path: p,
+                expected_sha1: Some(obj.hash),
+                expected_sha512: None,
+                expected_size: if obj.size > 0 { Some(obj.size) } else { None },
+            });
+        }
+    }
+
+    // 6. Legacy mapped resources (1.7.10 - 1.12.2)
+    if asset_index.map_to_resources {
+        let resources_base = instance_dir.join("resources");
+        for obj in &asset_index.objects {
+            let p = resources_base.join(&obj.name);
+            targets.push(VerifyFileTarget {
+                path: p,
+                expected_sha1: Some(obj.hash),
+                expected_sha512: None,
+                expected_size: if obj.size > 0 { Some(obj.size) } else { None },
+            });
+        }
+    }
+
+    targets
+}
+
+/// Collects instance verification targets, optionally appending client logging configuration.
+pub fn collect_instance_verify_targets_with_logging(
+    paths: &MqPaths,
+    instance_dir: &Path,
+    version: &ResolvedVersion,
+    asset_index: &AssetIndex,
+    logging_config: Option<&ClientLoggingConfig>,
+) -> Vec<VerifyFileTarget> {
+    let mut targets = collect_instance_verify_targets(paths, instance_dir, version, asset_index);
+    if let Some(log) = logging_config {
+        append_logging_verify_target(&mut targets, &paths.assets_dir(), &log.file);
+    }
     targets
 }
 
@@ -309,5 +411,98 @@ mod tests {
         assert_eq!(rep.corrupted_files.len(), 1);
         assert_eq!(rep.missing_files.len(), 1);
         assert!(!rep.is_clean());
+    }
+
+    #[test]
+    fn collects_all_targets_including_virtual_and_resources_and_logging() {
+        let dir = tempdir().unwrap();
+        let paths = MqPaths::with_root(dir.path().to_path_buf());
+        let instance_dir = dir.path().join("instances/legacy-test");
+
+        let sha1_dummy = Sha1Digest::from_hex("a94a8fe5ccb19ba61c4c0873d391e987982fbbd3").unwrap();
+        let version = ResolvedVersion {
+            id: "1.12.2".to_string(),
+            mc_version: "1.12.2".to_string(),
+            loader: mq_core::ModLoaderKind::Vanilla,
+            loader_version: None,
+            inherits_from: None,
+            main_class: "net.minecraft.client.main.Main".to_string(),
+            java_version: mq_meta::JavaVersionSpec {
+                component: "jre-legacy".to_string(),
+                major_version: 8,
+            },
+            asset_index: mq_meta::AssetIndexPointer {
+                id: "1.12".to_string(),
+                sha1: Some(sha1_dummy),
+                size: 1234,
+                total_size: 1234,
+                url: "http://example.com/1.12.json".to_string(),
+            },
+            client_jar: mq_meta::ArtifactDownload {
+                path: "client.jar".to_string(),
+                url: "http://example.com/client.jar".to_string(),
+                sha1: Some(sha1_dummy),
+                size: 1000,
+            },
+            libraries: vec![mq_meta::ResolvedLibrary {
+                name: "org.example:sample:1.0.0".to_string(),
+                artifact: Some(mq_meta::ArtifactDownload {
+                    path: "org/example/sample/1.0.0/sample-1.0.0.jar".to_string(),
+                    url: "http://example.com/sample.jar".to_string(),
+                    sha1: Some(sha1_dummy),
+                    size: 500,
+                }),
+                native_linux: None,
+                extract_exclude: Vec::new(),
+                include_in_classpath: true,
+            }],
+            jvm_arguments: Vec::new(),
+            game_arguments: Vec::new(),
+        };
+
+        let asset_index = AssetIndex {
+            id: "1.12".to_string(),
+            is_virtual: true,
+            map_to_resources: true,
+            objects: vec![mq_meta::AssetObject {
+                name: "minecraft/lang/ru_ru.json".to_string(),
+                hash: sha1_dummy,
+                size: 200,
+            }],
+        };
+
+        let logging = ClientLoggingConfig {
+            argument: "-Dlog4j.configurationFile=${path}".to_string(),
+            file: ClientLoggingConfigFile {
+                id: "client-1.12.xml".to_string(),
+                sha1: Some(sha1_dummy),
+                size: 877,
+                url: "http://example.com/log4j.xml".to_string(),
+            },
+            logging_type: "log4j2-xml".to_string(),
+        };
+
+        let targets = collect_instance_verify_targets_with_logging(
+            &paths,
+            &instance_dir,
+            &version,
+            &asset_index,
+            Some(&logging),
+        );
+
+        // 1 (client) + 1 (asset index) + 1 (lib) + 1 (asset object) + 1 (virtual) + 1 (resources) + 1 (logging) = 7
+        assert_eq!(targets.len(), 7);
+        assert!(targets
+            .iter()
+            .any(|t| t.path.ends_with("indexes/1.12.json")));
+        assert!(targets
+            .iter()
+            .any(|t| t.path.ends_with("virtual/1.12/minecraft/lang/ru_ru.json")));
+        assert!(targets
+            .iter()
+            .any(|t| t.path.ends_with("resources/minecraft/lang/ru_ru.json")));
+        assert!(targets
+            .iter()
+            .any(|t| t.path.ends_with("log_configs/client-1.12.xml")));
     }
 }

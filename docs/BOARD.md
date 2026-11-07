@@ -35,11 +35,11 @@
 - [ ] Проверка `<java> -version` после установки и выставление прав `0o755`.
 
 ### [ag-05-libs-natives-assets-loaders]
-- [ ] Обработка Maven-библиотек без прямого `downloads` (синтез URL из репозитория профиля).
-- [ ] Поддержка нативных библиотек нового типа (`natives-linux` JARs) и старого типа (classifiers + unpack).
-- [ ] Корректное сохранение и распаковка `logging.client` XML конфигов.
-- [ ] Гарантия сохранения языкового фикса (`--assetsDir`, `--assetIndex`, `lang:ru_ru`).
-- [ ] Проверка профилей модлоадеров Fabric, Quilt, Forge, NeoForge с наследованием `inheritsFrom`.
+- [x] Обработка Maven-библиотек без прямого `downloads` (синтез URL из репозитория профиля).
+- [x] Поддержка нативных библиотек нового типа (`natives-linux` JARs) и старого типа (classifiers + unpack).
+- [x] Корректное сохранение и распаковка `logging.client` XML конфигов.
+- [x] Гарантия сохранения языкового фикса (`--assetsDir`, `--assetIndex`, `lang:ru_ru`).
+- [x] Проверка профилей модлоадеров Fabric, Quilt, Forge, NeoForge с наследованием `inheritsFrom`.
 
 ### [ag-06-install-ux]
 - [ ] Автоматический старт установки при создании инстанса в GUI (или понятный переход к установке).
