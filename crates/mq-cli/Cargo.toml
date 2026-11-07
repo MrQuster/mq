@@ -39,10 +39,12 @@ image.workspace = true
 sha1.workspace = true
 hex.workspace = true
 reqwest.workspace = true
-rustix.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 wgpu = "24"
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

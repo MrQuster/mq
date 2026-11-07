@@ -1898,9 +1898,13 @@ async fn cmd_doctor(paths: MqPaths) -> Result<()> {
 
     // 6. Storage & Disk Space
     let data_dir = &paths.data_dir;
+    #[cfg(unix)]
     let free_space = rustix::fs::statvfs(data_dir)
         .ok()
         .map(|s| s.f_bavail * s.f_frsize);
+    #[cfg(not(unix))]
+    let free_space: Option<u64> = None;
+
     println!("[ДИСК]      Каталог данных: {}", data_dir.display());
     if let Some(free) = free_space {
         println!(
@@ -1909,7 +1913,7 @@ async fn cmd_doctor(paths: MqPaths) -> Result<()> {
         );
     }
     println!("================================================================================");
-    println!("[MQ DOCTOR] Все ключевые подсистемы MQ v2.1.0 проанализированы.");
+    println!("[MQ DOCTOR] Все ключевые подсистемы MQ v2.2.0 проанализированы.");
     println!("================================================================================");
     Ok(())
 }
