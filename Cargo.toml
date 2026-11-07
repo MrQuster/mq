@@ -12,15 +12,18 @@ members = [
     "crates/mq-launch",
     "crates/mq-ui",
     "crates/mq-cli",
+    "crates/mq-update",
     "testsupport",
     "benches",
 ]
 
 [workspace.package]
-version = "2.0.0"
+version = "2.1.0"
 edition = "2021"
 license = "MIT"
-authors = ["MQ Engineering Team"]
+authors = ["MrQuster <mrquster@users.noreply.github.com>"]
+homepage = "https://github.com/MrQuster/mq"
+repository = "https://github.com/MrQuster/mq"
 rust-version = "1.80"
 
 [workspace.dependencies]
@@ -35,6 +38,7 @@ mq-auth = { path = "crates/mq-auth" }
 mq-instances = { path = "crates/mq-instances" }
 mq-launch = { path = "crates/mq-launch" }
 mq-ui = { path = "crates/mq-ui" }
+mq-update = { path = "crates/mq-update" }
 testsupport = { path = "testsupport" }
 
 # Async I/O & Networking

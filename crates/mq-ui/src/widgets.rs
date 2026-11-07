@@ -52,8 +52,8 @@ pub enum VectorIcon {
 #[inline]
 fn rel_pos(rect: Rect, nx: f32, ny: f32) -> Pos2 {
     Pos2::new(
-        rect.left() + rect.width() * nx,
-        rect.top() + rect.height() * ny,
+        (rect.left() + rect.width() * nx).round(),
+        (rect.top() + rect.height() * ny).round(),
     )
 }
 
@@ -821,7 +821,8 @@ pub fn render_download_progress_card(
             );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if secondary_glass_button(ui, Some(VectorIcon::Cross), "Отменить").clicked() {
+                if secondary_glass_button(ui, Some(VectorIcon::Cross), "Отменить").clicked()
+                {
                     on_cancel();
                 }
             });

@@ -10,6 +10,10 @@ use mq_instances::{
     ping_server, restore_world, save_servers_dat, ServerEntry,
 };
 
+use crate::components::{
+    render_badge, render_underline_tabs, segmented_switch, BadgeKind, FilterChip, SearchField,
+    SegmentedOption, Select, SelectOption,
+};
 use crate::state::{UiState, UiWorkerCommand};
 use crate::theme::{
     ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE, CARD_SURFACE_HOVER, RADIUS_CARD,
@@ -245,48 +249,63 @@ impl InstancesView {
             state.selected_instance_id = Some(state.instances[0].id.clone());
         }
 
-        // Row 1: Header + primary action buttons
+        // Row 1: Header + primary action buttons (B9, B14)
         ui.horizontal(|ui| {
             ui.heading(
-                RichText::new("Инстансы и Сборки")
+                RichText::new("Инстансы и сборки")
                     .color(TEXT_PRIMARY)
                     .size(20.0)
                     .strong(),
             );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать инстанс").clicked() {
+                if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать инстанс").clicked()
+                {
                     state.show_create_instance_dialog = true;
                 }
-                if secondary_glass_button(ui, Some(VectorIcon::Download), "Импорт").clicked() {
+                if secondary_glass_button(ui, Some(VectorIcon::Download), "Импорт").clicked()
+                {
                     self.show_import_dialog = true;
                 }
             });
         });
 
-        ui.add_space(6.0);
+        ui.add_space(8.0);
 
-        // Row 2: Search + sorting filters + view mode toggle
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-            ui.add(
-                egui::TextEdit::singleline(&mut self.search_query)
-                    .hint_text("Поиск инстанса...")
-                    .desired_width(160.0),
-            );
+        // Row 2: SearchField + sorting dropdown Select + view mode segmented switch (B4, B6, B14)
+        let tokens = crate::theme::Tokens::matte_dark();
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
 
-            ui.add_space(4.0);
-            ui.selectable_value(
+            // B6: SearchField with Ctrl+F and icon
+            SearchField::new(&mut self.search_query, "Поиск инстанса...")
+                .width(180.0)
+                .show(ui, &tokens);
+
+            // B4: Select dropdown for sorting
+            let sort_opts = [
+                SelectOption::new(InstanceSortMode::Playtime, "По времени"),
+                SelectOption::new(InstanceSortMode::Name, "По имени"),
+                SelectOption::new(InstanceSortMode::Created, "По дате"),
+            ];
+            Select::new(
+                "instance_sort_select",
+                "Сортировка",
                 &mut self.sort_mode,
-                InstanceSortMode::Playtime,
-                "По времени",
-            );
-            ui.selectable_value(&mut self.sort_mode, InstanceSortMode::Name, "По имени");
-            ui.selectable_value(&mut self.sort_mode, InstanceSortMode::Created, "По дате");
+                &sort_opts,
+            )
+            .show(ui, &tokens);
 
-            ui.add_space(8.0);
-            ui.selectable_value(&mut self.view_mode, InstanceViewMode::List, "Список");
-            ui.selectable_value(&mut self.view_mode, InstanceViewMode::Grid, "Сетка");
+            // B4: Segmented switch for view mode (Grid / List)
+            let view_opts = [
+                SegmentedOption::new(InstanceViewMode::Grid, "Сетка")
+                    .with_icon(VectorIcon::Layers)
+                    .with_tooltip("Отображение плитками"),
+                SegmentedOption::new(InstanceViewMode::List, "Список")
+                    .with_icon(VectorIcon::Terminal)
+                    .with_tooltip("Отображение списком"),
+            ];
+            segmented_switch(ui, &tokens, &mut self.view_mode, &view_opts);
         });
 
         ui.add_space(8.0);
@@ -705,16 +724,19 @@ impl InstancesView {
             // Left list of instances
             ui.vertical(|ui| {
                 ui.set_width(220.0);
-                ui.label(RichText::new("Установленные версии").color(TEXT_MUTED));
+                ui.label(RichText::new("Инстансы").color(TEXT_MUTED).strong());
                 ui.add_space(4.0);
 
                 ScrollArea::vertical()
                     .id_salt("instances_scroll")
                     .show(ui, |ui| {
                         if state.instances.is_empty() {
-                            ui.label(
-                                RichText::new("Нет инстансов. Создайте первый!").color(TEXT_MUTED),
-                            );
+                            ui.label(RichText::new("Нет инстансов").color(TEXT_MUTED));
+                            if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать инстанс")
+                                .clicked()
+                            {
+                                state.show_create_instance_dialog = true;
+                            }
                         }
 
                         for inst in &state.instances {
@@ -878,7 +900,10 @@ impl InstancesView {
                                 let text_w = (ui.available_width() - 8.0).max(40.0);
                                 ui.add_sized(
                                     [text_w, 20.0],
-                                    egui::Label::new(RichText::new(&err).color(TEXT_PRIMARY).size(13.0)).truncate(),
+                                    egui::Label::new(
+                                        RichText::new(&err).color(TEXT_PRIMARY).size(13.0),
+                                    )
+                                    .truncate(),
                                 );
 
                                 if close_clicked {
@@ -948,9 +973,7 @@ impl InstancesView {
                                 )
                                 .clicked()
                                 {
-                                    let _ = state
-                                        .cmd_sender
-                                        .send(UiWorkerCommand::CancelDownload);
+                                    let _ = state.cmd_sender.send(UiWorkerCommand::CancelDownload);
                                 }
                             } else if is_downloading {
                                 if hero_action_button(
@@ -961,15 +984,13 @@ impl InstancesView {
                                 )
                                 .clicked()
                                 {
-                                    let _ = state
-                                        .cmd_sender
-                                        .send(UiWorkerCommand::CancelDownload);
+                                    let _ = state.cmd_sender.send(UiWorkerCommand::CancelDownload);
                                 }
                             } else if is_installed {
                                 let btn_text = if state.is_launching {
-                                    "ЗАПУСК..."
+                                    "Запуск..."
                                 } else {
-                                    "ИГРАТЬ"
+                                    "Играть"
                                 };
                                 if hero_action_button(
                                     ui,
@@ -982,18 +1003,17 @@ impl InstancesView {
                                     && !is_running
                                 {
                                     state.is_launching = true;
-                                    let _ = state.cmd_sender.send(
-                                        UiWorkerCommand::LaunchInstance {
+                                    let _ =
+                                        state.cmd_sender.send(UiWorkerCommand::LaunchInstance {
                                             instance_id: inst_id.clone(),
                                             dry_run: false,
-                                        },
-                                    );
+                                        });
                                 }
                             } else {
                                 let btn_text = if state.is_launching {
-                                    "СКАЧИВАНИЕ И ЗАПУСК..."
+                                    "Скачивание и запуск..."
                                 } else {
-                                    "СКАЧАТЬ И ИГРАТЬ"
+                                    "Скачать и играть"
                                 };
                                 if hero_action_button(
                                     ui,
@@ -1006,19 +1026,22 @@ impl InstancesView {
                                     && !is_running
                                 {
                                     state.is_launching = true;
-                                    let _ = state.cmd_sender.send(
-                                        UiWorkerCommand::LaunchInstance {
+                                    let _ =
+                                        state.cmd_sender.send(UiWorkerCommand::LaunchInstance {
                                             instance_id: inst_id.clone(),
                                             dry_run: false,
-                                        },
-                                    );
+                                        });
                                 }
                             }
                         };
 
                         // Row 1: Instance Title on the left, Hero Action Button on the right
                         let avail_w = ui.available_width();
-                        let hero_w = if is_downloading || !is_installed { 210.0 } else { 160.0 };
+                        let hero_w = if is_downloading || !is_installed {
+                            210.0
+                        } else {
+                            160.0
+                        };
 
                         if avail_w < 400.0 {
                             ui.add(
@@ -1061,16 +1084,29 @@ impl InstancesView {
 
                         ui.add_space(8.0);
 
-                        // Row 2: Badges row in horizontal_wrapped
+                        // Row 2: Loader & version text + neutral RAM badge + status (B8)
                         ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
-                            version_badge(ui, &mc_ver, ACCENT_COBALT);
-                            loader_badge(ui, loader);
-                            version_badge(
-                                ui,
-                                &format!("{} МБ RAM", memory_max_mb),
-                                TEXT_MUTED,
+                            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+                            let loader_str = match loader {
+                                ModLoaderKind::Vanilla => "Vanilla",
+                                ModLoaderKind::Fabric => "Fabric",
+                                ModLoaderKind::Quilt => "Quilt",
+                                ModLoaderKind::Forge => "Forge",
+                                ModLoaderKind::NeoForge => "NeoForge",
+                            };
+                            ui.label(
+                                RichText::new(format!("{loader_str} · {mc_ver}"))
+                                    .font(egui::FontId::proportional(13.0))
+                                    .color(TEXT_PRIMARY),
                             );
+
+                            let ram_str = if memory_max_mb >= 1024 {
+                                format!("{:.0} ГБ ОЗУ", memory_max_mb as f32 / 1024.0)
+                            } else {
+                                format!("{memory_max_mb} МБ ОЗУ")
+                            };
+                            render_badge(ui, &tokens, &ram_str, BadgeKind::Neutral);
+
                             if is_running {
                                 status_pill(ui, "Игра запущена", ACCENT_EMERALD);
                             } else if is_downloading {
@@ -1084,17 +1120,66 @@ impl InstancesView {
 
                         ui.add_space(8.0);
 
-                        // Row 3: Secondary actions toolbar row in horizontal_wrapped
+                        // Row 3: Actions toolbar (B10, B9)
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-                            if !is_downloading {
-                                if is_installed {
-                                    if secondary_glass_button(
-                                        ui,
-                                        Some(VectorIcon::Refresh),
-                                        "Переустановить",
-                                    )
+
+                            if secondary_glass_button(ui, Some(VectorIcon::Folder), "Папка игры")
+                                .on_hover_text("Открыть директорию инстанса в файловом менеджере")
+                                .clicked()
+                            {
+                                let inst_dir = state.paths.instance_dir(inst_id.as_str());
+                                let _ =
+                                    std::process::Command::new("xdg-open").arg(inst_dir).spawn();
+                            }
+
+                            if is_installed {
+                                if secondary_glass_button(ui, Some(VectorIcon::Verify), "Проверить")
+                                    .on_hover_text("Проверить целостность файлов и хешей")
                                     .clicked()
+                                {
+                                    let _ =
+                                        state.cmd_sender.send(UiWorkerCommand::VerifyInstance {
+                                            instance_id: inst_id.clone(),
+                                        });
+                                }
+                            } else if !is_downloading
+                                && secondary_glass_button(
+                                    ui,
+                                    Some(VectorIcon::Download),
+                                    "Установить",
+                                )
+                                .clicked()
+                            {
+                                let _ = state.cmd_sender.send(UiWorkerCommand::InstallInstance {
+                                    instance_id: inst_id.clone(),
+                                });
+                            }
+
+                            // Secondary actions menu
+                            let menu_id =
+                                ui.make_persistent_id(format!("inst_menu_{}", inst_id.as_str()));
+                            let more_btn = secondary_glass_button(ui, None, "•••");
+                            if more_btn.clicked() {
+                                ui.memory_mut(|mem| mem.toggle_popup(menu_id));
+                            }
+
+                            egui::popup_below_widget(
+                                ui,
+                                menu_id,
+                                &more_btn,
+                                egui::PopupCloseBehavior::CloseOnClick,
+                                |ui| {
+                                    ui.set_min_width(160.0);
+                                    if ui.button("Папка модов").clicked() {
+                                        let mods_dir =
+                                            state.paths.instance_dir(inst_id.as_str()).join("mods");
+                                        let _ = std::fs::create_dir_all(&mods_dir);
+                                        let _ = std::process::Command::new("xdg-open")
+                                            .arg(mods_dir)
+                                            .spawn();
+                                    }
+                                    if is_installed && ui.button("Переустановить").clicked()
                                     {
                                         let _ = state.cmd_sender.send(
                                             UiWorkerCommand::InstallInstance {
@@ -1102,124 +1187,52 @@ impl InstancesView {
                                             },
                                         );
                                     }
-                                    if secondary_glass_button(
-                                        ui,
-                                        Some(VectorIcon::Verify),
-                                        "Проверить",
-                                    )
-                                    .clicked()
-                                    {
-                                        let _ = state.cmd_sender.send(
-                                            UiWorkerCommand::VerifyInstance {
-                                                instance_id: inst_id.clone(),
-                                            },
-                                        );
+                                    if ui.button("Экспорт").clicked() {
+                                        let inst_dir = state.paths.instance_dir(inst_id.as_str());
+                                        let out_path = state
+                                            .paths
+                                            .backups_dir()
+                                            .join(format!("{}.zip", inst_id.as_str()));
+                                        if let Err(e) = export_instance_to_zip(&inst_dir, &out_path)
+                                        {
+                                            state.status_message =
+                                                Some((format!("Ошибка экспорта: {e}"), true));
+                                        } else {
+                                            state.status_message = Some((
+                                                format!("Экспортировано в {}", out_path.display()),
+                                                false,
+                                            ));
+                                        }
                                     }
-                                } else if secondary_glass_button(
-                                    ui,
-                                    Some(VectorIcon::Download),
-                                    "Установить",
-                                )
-                                .clicked()
-                                {
-                                    let _ = state.cmd_sender.send(
-                                        UiWorkerCommand::InstallInstance {
-                                            instance_id: inst_id.clone(),
-                                        },
-                                    );
-                                }
-                            }
-
-                            if secondary_glass_button(
-                                ui,
-                                Some(VectorIcon::Folder),
-                                "Папка игры",
-                            )
-                            .clicked()
-                            {
-                                let inst_dir = state.paths.instance_dir(inst_id.as_str());
-                                let _ = std::process::Command::new("xdg-open")
-                                    .arg(inst_dir)
-                                    .spawn();
-                            }
-                            if secondary_glass_button(
-                                ui,
-                                Some(VectorIcon::Folder),
-                                "Папка mods",
-                            )
-                            .clicked()
-                            {
-                                let mods_dir =
-                                    state.paths.instance_dir(inst_id.as_str()).join("mods");
-                                let _ = std::fs::create_dir_all(&mods_dir);
-                                let _ = std::process::Command::new("xdg-open")
-                                    .arg(mods_dir)
-                                    .spawn();
-                            }
-                            if secondary_glass_button(
-                                ui,
-                                Some(VectorIcon::Download),
-                                "Экспорт .zip",
-                            )
-                            .clicked()
-                            {
-                                let inst_dir = state.paths.instance_dir(inst_id.as_str());
-                                let out_path = state
-                                    .paths
-                                    .backups_dir()
-                                    .join(format!("{}.zip", inst_id.as_str()));
-                                if let Err(e) = export_instance_to_zip(&inst_dir, &out_path)
-                                {
-                                    state.status_message =
-                                        Some((format!("Ошибка экспорта: {e}"), true));
-                                } else {
-                                    state.status_message = Some((
-                                        format!("Экспортировано в {}", out_path.display()),
-                                        false,
-                                    ));
-                                }
-                            }
-                            if secondary_glass_button(
-                                ui,
-                                Some(VectorIcon::Layers),
-                                "Дублировать",
-                            )
-                            .clicked()
-                            {
-                                self.show_duplicate_dialog = true;
-                                self.duplicate_name = format!("{} (Копия)", inst_name);
-                            }
+                                    if ui.button("Дублировать").clicked() {
+                                        self.show_duplicate_dialog = true;
+                                        self.duplicate_name = format!("{} (Копия)", inst_name);
+                                    }
+                                },
+                            );
                         });
                     });
 
-                    ui.add_space(10.0);
+                    ui.add_space(8.0);
 
-                    // Tab selector (8 primary tabs)
-                    ui.horizontal_wrapped(|ui| {
-                        for (tab, label) in [
-                            (InstanceDetailTab::Console, "Консоль"),
-                            (InstanceDetailTab::Mods, "Моды"),
-                            (InstanceDetailTab::ResourcePacks, "Ресурспаки"),
-                            (InstanceDetailTab::ShaderPacks, "Шейдеры"),
-                            (InstanceDetailTab::Worlds, "Миры"),
-                            (InstanceDetailTab::Servers, "Серверы"),
-                            (InstanceDetailTab::Screenshots, "Скриншоты"),
-                            (InstanceDetailTab::Settings, "Параметры"),
-                        ] {
-                            if ui
-                                .selectable_label(self.current_tab == tab, label)
-                                .clicked()
-                            {
-                                self.current_tab = tab;
-                                if tab == InstanceDetailTab::Mods {
-                                    let _ =
-                                        state.cmd_sender.send(UiWorkerCommand::ScanInstanceMods {
-                                            instance_id: inst_id.clone(),
-                                        });
-                                }
-                            }
-                        }
-                    });
+                    // Tab selector with underline tabs (B5)
+                    let detail_tabs = [
+                        (InstanceDetailTab::Console, "Консоль"),
+                        (InstanceDetailTab::Mods, "Моды"),
+                        (InstanceDetailTab::ResourcePacks, "Ресурспаки"),
+                        (InstanceDetailTab::ShaderPacks, "Шейдеры"),
+                        (InstanceDetailTab::Worlds, "Миры"),
+                        (InstanceDetailTab::Servers, "Серверы"),
+                        (InstanceDetailTab::Screenshots, "Скриншоты"),
+                        (InstanceDetailTab::Settings, "Параметры"),
+                    ];
+                    let prev_tab = self.current_tab;
+                    render_underline_tabs(ui, &tokens, &detail_tabs, &mut self.current_tab);
+                    if self.current_tab != prev_tab && self.current_tab == InstanceDetailTab::Mods {
+                        let _ = state.cmd_sender.send(UiWorkerCommand::ScanInstanceMods {
+                            instance_id: inst_id.clone(),
+                        });
+                    }
 
                     ui.separator();
 
@@ -1433,8 +1446,7 @@ impl InstancesView {
                 RichText::new(format!("Установлено модов: {}", state.installed_mods.len()))
                     .strong(),
             );
-            if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Пересканировать")
-                .clicked()
+            if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Пересканировать").clicked()
             {
                 let _ = state.cmd_sender.send(UiWorkerCommand::ScanInstanceMods {
                     instance_id: inst_id.clone(),
@@ -1633,7 +1645,8 @@ impl InstancesView {
                 RichText::new(format!("Строк в логе: {}", state.game_logs.len())).color(TEXT_MUTED),
             );
             ui.checkbox(&mut self.console_autoscroll, "Автоскролл");
-            if secondary_glass_button(ui, Some(VectorIcon::Copy), "Копировать лог").clicked() {
+            if secondary_glass_button(ui, Some(VectorIcon::Copy), "Копировать лог").clicked()
+            {
                 let full_log: String = state
                     .game_logs
                     .iter()
@@ -1649,17 +1662,34 @@ impl InstancesView {
 
         ui.add_space(4.0);
 
-        // Row 2: Search input and level filters
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-            ui.add(
-                egui::TextEdit::singleline(&mut self.console_search)
-                    .hint_text("Поиск в логе...")
-                    .desired_width(180.0),
-            );
+        // Row 2: Search input and level filter chips (B6, B7)
+        let tokens = crate::theme::Tokens::matte_dark();
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
+            SearchField::new(&mut self.console_search, "Поиск в логе...")
+                .width(200.0)
+                .show(ui, &tokens);
 
-            if ui
-                .selectable_label(state.log_filter == Some(GameLogLevel::Info), "INFO")
+            let info_count = state
+                .game_logs
+                .iter()
+                .filter(|l| l.level == GameLogLevel::Info)
+                .count();
+            let warn_count = state
+                .game_logs
+                .iter()
+                .filter(|l| l.level == GameLogLevel::Warn)
+                .count();
+            let error_count = state
+                .game_logs
+                .iter()
+                .filter(|l| l.level == GameLogLevel::Error)
+                .count();
+
+            if FilterChip::new("INFO", state.log_filter == Some(GameLogLevel::Info))
+                .dot_color(tokens.text_muted)
+                .count(info_count)
+                .show(ui, &tokens)
                 .clicked()
             {
                 state.log_filter = if state.log_filter == Some(GameLogLevel::Info) {
@@ -1668,8 +1698,11 @@ impl InstancesView {
                     Some(GameLogLevel::Info)
                 };
             }
-            if ui
-                .selectable_label(state.log_filter == Some(GameLogLevel::Warn), "WARN")
+
+            if FilterChip::new("WARN", state.log_filter == Some(GameLogLevel::Warn))
+                .dot_color(tokens.warning)
+                .count(warn_count)
+                .show(ui, &tokens)
                 .clicked()
             {
                 state.log_filter = if state.log_filter == Some(GameLogLevel::Warn) {
@@ -1678,8 +1711,11 @@ impl InstancesView {
                     Some(GameLogLevel::Warn)
                 };
             }
-            if ui
-                .selectable_label(state.log_filter == Some(GameLogLevel::Error), "ERROR")
+
+            if FilterChip::new("ERROR", state.log_filter == Some(GameLogLevel::Error))
+                .dot_color(tokens.danger)
+                .count(error_count)
+                .show(ui, &tokens)
                 .clicked()
             {
                 state.log_filter = if state.log_filter == Some(GameLogLevel::Error) {
@@ -1690,8 +1726,10 @@ impl InstancesView {
             }
         });
 
-        ui.add_space(4.0);
+        ui.add_space(8.0);
 
+        // B3: Console occupies full remaining height, min 240px, monospace 12 font
+        let avail_h = (ui.available_height() - 12.0).max(240.0);
         let console_frame = egui::Frame::new()
             .fill(Color32::from_rgb(0x08, 0x0A, 0x0E))
             .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
@@ -1700,6 +1738,7 @@ impl InstancesView {
 
         console_frame.show(ui, |ui| {
             ui.set_width(ui.available_width());
+            ui.set_height(avail_h);
             ScrollArea::vertical()
                 .id_salt("console_scroll")
                 .auto_shrink([false, false])
@@ -1709,7 +1748,7 @@ impl InstancesView {
                         ui.label(
                             RichText::new("Логи игры появятся здесь при запуске Minecraft")
                                 .color(TEXT_MUTED)
-                                .monospace(),
+                                .font(egui::FontId::monospace(12.0)),
                         );
                     } else {
                         let query = self.console_search.to_lowercase();
@@ -1730,7 +1769,11 @@ impl InstancesView {
                                 GameLogLevel::Debug => TEXT_MUTED,
                             };
 
-                            ui.label(RichText::new(&entry.line).color(col).monospace().small());
+                            ui.label(
+                                RichText::new(&entry.line)
+                                    .color(col)
+                                    .font(egui::FontId::monospace(12.0)),
+                            );
                         }
                     }
                 });
@@ -1791,7 +1834,8 @@ impl InstancesView {
                         let name_w = (ui.available_width() - 80.0).max(60.0);
                         ui.add_sized(
                             [name_w, 18.0],
-                            egui::Label::new(RichText::new(&name).color(TEXT_PRIMARY).strong()).truncate(),
+                            egui::Label::new(RichText::new(&name).color(TEXT_PRIMARY).strong())
+                                .truncate(),
                         );
                         if size > 0 {
                             let mib = (size as f64) / (1024.0 * 1024.0);
@@ -1862,7 +1906,8 @@ impl InstancesView {
                         let name_w = (ui.available_width() - 80.0).max(60.0);
                         ui.add_sized(
                             [name_w, 18.0],
-                            egui::Label::new(RichText::new(&name).color(TEXT_PRIMARY).strong()).truncate(),
+                            egui::Label::new(RichText::new(&name).color(TEXT_PRIMARY).strong())
+                                .truncate(),
                         );
                         if size > 0 {
                             let mib = (size as f64) / (1024.0 * 1024.0);
@@ -1895,7 +1940,8 @@ impl InstancesView {
                     .strong()
                     .size(14.0),
             );
-            if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть saves/").clicked() {
+            if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть saves/").clicked()
+            {
                 let saves_dir = inst_dir.join("saves");
                 let _ = std::fs::create_dir_all(&saves_dir);
                 let _ = std::process::Command::new("xdg-open")
@@ -1952,7 +1998,8 @@ impl InstancesView {
 
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-                        if secondary_glass_button(ui, Some(VectorIcon::Download), "Бэкап").clicked() {
+                        if secondary_glass_button(ui, Some(VectorIcon::Download), "Бэкап").clicked()
+                        {
                             match backup_world(
                                 &inst_dir,
                                 &backups_root,
@@ -1963,9 +2010,7 @@ impl InstancesView {
                                     state.status_message = Some((
                                         format!(
                                             "Бэкап создан: {}",
-                                            bp.file_name()
-                                                .unwrap_or_default()
-                                                .to_string_lossy()
+                                            bp.file_name().unwrap_or_default().to_string_lossy()
                                         ),
                                         false,
                                     ));
@@ -1976,7 +2021,9 @@ impl InstancesView {
                                 }
                             }
                         }
-                        if secondary_glass_button(ui, Some(VectorIcon::Download), "Экспорт").clicked() {
+                        if secondary_glass_button(ui, Some(VectorIcon::Download), "Экспорт")
+                            .clicked()
+                        {
                             let export_path = backups_root.join(format!("{}.zip", w.folder_name));
                             if let Ok(()) =
                                 export_world_to_zip(&inst_dir, &w.folder_name, &export_path)
@@ -1987,7 +2034,8 @@ impl InstancesView {
                                 ));
                             }
                         }
-                        if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить").clicked() {
+                        if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить").clicked()
+                        {
                             let _ = delete_world(&inst_dir, &w.folder_name);
                             state.status_message =
                                 Some((format!("Мир '{}' удален", w.display_name), false));
@@ -2065,7 +2113,8 @@ impl InstancesView {
                     .strong()
                     .size(14.0),
             );
-            if primary_emerald_button(ui, Some(VectorIcon::Plus), "Добавить сервер").clicked() {
+            if primary_emerald_button(ui, Some(VectorIcon::Plus), "Добавить сервер").clicked()
+            {
                 self.show_add_server_dialog = true;
             }
         });
@@ -2103,11 +2152,7 @@ impl InstancesView {
                     if let Some(res) = state.server_pings.get(&s.ip) {
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-                            version_badge(
-                                ui,
-                                &format!("{} ms", res.latency_ms),
-                                ACCENT_EMERALD,
-                            );
+                            version_badge(ui, &format!("{} ms", res.latency_ms), ACCENT_EMERALD);
                             version_badge(
                                 ui,
                                 &format!("{}/{}", res.players_online, res.players_max),
@@ -2121,13 +2166,15 @@ impl InstancesView {
 
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-                        if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Пинг").clicked() {
+                        if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Пинг").clicked()
+                        {
                             let ip = s.ip.clone();
                             if let Ok(res) = ping_server(&ip, 3000) {
                                 state.server_pings.insert(ip, res);
                             }
                         }
-                        if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить").clicked() {
+                        if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить").clicked()
+                        {
                             server_to_delete = Some(idx);
                         }
                     });
@@ -2241,7 +2288,12 @@ impl InstancesView {
                                         let text_w = (ui.available_width() - 8.0).max(40.0);
                                         ui.add_sized(
                                             [text_w, 18.0],
-                                            egui::Label::new(RichText::new(&s.file_name).color(TEXT_PRIMARY).strong()).truncate(),
+                                            egui::Label::new(
+                                                RichText::new(&s.file_name)
+                                                    .color(TEXT_PRIMARY)
+                                                    .strong(),
+                                            )
+                                            .truncate(),
                                         );
                                         let mib = (s.size_bytes as f64) / (1024.0 * 1024.0);
                                         ui.add_sized(
@@ -2414,8 +2466,7 @@ impl InstancesView {
                     should_save = true;
                 }
 
-                if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить инстанс")
-                    .clicked()
+                if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить инстанс").clicked()
                 {
                     should_delete = true;
                 }

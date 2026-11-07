@@ -1,4 +1,4 @@
-# MQ v2.0.0 Feature Verification Matrix
+# MQ v2.1.0 Feature Verification Matrix
 
 | Category | Feature ID | Feature Description | UI Location | CLI Command | Test Reference | Status | Proof / Evidence |
 |---|---|---|---|---|---|---|---|
@@ -73,3 +73,13 @@
 | **Auditor & Release** | `packaging-portable-tarball-and-installer` | Portable tarball `dist/mq-portable-linux-x86_64.tar.gz` and `install.sh` | Dist Dir | `./scripts/package-friend.sh` | Package Verification | `verified` | Pass; packaging scripts tested & validated |
 | **Auditor & Release** | `docs-readme-changelog-architecture` | Premium documentation in Russian without marketing slop | Documentation | `docs/` & `README.md` | Doc Audit | `verified` | Pass; comprehensive Russian docs |
 | **Auditor & Release** | `release-github-v2-publication` | Tag `v2.0.0` pushed and GitHub Release created with binaries | GitHub | `gh release view v2.0.0` | GitHub API | `verified` | Tag `v2.0.0` & GitHub Release created |
+| **Self-Update** | `update-github-releases-api-check` | Automated GitHub Releases API checking against `MrQuster/mq` | Settings -> Updates | `mq self-update --check` | `crates/mq-update/src/lib.rs` | `verified` | Pass; checks releases, parses tag and release notes |
+| **Self-Update** | `update-sha256-stream-verification` | Streaming SHA-256 validation against published `SHA256SUMS` | Settings -> Updates | `mq self-update` | `crates/mq-update/src/lib.rs` | `verified` | Pass; streams bytes, matches hash before installation |
+| **Self-Update** | `update-smoke-test-atomic-swap` | Smoke-test on `<exe>.new --version`, atomic swap and rollback | Settings -> Updates | `mq self-update` | `crates/mq-update/src/lib.rs` | `verified` | Pass; verifies binary execution before renaming; preserves `<exe>.old` |
+| **Self-Update** | `update-setsid-detached-restart` | Detached restart via `setsid` with `--after-update` flag | Settings -> Updates | `mq self-update` | `crates/mq-update/src/lib.rs` | `verified` | Pass; spawns detached child process in new session |
+| **Auth** | `auth-elyby-oauth2-browser-loopback` | Browser-only OAuth2 flow on `127.0.0.1:25585/callback` with CSRF state | Accounts -> Ely.by | `mq accounts add --ely` | `crates/mq-auth/src/elyby.rs` | `verified` | Pass; test `oauth2_browser_authorize_url_encodes_parameters` |
+| **Mods & Shaders** | `mods-lockfile-mq-lock-json` | Recursive dependency lockfile `.mq-lock.json` with SHA-1/512 | Instance -> Mods | `mq mods check <inst>` | `crates/mq-mods/src/lockfile.rs` | `verified` | Pass; serializes and identifies unused dependencies |
+| **Mods & Shaders** | `shaders-iris-sodium-properties-writer` | GPU diagnostic check (`glxinfo -B`) and `iris.properties` auto-writer | Instance -> Shaders | `mq doctor` | `crates/mq-mods/src/shaders.rs` | `verified` | Pass; detects GPU vendor, writes properties |
+| **Launch** | `options-atomic-resourcepacks-management` | Non-destructive atomic updates to `resourcePacks:[...]` in `options.txt` | Pre-launch JVM | `mq launch <inst> --dry-run` | `crates/mq-launch/src/options.rs` | `verified` | Pass; preserves other options while updating pack order |
+| **Design & UI** | `ui-solid-edition-components-32px` | Standardized 32px controls, SearchField, FilterChip, SegmentedSwitch | Entire UI | `mq ui-snapshot --screen instances` | `crates/mq-ui/src/components/` | `verified` | Pass; 20 UI defects resolved in `docs/UI_DEFECTS.md` |
+| **Auditor & Release** | `release-github-v2-1-0-publication` | Release v2.1.0 "Solid Edition" with Author MrQuster and clean gates | GitHub / CLI | `mq about` | `Cargo.toml` & `packaging/` | `verified` | Pass; 100% tests pass, clippy clean, 0 forbidden words |

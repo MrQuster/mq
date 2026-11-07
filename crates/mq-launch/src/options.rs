@@ -202,6 +202,68 @@ fn atomic_write_file(path: &Path, bytes: &[u8]) -> MqResult<()> {
     Ok(())
 }
 
+/// Unified options manager conforming to Section 4.5 and CONTRACTS.md.
+pub struct MinecraftOptionsManager;
+
+impl MinecraftOptionsManager {
+    /// Synchronizes language setting into `options.txt`.
+    pub fn sync_lang(options_path: &Path, lang: &str, force: bool) -> MqResult<()> {
+        let parent = options_path.parent().unwrap_or(options_path);
+        patch_minecraft_options_lang(parent, lang, !force).map(|_| ())
+    }
+
+    /// Reads resourcepacks array from `options.txt` (`resourcePacks:[...]`).
+    pub fn read_resource_packs(options_path: &Path) -> MqResult<Vec<String>> {
+        if !options_path.exists() {
+            return Ok(Vec::new());
+        }
+        let content = fs::read_to_string(options_path)?;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("resourcePacks:") {
+                let json_slice = trimmed.trim_start_matches("resourcePacks:");
+                if let Ok(packs) = serde_json::from_str::<Vec<String>>(json_slice) {
+                    return Ok(packs);
+                }
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// Updates resourcepacks in `options.txt` preserving other lines atomically.
+    pub fn update_resource_packs(options_path: &Path, packs: &[String]) -> MqResult<()> {
+        let json_packs = serde_json::to_string(packs)?;
+        let target_line = format!("resourcePacks:{json_packs}");
+
+        let mut lines = Vec::new();
+        let mut found = false;
+
+        if options_path.exists() {
+            let content = fs::read_to_string(options_path)?;
+            for line in content.lines() {
+                if line.trim().starts_with("resourcePacks:") {
+                    lines.push(target_line.clone());
+                    found = true;
+                } else {
+                    lines.push(line.to_string());
+                }
+            }
+        }
+
+        if !found {
+            lines.push(target_line);
+        }
+
+        let mut out = lines.join("\n");
+        out.push('\n');
+
+        let tmp_path = options_path.with_extension("tmp");
+        fs::write(&tmp_path, out)?;
+        fs::rename(tmp_path, options_path)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

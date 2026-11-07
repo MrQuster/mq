@@ -8,7 +8,8 @@ use mq_meta::{find_mc_locale, search_mc_locales};
 use crate::i18n::{tr, Language};
 use crate::state::UiState;
 use crate::theme::{
-    apply_theme, rgb_to_c32, BORDER_SUBTLE, CARD_SURFACE, RADIUS_CARD, TEXT_MUTED, TEXT_PRIMARY,
+    apply_theme, rgb_to_c32, ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE,
+    RADIUS_CARD, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY,
 };
 use crate::widgets::{
     accent_button, primary_emerald_button, secondary_glass_button, smooth_toggle, tag_pill,
@@ -21,6 +22,8 @@ pub enum SettingsSection {
     Launch,
     Localization,
     NetworkAndApi,
+    Updates,
+    About,
 }
 
 #[derive(Default)]
@@ -30,6 +33,11 @@ pub struct SettingsView {
     pub theme_import_path: String,
     pub mc_locale_search: String,
     pub mc_locale_dropdown_open: bool,
+    pub update_check_result: Option<String>,
+    pub is_checking_update: bool,
+    pub is_downloading_update: bool,
+    pub update_progress: f32,
+    pub available_update: Option<mq_update::ReleaseAssetInfo>,
 }
 
 impl SettingsView {
@@ -85,6 +93,18 @@ impl SettingsView {
             {
                 self.active_section = Some(SettingsSection::NetworkAndApi);
             }
+            if ui
+                .selectable_label(current_section == SettingsSection::Updates, "Обновления")
+                .clicked()
+            {
+                self.active_section = Some(SettingsSection::Updates);
+            }
+            if ui
+                .selectable_label(current_section == SettingsSection::About, "О программе")
+                .clicked()
+            {
+                self.active_section = Some(SettingsSection::About);
+            }
         });
 
         ui.add_space(8.0);
@@ -99,6 +119,8 @@ impl SettingsView {
                     SettingsSection::Launch => self.render_launch_settings(ui, state),
                     SettingsSection::Localization => self.render_localization_settings(ui, state),
                     SettingsSection::NetworkAndApi => self.render_network_api_settings(ui, state),
+                    SettingsSection::Updates => self.render_updates_settings(ui, state),
+                    SettingsSection::About => self.render_about_settings(ui, state),
                 }
 
                 ui.add_space(16.0);
@@ -223,7 +245,9 @@ impl SettingsView {
             ui.add_space(6.0);
 
             ui.vertical(|ui| {
-                ui.label(RichText::new("Прозрачность карточек (Card Opacity):").color(TEXT_PRIMARY));
+                ui.label(
+                    RichText::new("Прозрачность карточек (Card Opacity):").color(TEXT_PRIMARY),
+                );
                 ui.add_space(2.0);
                 if ui
                     .add_sized(
@@ -241,7 +265,10 @@ impl SettingsView {
             ui.add_space(6.0);
 
             ui.vertical(|ui| {
-                ui.label(RichText::new("Стеклянный блик обводки (Glass Border Glow):").color(TEXT_PRIMARY));
+                ui.label(
+                    RichText::new("Стеклянный блик обводки (Glass Border Glow):")
+                        .color(TEXT_PRIMARY),
+                );
                 ui.add_space(2.0);
                 if ui
                     .add_sized(
@@ -269,7 +296,9 @@ impl SettingsView {
             ui.add_space(6.0);
 
             ui.vertical(|ui| {
-                ui.label(RichText::new("Радиус скругления углов (Corner Radius):").color(TEXT_PRIMARY));
+                ui.label(
+                    RichText::new("Радиус скругления углов (Corner Radius):").color(TEXT_PRIMARY),
+                );
                 ui.add_space(2.0);
                 if ui
                     .add_sized(
@@ -977,5 +1006,200 @@ impl SettingsView {
                 );
             });
         });
+    }
+
+    fn render_updates_settings(&mut self, ui: &mut Ui, state: &mut UiState) {
+        let max_w = ui.available_width().min(640.0);
+        ui.allocate_ui_with_layout(
+            Vec2::new(max_w, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                let card = egui::Frame::new()
+                    .fill(CARD_SURFACE)
+                    .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+                    .corner_radius(RADIUS_CARD)
+                    .inner_margin(egui::Margin::same(14));
+
+                card.show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new("Обновления лаунчера").strong().size(15.0));
+                    ui.add_space(8.0);
+
+                    let is_packaged = mq_update::UpdateManager::is_packaged_install();
+                    if is_packaged {
+                        ui.label(RichText::new("Лаунчер установлен через системный пакетный менеджер (/usr/). Для обновления используйте пакетный менеджер вашей системы.").color(STATUS_WARN));
+                        ui.add_space(8.0);
+                        if secondary_glass_button(ui, Some(VectorIcon::Globe), "Открыть страницу релизов на GitHub").clicked() {
+                            let _ = std::process::Command::new("xdg-open").arg("https://github.com/MrQuster/mq/releases").spawn();
+                        }
+                    } else {
+                        ui.label(RichText::new(format!("Текущая версия: v{}", env!("CARGO_PKG_VERSION"))).color(TEXT_MUTED));
+                        ui.add_space(6.0);
+
+                        if let Some(ref status) = self.update_check_result {
+                            ui.label(RichText::new(status).color(TEXT_PRIMARY));
+                            ui.add_space(6.0);
+                        }
+
+                        if self.is_checking_update {
+                            ui.label(RichText::new("Проверка наличия обновлений...").color(ACCENT_COBALT));
+                        } else if let Some(ref asset) = self.available_update.clone() {
+                            ui.label(RichText::new(format!("Доступна новая версия: v{}", asset.version)).color(ACCENT_EMERALD).strong());
+                            if !asset.release_notes.is_empty() {
+                                ui.add_space(4.0);
+                                ui.label(RichText::new("Список изменений:").small().color(TEXT_MUTED));
+                                egui::Frame::new()
+                                    .fill(Color32::from_rgb(0x10, 0x12, 0x16))
+                                    .corner_radius(RADIUS_CARD)
+                                    .inner_margin(egui::Margin::same(8))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(&asset.release_notes).color(TEXT_PRIMARY).small());
+                                    });
+                            }
+                            ui.add_space(8.0);
+
+                            if self.is_downloading_update {
+                                ui.label(RichText::new("Загрузка и установка обновления...").color(ACCENT_COBALT));
+                                crate::components::render_progress_bar(ui, &crate::theme::Tokens::matte_dark(), self.update_progress, 6.0_f32);
+                            } else if primary_emerald_button(ui, Some(VectorIcon::Download), "Обновить лаунчер сейчас").clicked() {
+                                self.is_downloading_update = true;
+                                let mgr = mq_update::UpdateManager::new("MrQuster", "mq");
+                                let asset_to_download = asset.clone();
+                                let handle = tokio::runtime::Handle::current();
+                                std::thread::spawn(move || {
+                                    handle.block_on(async move {
+                                        let res = mgr.download_and_install(&asset_to_download, |_d, _t| {}).await;
+                                        match res {
+                                            Ok(_path) => {
+                                                let _ = mq_update::UpdateManager::restart_process(&[]);
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("Update failed: {e}");
+                                            }
+                                        }
+                                    });
+                                });
+                            }
+                        } else if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Проверить сейчас").clicked() {
+                            let mgr = mq_update::UpdateManager::new("MrQuster", "mq");
+                            let handle = tokio::runtime::Handle::current();
+                            let cur_ver = env!("CARGO_PKG_VERSION");
+                            let res = std::thread::spawn(move || {
+                                handle.block_on(async move {
+                                    mgr.check_latest(cur_ver, false).await
+                                })
+                            }).join();
+
+                            match res {
+                                Ok(Ok(Some(info))) => {
+                                    self.update_check_result = Some(format!("Найдена новая версия: v{}", info.version));
+                                    self.available_update = Some(info);
+                                }
+                                Ok(Ok(None)) => {
+                                    self.update_check_result = Some("У вас установлена самая актуальная версия лаунчера.".to_string());
+                                }
+                                Ok(Err(e)) => {
+                                    self.update_check_result = Some(format!("Ошибка проверки обновлений: {e}"));
+                                }
+                                Err(_) => {
+                                    self.update_check_result = Some("Ошибка потока проверки обновлений".to_string());
+                                }
+                            }
+                        }
+
+                        // Check if rollback is available (<exe>.old exists)
+                        if let Ok(exe) = std::env::current_exe() {
+                            let old = exe.with_extension("old");
+                            if old.exists() {
+                                ui.add_space(8.0);
+                                ui.separator();
+                                ui.add_space(8.0);
+                                ui.label(RichText::new("Доступна предыдущая сохранённая версия.").color(TEXT_MUTED).small());
+                                if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Откатить до предыдущей версии").clicked() {
+                                    if let Ok(()) = mq_update::UpdateManager::rollback() {
+                                        state.status_message = Some(("Успешный откат к предыдущей версии. Перезапустите лаунчер.".to_string(), false));
+                                    } else {
+                                        state.status_message = Some(("Ошибка при откате к предыдущей версии".to_string(), true));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            },
+        );
+    }
+
+    fn render_about_settings(&mut self, ui: &mut Ui, state: &mut UiState) {
+        let max_w = ui.available_width().min(640.0);
+        ui.allocate_ui_with_layout(
+            Vec2::new(max_w, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                let card = egui::Frame::new()
+                    .fill(CARD_SURFACE)
+                    .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+                    .corner_radius(RADIUS_CARD)
+                    .inner_margin(egui::Margin::same(16));
+
+                card.show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), egui::Sense::hover());
+                        crate::sidebar::paint_mq_emblem(ui.painter(), rect, &crate::theme::Tokens::matte_dark());
+                        ui.add_space(8.0);
+                        ui.vertical(|ui| {
+                            ui.label(RichText::new("MQ Launcher").strong().size(18.0).color(TEXT_PRIMARY));
+                            ui.label(RichText::new(format!("Версия {} Solid Edition", env!("CARGO_PKG_VERSION"))).color(TEXT_MUTED).small());
+                        });
+                    });
+
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    ui.label(RichText::new("Автор: MrQuster").strong().color(TEXT_PRIMARY));
+                    ui.label(RichText::new("Быстрый и модульный Minecraft-лаунчер нового поколения на Rust/egui.").color(TEXT_MUTED));
+                    ui.label(RichText::new("Лицензия: MIT License (MrQuster)").color(TEXT_MUTED).small());
+
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    ui.label(RichText::new("Ссылки и сообщество:").strong().color(TEXT_PRIMARY).small());
+                    ui.add_space(6.0);
+
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+
+                        if secondary_glass_button(ui, Some(VectorIcon::User), "Профиль автора на GitHub").clicked() {
+                            let _ = std::process::Command::new("xdg-open").arg("https://github.com/MrQuster").spawn();
+                        }
+                        if secondary_glass_button(ui, Some(VectorIcon::Globe), "Репозиторий").clicked() {
+                            let _ = std::process::Command::new("xdg-open").arg("https://github.com/MrQuster/mq").spawn();
+                        }
+                        if secondary_glass_button(ui, Some(VectorIcon::Download), "Релизы").clicked() {
+                            let _ = std::process::Command::new("xdg-open").arg("https://github.com/MrQuster/mq/releases").spawn();
+                        }
+                        if secondary_glass_button(ui, Some(VectorIcon::Warning), "Сообщить об ошибке").clicked() {
+                            let _ = std::process::Command::new("xdg-open").arg("https://github.com/MrQuster/mq/issues").spawn();
+                        }
+                        if secondary_glass_button(ui, Some(VectorIcon::Copy), "Скопировать диагностику").clicked() {
+                            let diag = format!(
+                                "MQ Launcher v{}\nOS: {} ({})\nGUI Backend: {:?}\nPaths: Data={:?}, Instances={:?}",
+                                env!("CARGO_PKG_VERSION"),
+                                std::env::consts::OS,
+                                std::env::consts::ARCH,
+                                state.config.ui_backend,
+                                state.paths.data_dir,
+                                state.paths.instances_dir(),
+                            );
+                            ui.ctx().copy_text(diag);
+                            state.status_message = Some(("Диагностическая информация скопирована в буфер обмена".to_string(), false));
+                        }
+                    });
+                });
+            },
+        );
     }
 }

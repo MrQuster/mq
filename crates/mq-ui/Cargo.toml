@@ -3,6 +3,9 @@ name = "mq-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
 mq-core.workspace = true
@@ -14,6 +17,8 @@ mq-mods.workspace = true
 mq-auth.workspace = true
 mq-instances.workspace = true
 mq-launch.workspace = true
+mq-update.workspace = true
+uuid.workspace = true
 egui.workspace = true
 eframe.workspace = true
 egui_extras.workspace = true

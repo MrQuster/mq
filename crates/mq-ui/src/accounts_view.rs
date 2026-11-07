@@ -1,9 +1,16 @@
 #![deny(clippy::await_holding_lock)]
-//! Accounts manager screen: Offline (Pirate UUID v3), Ely.by (authlib-injector + skins),
+//! Accounts manager screen: Offline (Pirate UUID v3), Ely.by (Browser-only OAuth2 + authlib-injector),
 //! and Microsoft Device Code Flow with 1-click switching. Zero emojis!
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use egui::{Color32, RichText, ScrollArea, Stroke, Ui, Vec2};
-use mq_auth::{create_offline_account, ElyByClient};
+use mq_auth::{
+    create_offline_account, AccountKind, AccountProfile, ElyByOAuthConfig, ElyByOAuthFlow,
+};
+use mq_core::{AccountId, SecretString};
+use uuid::Uuid;
 
 use crate::state::UiState;
 use crate::theme::{
@@ -26,11 +33,10 @@ pub struct AccountsView {
     pub current_tab: AccountTab,
     // Offline form
     pub offline_username: String,
-    // Ely.by form
-    pub ely_login: String,
-    pub ely_pass: String,
-    pub ely_2fa: String,
-    pub ely_logging_in: bool,
+    // Ely.by browser OAuth state
+    pub ely_auth_url: Option<String>,
+    pub ely_waiting_browser: bool,
+    pub ely_cancel_flag: Arc<AtomicBool>,
     // MSA form
     pub msa_device_code_prompt: Option<String>,
 }
@@ -40,10 +46,9 @@ impl Default for AccountsView {
         Self {
             current_tab: AccountTab::Offline,
             offline_username: "Mr_Quster".to_string(),
-            ely_login: String::new(),
-            ely_pass: String::new(),
-            ely_2fa: String::new(),
-            ely_logging_in: false,
+            ely_auth_url: None,
+            ely_waiting_browser: false,
+            ely_cancel_flag: Arc::new(AtomicBool::new(false)),
             msa_device_code_prompt: None,
         }
     }
@@ -58,10 +63,16 @@ impl AccountsView {
         );
         ui.add_space(8.0);
 
-        // Tab buttons
+        // Tab buttons conforming to specification:
+        // 1. Офлайн (только ник)
+        // 2. Ely.by (через браузер)
+        // 3. Microsoft (через браузер)
         ui.horizontal(|ui| {
             if ui
-                .selectable_label(self.current_tab == AccountTab::Offline, "Пиратка (Offline)")
+                .selectable_label(
+                    self.current_tab == AccountTab::Offline,
+                    "Офлайн (только ник)",
+                )
                 .clicked()
             {
                 self.current_tab = AccountTab::Offline;
@@ -69,7 +80,7 @@ impl AccountsView {
             if ui
                 .selectable_label(
                     self.current_tab == AccountTab::ElyBy,
-                    "Ely.by (Скины и плащи)",
+                    "Ely.by (через браузер)",
                 )
                 .clicked()
             {
@@ -78,7 +89,7 @@ impl AccountsView {
             if ui
                 .selectable_label(
                     self.current_tab == AccountTab::Microsoft,
-                    "Microsoft (Лицензия)",
+                    "Microsoft (через браузер)",
                 )
                 .clicked()
             {
@@ -173,9 +184,9 @@ impl AccountsView {
                                                 .truncate(),
                                             );
                                             let badge_col = match acc.kind {
-                                                mq_auth::AccountKind::Offline => ACCENT_COBALT,
-                                                mq_auth::AccountKind::ElyBy => ACCENT_EMERALD,
-                                                mq_auth::AccountKind::Microsoft => {
+                                                AccountKind::Offline => ACCENT_COBALT,
+                                                AccountKind::ElyBy => ACCENT_EMERALD,
+                                                AccountKind::Microsoft => {
                                                     Color32::from_rgb(0xF5, 0x9E, 0x0B)
                                                 }
                                             };
@@ -188,9 +199,12 @@ impl AccountsView {
                                         ui.add_sized(
                                             [uuid_w, 16.0],
                                             egui::Label::new(
-                                                RichText::new(format!("UUID: {}", acc.uuid_hyphenated()))
-                                                    .color(TEXT_MUTED)
-                                                    .small(),
+                                                RichText::new(format!(
+                                                    "UUID: {}",
+                                                    acc.uuid_hyphenated()
+                                                ))
+                                                .color(TEXT_MUTED)
+                                                .small(),
                                             )
                                             .truncate(),
                                         );
@@ -238,7 +252,7 @@ impl AccountsView {
 
     fn render_offline_tab(&mut self, ui: &mut Ui, state: &mut UiState) {
         ui.label(
-            RichText::new("Свободный вход без пароля (для одиночной игры и пиратских серверов)")
+            RichText::new("Вход без пароля для одиночной игры и оффлайн-серверов")
                 .color(TEXT_MUTED),
         );
         ui.add_space(6.0);
@@ -284,62 +298,198 @@ impl AccountsView {
     }
 
     fn render_elyby_tab(&mut self, ui: &mut Ui, state: &mut UiState) {
-        ui.label(RichText::new("Авторизация через Ely.by с поддержкой системы скинов и плащей через authlib-injector").color(TEXT_MUTED));
+        ui.label(
+            RichText::new("Безопасный вход через официальный портал Ely.by в браузере (OAuth2)")
+                .color(TEXT_MUTED),
+        );
         ui.add_space(6.0);
 
-        ui.horizontal(|ui| {
-            ui.label("Логин или Email:");
-            ui.text_edit_singleline(&mut self.ely_login);
-        });
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label("Пароль:");
-            ui.add(egui::TextEdit::singleline(&mut self.ely_pass).password(true));
-        });
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label("2FA код (если включён):");
-            ui.text_edit_singleline(&mut self.ely_2fa);
-        });
+        let oauth_cfg = ElyByOAuthConfig::default();
 
-        ui.add_space(8.0);
-        if primary_emerald_button(ui, Some(VectorIcon::User), "Войти через Ely.by").clicked()
-        {
-            let client = ElyByClient::default();
-            let login = self.ely_login.trim().to_string();
-            let pass = self.ely_pass.clone();
-            let totp = if self.ely_2fa.trim().is_empty() {
-                None
-            } else {
-                Some(self.ely_2fa.trim().to_string())
-            };
+        if self.ely_waiting_browser {
+            ui.label(
+                RichText::new("Ожидание подтверждения входа в браузере...")
+                    .color(ACCENT_COBALT)
+                    .strong(),
+            );
+            ui.add_space(6.0);
 
-            // We can authenticate synchronously or spawn onto tokio
-            let handle = tokio::runtime::Handle::current();
-            let res = std::thread::spawn(move || {
-                handle.block_on(async {
-                    client
-                        .authenticate(&login, &pass, totp.as_deref(), None)
-                        .await
-                })
-            })
-            .join();
+            ui.horizontal(|ui| {
+                if secondary_glass_button(ui, Some(VectorIcon::Globe), "Открыть ссылку ещё раз")
+                    .clicked()
+                {
+                    if let Some(ref url) = self.ely_auth_url {
+                        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+                    }
+                }
+                if secondary_glass_button(ui, Some(VectorIcon::Copy), "Скопировать ссылку")
+                    .clicked()
+                {
+                    if let Some(ref url) = self.ely_auth_url {
+                        ui.ctx().copy_text(url.clone());
+                        state.status_message = Some((
+                            "Ссылка для авторизации скопирована в буфер обмена".to_string(),
+                            false,
+                        ));
+                    }
+                }
+                if secondary_glass_button(ui, Some(VectorIcon::Cross), "Отмена").clicked() {
+                    self.ely_waiting_browser = false;
+                    self.ely_cancel_flag.store(true, Ordering::SeqCst);
+                    state.status_message = Some(("Вход через Ely.by отменён".to_string(), false));
+                }
+            });
+            return;
+        }
 
-            match res {
-                Ok(Ok(profile)) => {
-                    let uname = profile.username.clone();
-                    state.accounts.upsert_account(profile, true);
-                    let _ = state.accounts.save(&state.paths);
-                    state.status_message =
-                        Some((format!("Успешный вход через Ely.by: {uname}"), false));
-                }
-                Ok(Err(e)) => {
-                    state.status_message = Some((format!("Ошибка входа Ely.by: {e}"), true));
-                }
-                Err(_) => {
-                    state.status_message = Some(("Ошибка потока аутентификации".to_string(), true));
-                }
+        if let Some(client_id) = oauth_cfg.client_id.as_deref() {
+            ui.label(
+                RichText::new(format!(
+                    "Настроен клиент ID: {}",
+                    &client_id[..client_id.len().min(8)]
+                ))
+                .color(TEXT_MUTED)
+                .small(),
+            );
+            ui.add_space(8.0);
+
+            if primary_emerald_button(
+                ui,
+                Some(VectorIcon::Globe),
+                "Войти через Ely.by (в браузере)",
+            )
+            .clicked()
+            {
+                self.ely_waiting_browser = true;
+                let state_str = Uuid::new_v4().to_string();
+                let port = oauth_cfg.redirect_port;
+                let auth_url = ElyByOAuthFlow::generate_auth_url(client_id, port, &state_str);
+                self.ely_auth_url = Some(auth_url.clone());
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&auth_url)
+                    .spawn();
+
+                let cancel_flag = Arc::new(AtomicBool::new(false));
+                self.ely_cancel_flag = cancel_flag.clone();
+                let client_id_owned = client_id.to_string();
+                let client_secret_owned = oauth_cfg.client_secret.clone();
+                let paths_clone = state.paths.clone();
+
+                // Spawn background task to receive loopback callback and exchange token
+                let handle = tokio::runtime::Handle::current();
+                std::thread::spawn(move || {
+                    handle.block_on(async move {
+                        let res = ElyByOAuthFlow::start_loopback_listener(port, &state_str).await;
+                        if cancel_flag.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        match res {
+                            Ok(code) => {
+                                let http = reqwest::Client::new();
+                                let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+                                match ElyByOAuthFlow::exchange_code_for_token(
+                                    &http,
+                                    &client_id_owned,
+                                    client_secret_owned.as_deref(),
+                                    &code,
+                                    &redirect_uri,
+                                )
+                                .await
+                                {
+                                    Ok(token_resp) => {
+                                        match ElyByOAuthFlow::fetch_account_info(
+                                            &http,
+                                            &token_resp.access_token,
+                                        )
+                                        .await
+                                        {
+                                            Ok(info) => {
+                                                let profile = AccountProfile {
+                                                    id: AccountId::new_v4(),
+                                                    username: info.username,
+                                                    uuid: Uuid::parse_str(&info.uuid)
+                                                        .unwrap_or_else(|_| Uuid::new_v4()),
+                                                    kind: AccountKind::ElyBy,
+                                                    access_token: SecretString::new(
+                                                        token_resp.access_token,
+                                                    ),
+                                                    refresh_token: token_resp
+                                                        .refresh_token
+                                                        .map(SecretString::new),
+                                                    client_token: None,
+                                                    expires_at: token_resp.expires_in.map(|secs| {
+                                                        chrono::Utc::now()
+                                                            + chrono::Duration::seconds(secs as i64)
+                                                    }),
+                                                    skin_url: None,
+                                                    avatar_head: None,
+                                                };
+                                                // Stored accounts are updated on next save or check
+                                                if let Ok(mut store) =
+                                                    mq_auth::AccountStore::load_or_default(
+                                                        &paths_clone,
+                                                    )
+                                                {
+                                                    store.upsert_account(profile, true);
+                                                    let _ = store.save(&paths_clone);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::error!(
+                                                    "Failed to fetch Ely.by account info: {e}"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "Failed to exchange Ely.by code for token: {e}"
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Ely.by loopback callback failed: {e}");
+                            }
+                        }
+                    });
+                });
             }
+        } else {
+            ui.label(RichText::new("Для входа через браузер необходимо указать Client ID приложения Ely.by OAuth2.").color(STATUS_WARN));
+            ui.label(
+                RichText::new("1. Зарегистрируйте приложение на account.ely.by/dev/applications")
+                    .color(TEXT_MUTED)
+                    .small(),
+            );
+            ui.label(
+                RichText::new("2. Укажите Redirect URI: http://127.0.0.1:25585/callback")
+                    .color(TEXT_MUTED)
+                    .small(),
+            );
+            ui.label(RichText::new("3. Задайте переменную окружения MQ_ELYBY_CLIENT_ID=<id> или пропишите в config.toml").color(TEXT_MUTED).small());
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                if primary_emerald_button(
+                    ui,
+                    Some(VectorIcon::Globe),
+                    "Зарегистрировать приложение на Ely.by",
+                )
+                .clicked()
+                {
+                    let _ = std::process::Command::new("xdg-open")
+                        .arg("https://account.ely.by/dev/applications")
+                        .spawn();
+                }
+                if secondary_glass_button(ui, Some(VectorIcon::Globe), "Создать аккаунт на Ely.by")
+                    .clicked()
+                {
+                    let _ = std::process::Command::new("xdg-open")
+                        .arg("https://ely.by/registration")
+                        .spawn();
+                }
+            });
         }
     }
 

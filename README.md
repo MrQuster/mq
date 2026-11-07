@@ -121,10 +121,10 @@ tar -xzf mq-portable-linux-x86_64.tar.gz && ./mq-portable/mq
 mq
 
 # 2. Добавление оффлайн (пиратского) аккаунта
-mq auth offline Mr_Quster
+mq accounts add Mr_Quster --offline
 
-# 3. Добавление аккаунта со скинами Ely.by
-mq auth ely Username Password
+# 3. Добавление аккаунта со скинами Ely.by (безопасно через браузер)
+mq accounts add --ely
 
 # 4. Создание инстанса и установка версии 1.21.1 с Fabric
 mq install 1.21.1 --loader fabric --instance MyFabric
@@ -155,6 +155,7 @@ mq bench
 * `crates/mq-mods`: Парсинг `.mrpack` и CurseForge `.zip`, Zip-Slip защита, сканер `.jar` модов.
 * `crates/mq-instances`: Менеджер изолированных инстансов Minecraft.
 * `crates/mq-launch`: Детерминированный генератор команды запуска, обнаружение Java.
+* `crates/mq-update`: Подсистема безопасного самообновления лаунчера, проверка GitHub Releases API, верификация SHA-256, smoke-тест, атомарная замена и откат.
 * `crates/mq-ui`: Графический интерфейс на `eframe` / `egui` (стиль Matte Dark Solid, без AI-слопа и эмодзи, чистые векторные иконки Painter, 6 непрозрачных пресетов оформления).
 * `crates/mq-cli`: Главная консольная точка входа.
 * `testsupport`: Локальный mock-сервер для автономных тестов без доступа в Интернет.

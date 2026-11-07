@@ -137,7 +137,9 @@ fn render_nav_row(
     tokens: &Tokens,
 ) -> bool {
     let is_compact = ui.available_width() < 120.0;
-    let available_w = ui.available_width().max(if is_compact { 48.0 } else { 160.0 });
+    let available_w = ui
+        .available_width()
+        .max(if is_compact { 48.0 } else { 160.0 });
     let row_h = 36.0;
     let (rect, response) = ui.allocate_exact_size(Vec2::new(available_w, row_h), Sense::click());
 
@@ -372,7 +374,10 @@ pub fn render_sidebar(
     if is_compact {
         // Compact brand header: emblem centered + small globe button below
         let emblem_rect = Rect::from_center_size(
-            Pos2::new(ui.available_rect_before_wrap().center().x, ui.cursor().top() + 18.0),
+            Pos2::new(
+                ui.available_rect_before_wrap().center().x,
+                ui.cursor().top() + 18.0,
+            ),
             Vec2::splat(32.0),
         );
         let _ = ui.allocate_space(Vec2::new(ui.available_width(), 36.0));
@@ -440,7 +445,7 @@ pub fn render_sidebar(
                         .size(14.0)
                         .strong(),
                 );
-                ui.label(RichText::new("v2.0.0").color(tokens.text_muted).size(11.0));
+                ui.label(RichText::new("v2.1.0").color(tokens.text_muted).size(11.0));
             });
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -486,7 +491,8 @@ pub fn render_sidebar(
                                 .selectable_label(is_current, lang.native_name())
                                 .clicked()
                             {
-                                action = Some(SidebarAction::ChangeLanguage(lang.code().to_string()));
+                                action =
+                                    Some(SidebarAction::ChangeLanguage(lang.code().to_string()));
                                 ui.memory_mut(|mem| mem.close_popup());
                             }
                         }

@@ -2235,7 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "mq-auth"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "chrono",
  "hex",
@@ -2255,7 +2255,7 @@ dependencies = [
 
 [[package]]
 name = "mq-benches"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "criterion",
  "mq-core",
@@ -2272,9 +2272,10 @@ dependencies = [
 
 [[package]]
 name = "mq-cli"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "hex",
  "image",
@@ -2288,6 +2289,7 @@ dependencies = [
  "mq-net",
  "mq-sched",
  "mq-ui",
+ "mq-update",
  "rayon",
  "reqwest",
  "rustix 1.1.6",
@@ -2301,12 +2303,13 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "wgpu",
 ]
 
 [[package]]
 name = "mq-core"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "chrono",
  "directories",
@@ -2324,7 +2327,7 @@ dependencies = [
 
 [[package]]
 name = "mq-install"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "dashmap",
  "hex",
@@ -2346,7 +2349,7 @@ dependencies = [
 
 [[package]]
 name = "mq-instances"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "chrono",
  "flate2",
@@ -2362,7 +2365,7 @@ dependencies = [
 
 [[package]]
 name = "mq-launch"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "flate2",
  "flume",
@@ -2383,7 +2386,7 @@ dependencies = [
 
 [[package]]
 name = "mq-meta"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "hex",
  "mq-core",
@@ -2399,8 +2402,10 @@ dependencies = [
 
 [[package]]
 name = "mq-mods"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
  "dashmap",
  "hex",
  "mq-core",
@@ -2423,7 +2428,7 @@ dependencies = [
 
 [[package]]
 name = "mq-net"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "bytes",
  "dashmap",
@@ -2446,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "mq-sched"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "bytes",
  "crossbeam-channel",
@@ -2464,7 +2469,7 @@ dependencies = [
 
 [[package]]
 name = "mq-ui"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2483,6 +2488,7 @@ dependencies = [
  "mq-mods",
  "mq-net",
  "mq-sched",
+ "mq-update",
  "parking_lot",
  "reqwest",
  "serde_json",
@@ -2490,7 +2496,29 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "uuid",
  "wgpu",
+]
+
+[[package]]
+name = "mq-update"
+version = "2.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "futures-util",
+ "hex",
+ "mq-core",
+ "reqwest",
+ "rustix 1.1.6",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -4107,7 +4135,7 @@ dependencies = [
 
 [[package]]
 name = "testsupport"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "axum",
  "bytes",

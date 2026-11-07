@@ -110,7 +110,7 @@ fn render_per_core_bars(ui: &mut Ui, snap: &CpuSnapshot) {
         response.on_hover_ui(|ui| {
             ui.label(
                 RichText::new(format!(
-                    "Нагрузка ЦП: {:.1}% | RSS: {:.1} МиБ",
+                    "Процессор: {:>4.1}% | Память: {:>5.1} МБ",
                     snap.total_pct, snap.rss_mib
                 ))
                 .font(FontId::new(12.0, FontFamily::Monospace))
@@ -180,9 +180,14 @@ pub fn render_bottom_hud(ui: &mut Ui, data: &BottomHudData) {
 
         if avail_w >= 940.0 {
             ui.separator();
+            let dag_label = if data.active_dag_tasks == 0 {
+                "Загрузки: нет активных".to_string()
+            } else {
+                format!("Загрузки: {} активных", data.active_dag_tasks)
+            };
             let metrics_text = format!(
-                "{:.0} файлов/с | {:.1} МБ/с | Активных задач DAG: {}",
-                data.files_per_sec, data.mib_per_sec, data.active_dag_tasks
+                "{:>3.0} файлов/с | {:>4.1} МБ/с | {}",
+                data.files_per_sec, data.mib_per_sec, dag_label
             );
             ui.label(
                 RichText::new(metrics_text)
@@ -191,9 +196,14 @@ pub fn render_bottom_hud(ui: &mut Ui, data: &BottomHudData) {
             );
         } else if avail_w >= 760.0 {
             ui.separator();
+            let dag_label = if data.active_dag_tasks == 0 {
+                "нет активных".to_string()
+            } else {
+                format!("{} акт.", data.active_dag_tasks)
+            };
             let metrics_text = format!(
-                "{:.0} ф/с | {:.1} МБ/с | DAG: {}",
-                data.files_per_sec, data.mib_per_sec, data.active_dag_tasks
+                "{:>3.0} ф/с | {:>4.1} МБ/с | Загрузки: {}",
+                data.files_per_sec, data.mib_per_sec, dag_label
             );
             ui.label(
                 RichText::new(metrics_text)
@@ -202,7 +212,7 @@ pub fn render_bottom_hud(ui: &mut Ui, data: &BottomHudData) {
             );
         }
 
-        // Right: Per-core CPU telemetry vertical bars + RSS + Watchdog indicator
+        // Right: Per-core CPU telemetry vertical bars + Memory + Watchdog indicator
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
 
@@ -216,10 +226,10 @@ pub fn render_bottom_hud(ui: &mut Ui, data: &BottomHudData) {
             }
 
             let rss_label = if avail_w < 550.0 {
-                format!("ЦП {:>3.0}%", data.cpu_snapshot.total_pct)
+                format!("Процессор: {:>3.0}%", data.cpu_snapshot.total_pct)
             } else {
                 format!(
-                    "ЦП {:>3.0}% | RSS: {:.1} МиБ",
+                    "Процессор: {:>3.0}% | Память: {:>5.1} МБ",
                     data.cpu_snapshot.total_pct, data.cpu_snapshot.rss_mib
                 )
             };

@@ -277,7 +277,11 @@ impl CatalogView {
                                     .color(TEXT_MUTED)
                                     .small(),
                             );
-                            version_badge(ui, &format!("{} скачиваний", hit.downloads), ACCENT_COBALT);
+                            version_badge(
+                                ui,
+                                &format!("{} скачиваний", hit.downloads),
+                                ACCENT_COBALT,
+                            );
                             if is_already_installed {
                                 version_badge(ui, "Установлен", ACCENT_EMERALD);
                             }
@@ -286,7 +290,10 @@ impl CatalogView {
                         let desc_w = (ui.available_width() - 8.0).max(40.0);
                         ui.add_sized(
                             [desc_w, 16.0],
-                            egui::Label::new(RichText::new(&hit.description).color(TEXT_MUTED).small()).truncate(),
+                            egui::Label::new(
+                                RichText::new(&hit.description).color(TEXT_MUTED).small(),
+                            )
+                            .truncate(),
                         );
 
                         ui.horizontal_wrapped(|ui| {
@@ -322,11 +329,7 @@ impl CatalogView {
                             });
                         }
                     } else {
-                        ui.label(
-                            RichText::new("Выберите инстанс")
-                                .color(TEXT_MUTED)
-                                .small(),
-                        );
+                        ui.label(RichText::new("Выберите инстанс").color(TEXT_MUTED).small());
                     }
                 });
             });

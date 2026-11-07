@@ -515,12 +515,219 @@ pub fn elyby_jvm_injection_args(injector_jar_path: &Path) -> [String; 2] {
 /// Builds an OAuth2 authorization URL for browser-based Ely.by sign-in.
 pub fn oauth2_browser_authorize_url(client_id: &str, redirect_uri: &str, state: &str) -> String {
     format!(
-        "{}?client_id={}&redirect_uri={}&response_type=code&scope=account_info%20minecraft_server_session&state={}",
+        "{}?client_id={}&redirect_uri={}&response_type=code&scope=account_info%20account_email%20offline_access%20minecraft_server_session&state={}",
         ELYBY_OAUTH2_AUTHORIZE_URL,
         percent_encode_query_component(client_id),
         percent_encode_query_component(redirect_uri),
         percent_encode_query_component(state),
     )
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElyByTokenResponse {
+    pub access_token: String,
+    pub token_type: String,
+    pub expires_in: Option<u64>,
+    pub refresh_token: Option<String>,
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElyByAccountInfo {
+    pub id: Option<u64>,
+    pub uuid: String,
+    pub username: String,
+    pub preferred_language: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ElyByOAuthConfig {
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    pub redirect_port: u16,
+}
+
+impl Default for ElyByOAuthConfig {
+    fn default() -> Self {
+        let client_id = std::env::var("MQ_ELYBY_CLIENT_ID")
+            .ok()
+            .or_else(|| option_env!("MQ_ELYBY_CLIENT_ID").map(str::to_string));
+        let client_secret = std::env::var("MQ_ELYBY_CLIENT_SECRET")
+            .ok()
+            .or_else(|| option_env!("MQ_ELYBY_CLIENT_SECRET").map(str::to_string));
+        Self {
+            client_id,
+            client_secret,
+            redirect_port: 25585,
+        }
+    }
+}
+
+pub struct ElyByOAuthFlow;
+
+impl ElyByOAuthFlow {
+    pub fn generate_auth_url(client_id: &str, port: u16, state: &str) -> String {
+        let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+        oauth2_browser_authorize_url(client_id, &redirect_uri, state)
+    }
+
+    pub async fn start_loopback_listener(port: u16, expected_state: &str) -> MqResult<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let mut bound_listener = None;
+        for p in [port, port + 1, port + 2, 25585, 25586, 0] {
+            if let Ok(l) = TcpListener::bind(("127.0.0.1", p)).await {
+                bound_listener = Some(l);
+                break;
+            }
+        }
+
+        let listener = bound_listener.ok_or_else(|| {
+            MqError::Auth("Failed to bind loopback TCP server for Ely.by OAuth callback".into())
+        })?;
+
+        let (mut socket, _) =
+            tokio::time::timeout(std::time::Duration::from_secs(300), listener.accept())
+                .await
+                .map_err(|_| MqError::Auth("Таймаут ожидания входа в браузере (5 минут)".into()))?
+                .map_err(|e| MqError::Network(format!("Ошибка loopback соединения: {e}")))?;
+
+        let mut buf = [0u8; 4096];
+        let n = socket.read(&mut buf).await.map_err(|e| {
+            MqError::Network(format!("Ошибка чтения HTTP запроса от браузера: {e}"))
+        })?;
+        let request = String::from_utf8_lossy(&buf[..n]);
+
+        let first_line = request.lines().next().unwrap_or_default();
+        let target = first_line.split_whitespace().nth(1).unwrap_or_default();
+
+        let mut code = None;
+        let mut state = None;
+        let mut error_msg = None;
+
+        if let Some(query) = target.split('?').nth(1) {
+            for param in query.split('&') {
+                let mut kv = param.split('=');
+                if let (Some(k), Some(v)) = (kv.next(), kv.next()) {
+                    if k == "code" {
+                        code = Some(v.to_string());
+                    } else if k == "state" {
+                        state = Some(v.to_string());
+                    } else if k == "error" {
+                        error_msg = Some(v.to_string());
+                    }
+                }
+            }
+        }
+
+        let html_success = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>MQ Launcher</title><style>body{background:#121316;color:#e1e4ea;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}.card{background:#1a1c23;padding:36px 48px;border-radius:8px;border:1px solid #2e323b;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.45);}h2{margin-top:0;color:#10b981;}p{color:#9ca3af;font-size:14px;}</style></head><body><div class=\"card\"><h2>Вход выполнен</h2><p>Можно закрыть эту вкладку и вернуться в лаунчер MQ.</p></div></body></html>";
+
+        let html_error = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>MQ Launcher — Ошибка</title><style>body{background:#121316;color:#e1e4ea;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}.card{background:#1a1c23;padding:36px 48px;border-radius:8px;border:1px solid #ef4444;text-align:center;}h2{margin-top:0;color:#ef4444;}</style></head><body><div class=\"card\"><h2>Ошибка авторизации</h2><p>Запрос отклонён или нарушена проверка безопасности.</p></div></body></html>";
+
+        if let Some(err) = error_msg {
+            let resp = format!(
+                "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                html_error.len(),
+                html_error
+            );
+            let _ = socket.write_all(resp.as_bytes()).await;
+            let _ = socket.flush().await;
+            return Err(MqError::Auth(format!(
+                "Ely.by вернул ошибку авторизации: {err}"
+            )));
+        }
+
+        if state.as_deref() != Some(expected_state) {
+            let resp = format!(
+                "HTTP/1.1 403 Forbidden\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                html_error.len(),
+                html_error
+            );
+            let _ = socket.write_all(resp.as_bytes()).await;
+            let _ = socket.flush().await;
+            return Err(MqError::Auth(
+                "CSRF проверка не прошла: параметр state не совпадает".into(),
+            ));
+        }
+
+        let code = code.ok_or_else(|| {
+            MqError::Auth("В ответе Ely.by отсутствует параметр authorization code".into())
+        })?;
+
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            html_success.len(),
+            html_success
+        );
+        let _ = socket.write_all(resp.as_bytes()).await;
+        let _ = socket.flush().await;
+
+        Ok(code)
+    }
+
+    pub async fn exchange_code_for_token(
+        client: &reqwest::Client,
+        client_id: &str,
+        client_secret: Option<&str>,
+        code: &str,
+        redirect_uri: &str,
+    ) -> MqResult<ElyByTokenResponse> {
+        let mut params = vec![
+            ("grant_type", "authorization_code"),
+            ("client_id", client_id),
+            ("code", code),
+            ("redirect_uri", redirect_uri),
+        ];
+        if let Some(secret) = client_secret {
+            if !secret.is_empty() {
+                params.push(("client_secret", secret));
+            }
+        }
+
+        let resp = client
+            .post("https://account.ely.by/api/oauth2/v1/token")
+            .form(&params)
+            .send()
+            .await
+            .map_err(|e| MqError::Network(format!("Ошибка запроса токена Ely.by: {e}")))?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(MqError::Auth(format!("Ely.by отклонил обмен кода: {text}")));
+        }
+
+        let token_resp: ElyByTokenResponse = resp
+            .json()
+            .await
+            .map_err(|e| MqError::Auth(format!("Некорректный JSON ответа токена: {e}")))?;
+        Ok(token_resp)
+    }
+
+    pub async fn fetch_account_info(
+        client: &reqwest::Client,
+        access_token: &str,
+    ) -> MqResult<ElyByAccountInfo> {
+        let resp = client
+            .get("https://account.ely.by/api/account/v1/info")
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .map_err(|e| MqError::Network(format!("Ошибка запроса профиля Ely.by: {e}")))?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(MqError::Auth(format!(
+                "Не удалось получить профиль Ely.by: {text}"
+            )));
+        }
+
+        let info: ElyByAccountInfo = resp
+            .json()
+            .await
+            .map_err(|e| MqError::Auth(format!("Некорректный JSON профиля Ely.by: {e}")))?;
+        Ok(info)
+    }
 }
 
 fn percent_encode_query_component(input: &str) -> String {

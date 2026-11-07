@@ -152,7 +152,27 @@ fn diagnose_text(
         };
     }
 
-    // 6. Generic Failure
+    // 6. Shader / Iris / Sodium / OpenGL / GLFW errors
+    if lower.contains("net.irisshaders")
+        || lower.contains("me.jellysquid.mods.sodium")
+        || lower.contains("glfw error")
+        || lower.contains("wgl")
+        || lower.contains("glcontext")
+        || lower.contains("opengl error")
+        || lower.contains("gl_invalid_operation")
+    {
+        extract_mod_candidates(text, &mut suspected_mods);
+        return CrashAnalysis {
+            exit_code,
+            summary: "Сбой графического шейдер-движка или OpenGL/GLFW".to_string(),
+            recommendation: "Произошла ошибка инициализации рендерера (Iris/Sodium/OpenGL). Убедитесь, что драйверы видеокарты обновлены (поддержка OpenGL >= 3.3) и установлена совместимая версия шейдеров и Iris/Sodium для вашей версии игры.".to_string(),
+            suspected_mods,
+            raw_snippet: extract_snippet(text, "gl", 8),
+            crash_report_file: report_file,
+        };
+    }
+
+    // 7. Generic Failure
     extract_mod_candidates(text, &mut suspected_mods);
     let code_str = exit_code.map(|c| format!(" (код {c})")).unwrap_or_default();
     CrashAnalysis {

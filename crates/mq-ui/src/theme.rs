@@ -6,7 +6,7 @@ use egui::style::{Selection, WidgetVisuals, Widgets};
 use egui::{Color32, Context, CornerRadius, Frame, Margin, Stroke, Style, Vec2, Visuals};
 use mq_core::{ThemeConfig, ThemePreset, UiDensity};
 
-/// Comprehensive opaque design tokens for MQ v2.0.0.
+/// Comprehensive opaque design tokens for MQ v2.1.0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tokens {
     /// Window background (#0F1115)

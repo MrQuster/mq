@@ -1,0 +1,27 @@
+[package]
+name = "mq-update"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+mq-core.workspace = true
+reqwest = { workspace = true, features = ["json", "stream"] }
+tokio = { workspace = true, features = ["process", "fs", "io-util", "sync", "time"] }
+futures-util.workspace = true
+rustix = { workspace = true, features = ["process", "fs"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+chrono = { workspace = true, features = ["serde"] }
+tracing.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+axum.workspace = true

@@ -2,6 +2,7 @@
 /target/
 /dist/
 /.cache/
+/.cargo/
 
 # Agent, LLM transcripts and scratch files
 /.agents/

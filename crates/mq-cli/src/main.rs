@@ -48,11 +48,12 @@ use testsupport::{MockConfig, MockServer};
 #[derive(Parser)]
 #[command(
     name = "mq",
-    author = "MQ Systems Team",
+    author = "MrQuster <https://github.com/MrQuster>",
     version,
-    about = "Autonomous multithreaded Minecraft: Java Edition launcher for Linux",
-    long_about = "MQ — high-performance, multithreaded Minecraft launcher for Arch Linux.\n\
-                  Supports Offline mode, Ely.by skins with authlib-injector, Modrinth, and CurseForge.\n\
+    about = "High-performance modular Minecraft launcher in Rust/egui by MrQuster",
+    long_about = "MQ — high-performance, multithreaded Minecraft launcher for Linux.\n\
+                  Created by MrQuster (https://github.com/MrQuster).\n\
+                  Supports Offline mode, Ely.by browser OAuth2 with authlib-injector, Modrinth, and CurseForge.\n\
                   Run 'mq' without arguments to start the GUI, or use subcommands for CLI operations."
 )]
 struct Cli {
@@ -63,6 +64,10 @@ struct Cli {
     /// Number of worker threads for Rayon CPU pool (defaults to logical core count).
     #[arg(short = 't', long)]
     threads: Option<usize>,
+
+    /// Internal restart flag after a self-update.
+    #[arg(long)]
+    after_update: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -118,6 +123,23 @@ enum Commands {
 
     /// Benchmark multi-core scaling, Amdahl speedup, and per-core CPU utilization.
     Bench(BenchArgs),
+
+    /// Display information about MQ Launcher, author, and official links.
+    About,
+
+    /// Check for and apply self-updates from GitHub Releases.
+    SelfUpdate(SelfUpdateArgs),
+}
+
+#[derive(Args, Debug)]
+struct SelfUpdateArgs {
+    /// Only check if an update is available without installing.
+    #[arg(long)]
+    check: bool,
+
+    /// Include prerelease versions.
+    #[arg(long)]
+    prerelease: bool,
 }
 
 #[derive(Args, Debug)]
@@ -359,20 +381,17 @@ struct AccountsArgs {
 enum AccountsSubcommand {
     /// List all configured accounts.
     List,
-    /// Add an account.
+    /// Add an account (Offline or Ely.by browser flow).
     Add {
-        /// Player username or Ely.by username/email.
+        /// Player username (for offline profile).
         #[arg(long)]
-        username: String,
+        username: Option<String>,
         /// Create an offline account.
         #[arg(long)]
         offline: bool,
-        /// Authenticate via Ely.by.
+        /// Authenticate via Ely.by browser OAuth2.
         #[arg(long)]
         ely: bool,
-        /// Ely.by password.
-        #[arg(long)]
-        password: Option<String>,
     },
     /// Select the active account.
     Switch { id: String },
@@ -486,7 +505,65 @@ async fn main() -> Result<()> {
         Some(Commands::Doctor) => cmd_doctor(paths).await,
         Some(Commands::UiSnapshot(args)) => cmd_ui_snapshot(args, paths, cli.threads).await,
         Some(Commands::Bench(args)) => cmd_bench(args).await,
+        Some(Commands::About) => cmd_about().await,
+        Some(Commands::SelfUpdate(args)) => cmd_self_update(args).await,
     }
+}
+
+async fn cmd_about() -> Result<()> {
+    println!("MQ Launcher v{} (Solid Edition)", env!("CARGO_PKG_VERSION"));
+    println!("Автор: MrQuster");
+    println!("Профиль автора: https://github.com/MrQuster");
+    println!("Репозиторий:    https://github.com/MrQuster/mq");
+    println!("Релизы:         https://github.com/MrQuster/mq/releases");
+    println!("Баг-трекер:     https://github.com/MrQuster/mq/issues");
+    println!("Лицензия:       MIT License (MrQuster)");
+    Ok(())
+}
+
+async fn cmd_self_update(args: SelfUpdateArgs) -> Result<()> {
+    println!("Проверка обновлений MQ Launcher...");
+    let cur_ver = env!("CARGO_PKG_VERSION");
+    let mgr = mq_update::UpdateManager::new("MrQuster", "mq");
+    let update = mgr.check_latest(cur_ver, args.prerelease).await?;
+    match update {
+        Some(info) => {
+            println!(
+                "Найдена новая версия: v{} (текущая: v{})",
+                info.version, cur_ver
+            );
+            if !info.release_notes.is_empty() {
+                println!("--- Список изменений ---");
+                println!("{}", info.release_notes);
+                println!("------------------------");
+            }
+            if args.check {
+                println!("Для установки выполните: mq self-update");
+                return Ok(());
+            }
+            println!("Загрузка и установка обновления...");
+            use std::io::Write;
+            let installed_path = mgr
+                .download_and_install(&info, |done, tot| {
+                    if let Some(t) = tot {
+                        print!(
+                            "\rЗагрузка: {:.1} / {:.1} МБ",
+                            done as f32 / 1024.0 / 1024.0,
+                            t as f32 / 1024.0 / 1024.0
+                        );
+                        let _ = std::io::stdout().flush();
+                    }
+                })
+                .await?;
+            println!("\nОбновление успешно установлено в {:?}", installed_path);
+            println!("Перезапуск лаунчера...");
+            let _ = mq_update::UpdateManager::restart_process(&[]);
+        }
+        None => {
+            println!("У вас установлена последняя версия v{}", cur_ver);
+        }
+    }
+    Ok(())
 }
 
 fn default_cpu_threads() -> usize {
@@ -1533,21 +1610,75 @@ async fn cmd_accounts(args: AccountsArgs, paths: MqPaths) -> Result<()> {
             username,
             offline: _,
             ely,
-            password,
         } => {
             if ely {
-                let client = ElyByClient::new();
-                let pass = password
-                    .ok_or_else(|| anyhow::anyhow!("Пароль обязателен для авторизации Ely.by"))?;
-                let acc = client.authenticate(&username, &pass, None, None).await?;
-                store.upsert_account(acc.clone(), true);
+                let oauth_cfg = mq_auth::ElyByOAuthConfig::default();
+                let client_id = match oauth_cfg.client_id {
+                    Some(id) if !id.trim().is_empty() => id,
+                    _ => {
+                        println!("[MQ] Для входа через браузер требуется Client ID приложения Ely.by OAuth2.");
+                        println!("1. Зарегистрируйте приложение на https://account.ely.by/dev/applications");
+                        println!("2. Укажите Redirect URI: http://127.0.0.1:25585/callback");
+                        println!(
+                            "3. Задайте переменную окружения MQ_ELYBY_CLIENT_ID=<ваш_client_id>"
+                        );
+                        bail!("Не настроен MQ_ELYBY_CLIENT_ID");
+                    }
+                };
+
+                let state_str = uuid::Uuid::new_v4().to_string();
+                let port = oauth_cfg.redirect_port;
+                let auth_url =
+                    mq_auth::ElyByOAuthFlow::generate_auth_url(&client_id, port, &state_str);
+                println!("[MQ] Откройте следующую ссылку в браузере для авторизации:");
+                println!("     {auth_url}");
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&auth_url)
+                    .spawn();
+                println!("[MQ] Ожидание завершения авторизации в браузере (порт {port})...");
+
+                let code =
+                    mq_auth::ElyByOAuthFlow::start_loopback_listener(port, &state_str).await?;
+                let http = reqwest::Client::new();
+                let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+                let token_resp = mq_auth::ElyByOAuthFlow::exchange_code_for_token(
+                    &http,
+                    &client_id,
+                    oauth_cfg.client_secret.as_deref(),
+                    &code,
+                    &redirect_uri,
+                )
+                .await?;
+                let info =
+                    mq_auth::ElyByOAuthFlow::fetch_account_info(&http, &token_resp.access_token)
+                        .await?;
+
+                let acc = mq_auth::AccountProfile {
+                    id: mq_core::AccountId::new_v4(),
+                    username: info.username.clone(),
+                    uuid: uuid::Uuid::parse_str(&info.uuid)
+                        .unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                    kind: mq_auth::AccountKind::ElyBy,
+                    access_token: mq_core::SecretString::new(token_resp.access_token),
+                    refresh_token: token_resp.refresh_token.map(mq_core::SecretString::new),
+                    client_token: None,
+                    expires_at: token_resp
+                        .expires_in
+                        .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs as i64)),
+                    skin_url: None,
+                    avatar_head: None,
+                };
+                store.upsert_account(acc, true);
                 store.save(&paths)?;
                 println!(
-                    "[MQ] Аккаунт Ely.by '{}' добавлен и выбран активным",
-                    acc.username
+                    "[MQ] Успешный вход через Ely.by: {} (UUID: {})!",
+                    info.username, info.uuid
                 );
             } else {
-                let acc = create_offline_account(&username)?;
+                let uname = username.ok_or_else(|| {
+                    anyhow::anyhow!("Укажите никнейм: mq accounts add --username <ник>")
+                })?;
+                let acc = create_offline_account(&uname)?;
                 store.upsert_account(acc.clone(), true);
                 store.save(&paths)?;
                 println!(
@@ -1647,7 +1778,7 @@ async fn cmd_worlds(args: WorldsArgs, paths: MqPaths) -> Result<()> {
 
 async fn cmd_doctor(paths: MqPaths) -> Result<()> {
     println!("================================================================================");
-    println!("                   MQ LAUNCHER v2.0.0 — СИСТЕМНЫЙ ДИАГНОСТ (DOCTOR)");
+    println!("                   MQ LAUNCHER v2.1.0 — СИСТЕМНЫЙ ДИАГНОСТ (DOCTOR)");
     println!("================================================================================");
 
     // 1. OS & Architecture
@@ -1766,7 +1897,7 @@ async fn cmd_doctor(paths: MqPaths) -> Result<()> {
         );
     }
     println!("================================================================================");
-    println!("[MQ DOCTOR] Все ключевые подсистемы MQ v2.0.0 проанализированы.");
+    println!("[MQ DOCTOR] Все ключевые подсистемы MQ v2.1.0 проанализированы.");
     println!("================================================================================");
     Ok(())
 }

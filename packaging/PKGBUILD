@@ -1,10 +1,10 @@
-# Maintainer: MQ Systems Team <dev@mq-launcher.local>
+# Maintainer: MrQuster <https://github.com/MrQuster>
 pkgname=mq-launcher
-pkgver=2.0.0
+pkgver=2.1.0
 pkgrel=1
-pkgdesc="Autonomous multithreaded Minecraft: Java Edition launcher for Linux"
+pkgdesc="High-performance modular Minecraft: Java Edition launcher for Linux by MrQuster"
 arch=('x86_64')
-url="https://github.com/antigravity/mq"
+url="https://github.com/MrQuster/mq"
 license=('MIT' 'Apache-2.0')
 depends=('gcc-libs' 'glibc' 'wayland' 'libx11' 'libxcursor' 'libxrandr' 'libxi')
 optdepends=(

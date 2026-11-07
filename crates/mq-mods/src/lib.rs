@@ -6,18 +6,22 @@
 
 pub mod cfpack;
 pub mod curseforge;
+pub mod lockfile;
 pub mod manager;
 pub mod models;
 pub mod modrinth;
 pub mod mrpack;
 pub mod resolver;
 pub mod scanner;
+pub mod shaders;
 pub mod zip_safe;
 
 #[allow(unused_imports)]
 pub use cfpack::*;
 #[allow(unused_imports)]
 pub use curseforge::*;
+#[allow(unused_imports)]
+pub use lockfile::*;
 #[allow(unused_imports)]
 pub use manager::*;
 #[allow(unused_imports)]
@@ -30,5 +34,7 @@ pub use mrpack::*;
 pub use resolver::*;
 #[allow(unused_imports)]
 pub use scanner::*;
+#[allow(unused_imports)]
+pub use shaders::*;
 #[allow(unused_imports)]
 pub use zip_safe::*;
