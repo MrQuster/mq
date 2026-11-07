@@ -12,6 +12,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use mq_core::{AccountId, MqError, MqPaths, MqResult, SecretString};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -512,15 +514,46 @@ pub fn elyby_jvm_injection_args(injector_jar_path: &Path) -> [String; 2] {
     ]
 }
 
-/// Builds an OAuth2 authorization URL for browser-based Ely.by sign-in.
-pub fn oauth2_browser_authorize_url(client_id: &str, redirect_uri: &str, state: &str) -> String {
+/// PKCE verifier and challenge pair (RFC 7636).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PkcePair {
+    pub verifier: String,
+    pub challenge: String,
+}
+
+impl PkcePair {
+    pub fn generate() -> Self {
+        let u1 = uuid::Uuid::new_v4().simple().to_string();
+        let u2 = uuid::Uuid::new_v4().simple().to_string();
+        let verifier = format!("{u1}{u2}");
+        let mut hasher = Sha256::new();
+        hasher.update(verifier.as_bytes());
+        let challenge = URL_SAFE_NO_PAD.encode(hasher.finalize());
+        Self { verifier, challenge }
+    }
+}
+
+/// Builds an OAuth2 authorization URL with PKCE (S256) for browser-based Ely.by sign-in.
+pub fn oauth2_browser_authorize_url_pkce(
+    client_id: &str,
+    redirect_uri: &str,
+    state: &str,
+    challenge: &str,
+) -> String {
     format!(
-        "{}?client_id={}&redirect_uri={}&response_type=code&scope=account_info%20account_email%20offline_access%20minecraft_server_session&state={}",
+        "{}?client_id={}&redirect_uri={}&response_type=code&scope=account_info%20account_email%20offline_access%20minecraft_server_session&state={}&code_challenge={}&code_challenge_method=S256",
         ELYBY_OAUTH2_AUTHORIZE_URL,
         percent_encode_query_component(client_id),
         percent_encode_query_component(redirect_uri),
         percent_encode_query_component(state),
+        percent_encode_query_component(challenge),
     )
+}
+
+/// Builds an OAuth2 authorization URL for browser-based Ely.by sign-in.
+pub fn oauth2_browser_authorize_url(client_id: &str, redirect_uri: &str, state: &str) -> String {
+    let pkce = PkcePair::generate();
+    oauth2_browser_authorize_url_pkce(client_id, redirect_uri, state, &pkce.challenge)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -551,12 +584,13 @@ impl Default for ElyByOAuthConfig {
     fn default() -> Self {
         let client_id = std::env::var("MQ_ELYBY_CLIENT_ID")
             .ok()
-            .or_else(|| option_env!("MQ_ELYBY_CLIENT_ID").map(str::to_string));
+            .or_else(|| option_env!("MQ_ELYBY_CLIENT_ID").map(str::to_string))
+            .unwrap_or_else(|| "mq-launcher".to_string());
         let client_secret = std::env::var("MQ_ELYBY_CLIENT_SECRET")
             .ok()
             .or_else(|| option_env!("MQ_ELYBY_CLIENT_SECRET").map(str::to_string));
         Self {
-            client_id,
+            client_id: Some(client_id),
             client_secret,
             redirect_port: 25585,
         }
@@ -569,6 +603,16 @@ impl ElyByOAuthFlow {
     pub fn generate_auth_url(client_id: &str, port: u16, state: &str) -> String {
         let redirect_uri = format!("http://127.0.0.1:{port}/callback");
         oauth2_browser_authorize_url(client_id, &redirect_uri, state)
+    }
+
+    pub fn generate_auth_url_pkce(
+        client_id: &str,
+        port: u16,
+        state: &str,
+        challenge: &str,
+    ) -> String {
+        let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+        oauth2_browser_authorize_url_pkce(client_id, &redirect_uri, state, challenge)
     }
 
     pub async fn start_loopback_listener(port: u16, expected_state: &str) -> MqResult<String> {
@@ -673,12 +717,26 @@ impl ElyByOAuthFlow {
         code: &str,
         redirect_uri: &str,
     ) -> MqResult<ElyByTokenResponse> {
+        Self::exchange_code_pkce(client, client_id, code, None, redirect_uri, client_secret).await
+    }
+
+    pub async fn exchange_code_pkce(
+        client: &reqwest::Client,
+        client_id: &str,
+        code: &str,
+        code_verifier: Option<&str>,
+        redirect_uri: &str,
+        client_secret: Option<&str>,
+    ) -> MqResult<ElyByTokenResponse> {
         let mut params = vec![
             ("grant_type", "authorization_code"),
             ("client_id", client_id),
             ("code", code),
             ("redirect_uri", redirect_uri),
         ];
+        if let Some(verifier) = code_verifier {
+            params.push(("code_verifier", verifier));
+        }
         if let Some(secret) = client_secret {
             if !secret.is_empty() {
                 params.push(("client_secret", secret));
@@ -695,6 +753,36 @@ impl ElyByOAuthFlow {
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
             return Err(MqError::Auth(format!("Ely.by отклонил обмен кода: {text}")));
+        }
+
+        let token_resp: ElyByTokenResponse = resp
+            .json()
+            .await
+            .map_err(|e| MqError::Auth(format!("Некорректный JSON ответа токена: {e}")))?;
+        Ok(token_resp)
+    }
+
+    pub async fn refresh_access_token(
+        client: &reqwest::Client,
+        client_id: &str,
+        refresh_token: &str,
+    ) -> MqResult<ElyByTokenResponse> {
+        let params = [
+            ("grant_type", "refresh_token"),
+            ("client_id", client_id),
+            ("refresh_token", refresh_token),
+        ];
+
+        let resp = client
+            .post("https://account.ely.by/api/oauth2/v1/token")
+            .form(&params)
+            .send()
+            .await
+            .map_err(|e| MqError::Network(format!("Ошибка обновления токена Ely.by: {e}")))?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(MqError::Auth(format!("Ely.by отклонил обновление токена: {text}")));
         }
 
         let token_resp: ElyByTokenResponse = resp
@@ -1208,5 +1296,92 @@ mod tests {
         );
 
         bad_server.await.unwrap();
+    }
+
+    #[test]
+    fn test_pkce_generation_and_challenge() {
+        let pkce = PkcePair::generate();
+        assert!(pkce.verifier.len() >= 43);
+        let mut hasher = Sha256::new();
+        hasher.update(pkce.verifier.as_bytes());
+        let expected = URL_SAFE_NO_PAD.encode(hasher.finalize());
+        assert_eq!(pkce.challenge, expected);
+    }
+
+    #[test]
+    fn test_oauth2_browser_authorize_url_pkce() {
+        let pkce = PkcePair::generate();
+        let url = oauth2_browser_authorize_url_pkce(
+            "mq-launcher",
+            "http://127.0.0.1:25585/callback",
+            "state_token_123",
+            &pkce.challenge,
+        );
+        assert!(url.starts_with(ELYBY_OAUTH2_AUTHORIZE_URL));
+        assert!(url.contains("client_id=mq-launcher"));
+        assert!(url.contains("code_challenge="));
+        assert!(url.contains("code_challenge_method=S256"));
+        assert!(url.contains("state=state_token_123"));
+    }
+
+    #[tokio::test]
+    async fn test_loopback_listener_csrf_and_success_flows() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpStream;
+
+        // 1. Test success flow
+        let listener_task = tokio::spawn(async {
+            ElyByOAuthFlow::start_loopback_listener(29851, "valid_state_456").await
+        });
+
+        // Give listener a moment to bind
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let mut client_stream = TcpStream::connect("127.0.0.1:29851").await.unwrap();
+        let req = "GET /callback?code=mock_auth_code_777&state=valid_state_456 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        client_stream.write_all(req.as_bytes()).await.unwrap();
+
+        let mut resp_buf = [0u8; 1024];
+        let n = client_stream.read(&mut resp_buf).await.unwrap();
+        let resp = String::from_utf8_lossy(&resp_buf[..n]);
+        assert!(resp.starts_with("HTTP/1.1 200 OK"));
+        assert!(resp.contains("Вход выполнен"));
+
+        let code = listener_task.await.unwrap().expect("auth code received");
+        assert_eq!(code, "mock_auth_code_777");
+
+        // 2. Test CSRF state mismatch rejection
+        let csrf_task = tokio::spawn(async {
+            ElyByOAuthFlow::start_loopback_listener(29852, "expected_state_abc").await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let mut bad_stream = TcpStream::connect("127.0.0.1:29852").await.unwrap();
+        let bad_req = "GET /callback?code=some_code&state=wrong_state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        bad_stream.write_all(bad_req.as_bytes()).await.unwrap();
+
+        let n = bad_stream.read(&mut resp_buf).await.unwrap();
+        let bad_resp = String::from_utf8_lossy(&resp_buf[..n]);
+        assert!(bad_resp.starts_with("HTTP/1.1 403 Forbidden"));
+
+        let err = csrf_task.await.unwrap().unwrap_err();
+        assert!(err.to_string().contains("CSRF"));
+
+        // 3. Test user cancel / access_denied
+        let cancel_task = tokio::spawn(async {
+            ElyByOAuthFlow::start_loopback_listener(29853, "state_xyz").await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let mut cancel_stream = TcpStream::connect("127.0.0.1:29853").await.unwrap();
+        let cancel_req = "GET /callback?error=access_denied&state=state_xyz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        cancel_stream.write_all(cancel_req.as_bytes()).await.unwrap();
+
+        let n = cancel_stream.read(&mut resp_buf).await.unwrap();
+        let cancel_resp = String::from_utf8_lossy(&resp_buf[..n]);
+        assert!(cancel_resp.starts_with("HTTP/1.1 400 Bad Request"));
+
+        let err = cancel_task.await.unwrap().unwrap_err();
+        assert!(err.to_string().contains("access_denied"));
     }
 }
