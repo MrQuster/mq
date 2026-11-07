@@ -46,6 +46,9 @@ use mq_sched::{
 use mq_ui::{run_gui, UiState};
 use testsupport::{MockConfig, MockServer};
 
+pub mod doctor;
+use doctor::{cmd_doctor_install, DoctorArgs};
+
 #[derive(Parser)]
 #[command(
     name = "mq",
@@ -118,7 +121,7 @@ enum Commands {
     Worlds(WorldsArgs),
 
     /// System environment, drivers, Java, network, and disk diagnostics.
-    Doctor,
+    Doctor(DoctorArgs),
 
     /// Generate pixel-perfect offscreen UI snapshot image for visual QA.
     UiSnapshot(UiSnapshotArgs),
@@ -518,7 +521,7 @@ async fn main() -> Result<()> {
         Some(Commands::Mods(args)) => cmd_mods(args, paths, cli.threads).await,
         Some(Commands::Modpack(args)) => cmd_modpack(args, paths, cli.threads).await,
         Some(Commands::Worlds(args)) => cmd_worlds(args, paths).await,
-        Some(Commands::Doctor) => cmd_doctor(paths).await,
+        Some(Commands::Doctor(args)) => cmd_doctor(args, paths).await,
         Some(Commands::UiSnapshot(args)) => cmd_ui_snapshot(args, paths, cli.threads).await,
         Some(Commands::Bench(args)) => cmd_bench(args).await,
         Some(Commands::About) => cmd_about().await,
@@ -1790,9 +1793,13 @@ async fn cmd_worlds(args: WorldsArgs, paths: MqPaths) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_doctor(paths: MqPaths) -> Result<()> {
+async fn cmd_doctor(args: DoctorArgs, paths: MqPaths) -> Result<()> {
+    if let Some(ref version) = args.install {
+        return cmd_doctor_install(version, &args, &paths).await;
+    }
+
     println!("================================================================================");
-    println!("                   MQ LAUNCHER v2.1.0 — СИСТЕМНЫЙ ДИАГНОСТ (DOCTOR)");
+    println!("                   MQ LAUNCHER v2.2.0 — СИСТЕМНЫЙ ДИАГНОСТ (DOCTOR)");
     println!("================================================================================");
 
     // 1. OS & Architecture
@@ -1917,6 +1924,17 @@ async fn cmd_doctor(paths: MqPaths) -> Result<()> {
     println!("================================================================================");
     println!("[MQ DOCTOR] Все ключевые подсистемы MQ v2.2.0 проанализированы.");
     println!("================================================================================");
+
+    if args.export {
+        let export_text = format!(
+            "### MQ Launcher v2.2.0 — Системная диагностика\n- ОС: {os_name}\n- Архитектура: {arch}\n- Процессор: {cpu_model} ({num_cpus} ядер)\n- Среды Java: {} шт.\n- Каталог данных: {}\n",
+            runtimes.len(),
+            data_dir.display()
+        );
+        println!("\n--- [ЭКСПОРТ ДИАГНОСТИКИ (САНИТИЗИРОВАН)] ---");
+        println!("{}", doctor::sanitize_diagnostics(&export_text, &[]));
+    }
+
     Ok(())
 }
 
