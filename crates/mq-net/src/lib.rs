@@ -12,9 +12,10 @@ pub mod config;
 pub mod engine;
 
 pub use config::{
-    compute_backoff_delay, DownloadOutcome, DownloadSpec, NetConfig, DEFAULT_BASE_BACKOFF_MS,
-    DEFAULT_CONNECT_TIMEOUT, DEFAULT_MAX_CONNECTIONS, DEFAULT_MAX_JSON_BYTES, DEFAULT_MAX_RETRIES,
-    DEFAULT_READ_TIMEOUT, USER_AGENT,
+    compute_backoff_delay, compute_backoff_delay_with_retry_after, parse_retry_after,
+    DownloadOutcome, DownloadSpec, NetConfig, DEFAULT_BASE_BACKOFF_MS, DEFAULT_CONNECT_TIMEOUT,
+    DEFAULT_MAX_CONNECTIONS, DEFAULT_MAX_JSON_BYTES, DEFAULT_MAX_RETRIES, DEFAULT_READ_TIMEOUT,
+    USER_AGENT,
 };
 pub use engine::NetEngine;
 
@@ -802,6 +803,111 @@ mod tests {
             .expect("fast path should succeed");
         assert_eq!(second.sha1, expected_sha1);
         assert_eq!(req_counter.load(Ordering::SeqCst), 2);
+
+        server.abort();
+    }
+
+    #[test]
+    fn retry_after_parsing_and_backoff_delay_behavior() {
+        // Integer seconds
+        assert_eq!(parse_retry_after("12"), Some(Duration::from_secs(12)));
+        assert_eq!(parse_retry_after(" 0 "), Some(Duration::from_secs(0)));
+
+        // Invalid format
+        assert_eq!(parse_retry_after("not-a-number"), None);
+
+        // HTTP RFC 2822 date in the future
+        let future_str = "Fri, 31 Dec 2038 23:59:59 GMT";
+        let parsed = parse_retry_after(future_str);
+        assert!(parsed.is_some());
+        assert!(parsed.unwrap().as_secs() > 100_000);
+
+        // HTTP RFC 2822 / RFC 7231 date in the past returns Duration::ZERO
+        let past_str = "Sat, 01 Jan 2000 00:00:00 GMT";
+        assert_eq!(parse_retry_after(past_str), Some(Duration::ZERO));
+
+        // When Retry-After is supplied, backoff is at least Retry-After
+        let ra = Some(Duration::from_millis(500));
+        let delay = compute_backoff_delay_with_retry_after(0, 10, "test-seed", ra);
+        assert!(delay >= Duration::from_millis(500));
+        assert!(delay <= Duration::from_millis(1500));
+
+        // Normal exponential backoff scales with attempt
+        let d0 = compute_backoff_delay(0, 50, "test-seed");
+        let d1 = compute_backoff_delay(1, 50, "test-seed");
+        let d2 = compute_backoff_delay(2, 50, "test-seed");
+        assert!(d0.as_millis() >= 50);
+        assert!(d1.as_millis() >= 100);
+        assert!(d2.as_millis() >= 200);
+    }
+
+    #[tokio::test]
+    async fn mirror_skipped_if_expected_sha1_is_missing() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+
+        let server = tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let (req_line, _) = read_http_request(&mut socket).await;
+                    if req_line.contains("/primary-failing") {
+                        let resp = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 5\r\nConnection: close\r\n\r\nerror";
+                        let _ = socket.write_all(resp.as_bytes()).await;
+                    } else if req_line.contains("/mirror-untrusted") {
+                        let body = b"untrusted-mirror-content";
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = socket.write_all(resp.as_bytes()).await;
+                        let _ = socket.write_all(body).await;
+                    }
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest = tmp.path().join("untrusted.jar");
+        let engine = NetEngine::new(NetConfig::default().with_max_retries(0)).expect("engine");
+        let guard = engine.cancel_epoch().snapshot();
+
+        // 1. Without expected_sha1, mirror MUST be skipped to protect integrity -> fails with 500 from primary
+        let spec_no_sha1 = DownloadSpec::new(
+            "untrusted-target",
+            format!("http://{addr}/primary-failing"),
+            &dest,
+        )
+        .with_fallback_url(format!("http://{addr}/mirror-untrusted"));
+
+        let err = engine
+            .download_file(&spec_no_sha1, &guard)
+            .await
+            .expect_err("should reject using mirror when expected_sha1 is missing");
+        match err {
+            MqError::HttpStatus { status, .. } => assert_eq!(status, 500),
+            other => panic!("expected HttpStatus 500 from primary, got {other:?}"),
+        }
+        assert!(!dest.exists());
+
+        // 2. With official expected_sha1, mirror is allowed and succeeds
+        let body = b"untrusted-mirror-content";
+        let valid_sha1 = compute_sha1(body);
+        let spec_with_sha1 = DownloadSpec::new(
+            "verified-mirror-target",
+            format!("http://{addr}/primary-failing"),
+            &dest,
+        )
+        .with_fallback_url(format!("http://{addr}/mirror-untrusted"))
+        .with_sha1(valid_sha1)
+        .with_expected_size(body.len() as u64);
+
+        let outcome = engine
+            .download_file(&spec_with_sha1, &guard)
+            .await
+            .expect("mirror should be used and verified against expected_sha1");
+        assert_eq!(outcome.sha1, valid_sha1);
+        assert_eq!(std::fs::read(&dest).expect("read file"), body);
 
         server.abort();
     }

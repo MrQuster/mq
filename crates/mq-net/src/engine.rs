@@ -26,7 +26,8 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::config::{
-    compute_backoff_delay, DownloadOutcome, DownloadSpec, NetConfig, DEFAULT_MAX_JSON_BYTES,
+    compute_backoff_delay_with_retry_after, parse_retry_after, DownloadOutcome, DownloadSpec,
+    NetConfig, DEFAULT_MAX_JSON_BYTES,
 };
 
 /// Maximum bytes of an HTTP error body captured into [`MqError::HttpStatus`].
@@ -243,7 +244,11 @@ impl NetEngine {
         for attempt in 0..=self.config.max_retries {
             self.check_epoch(&epoch_guard)?;
 
-            match self.fetch_bytes_once(url, max_bytes, &epoch_guard).await {
+            let mut retry_after: Option<std::time::Duration> = None;
+            match self
+                .fetch_bytes_once(url, max_bytes, &epoch_guard, &mut retry_after)
+                .await
+            {
                 Ok(bytes) => return Ok(bytes),
                 Err(err) => {
                     if err.is_cancelled()
@@ -259,8 +264,13 @@ impl NetEngine {
                         error = %err,
                         "retrying small fetch after transient error"
                     );
+                    let delay = compute_backoff_delay_with_retry_after(
+                        attempt,
+                        self.config.base_backoff_ms,
+                        url,
+                        retry_after,
+                    );
                     last_err = Some(err);
-                    let delay = compute_backoff_delay(attempt, self.config.base_backoff_ms, url);
                     self.sleep_with_cancel(delay, &epoch_guard).await?;
                 }
             }
@@ -275,6 +285,7 @@ impl NetEngine {
         url: &str,
         max_bytes: usize,
         epoch_guard: &EpochGuard,
+        retry_after_out: &mut Option<std::time::Duration>,
     ) -> MqResult<Bytes> {
         let mut response = tokio::select! {
             biased;
@@ -288,6 +299,11 @@ impl NetEngine {
 
         let status = response.status();
         if !status.is_success() {
+            *retry_after_out = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_retry_after);
             let body = read_error_body_preview(&mut response, epoch_guard).await;
             return Err(MqError::HttpStatus {
                 status: status.as_u16(),
@@ -640,7 +656,19 @@ impl NetEngine {
                 });
             }
 
+            let mut last_retry_after: Option<std::time::Duration> = None;
+
             for (url_idx, url) in spec.urls.iter().enumerate() {
+                // Additional fallback mirrors require official expected SHA-1 digest.
+                if url_idx > 0 && spec.expected_sha1.is_none() {
+                    tracing::warn!(
+                        id = %spec.id,
+                        url = %url,
+                        "skipping fallback mirror: mirrors require official expected SHA-1 digest"
+                    );
+                    continue;
+                }
+
                 if url_idx > 0 && file_state.load() != FileState::Downloading {
                     file_state.store(FileState::Pending);
                     if file_state
@@ -667,6 +695,7 @@ impl NetEngine {
                         &file_state,
                         &epoch_part_path,
                         &plain_part_path,
+                        &mut last_retry_after,
                     )
                     .await
                 {
@@ -700,7 +729,12 @@ impl NetEngine {
                 return Err(err);
             }
 
-            let delay = compute_backoff_delay(attempt, self.config.base_backoff_ms, &spec.id);
+            let delay = compute_backoff_delay_with_retry_after(
+                attempt,
+                self.config.base_backoff_ms,
+                &spec.id,
+                last_retry_after.take(),
+            );
             if let Err(cancel_err) = self.sleep_with_cancel(delay, epoch_guard).await {
                 cleanup_part_files(&epoch_part_path, &plain_part_path).await;
                 return Err(cancel_err);
@@ -722,6 +756,7 @@ impl NetEngine {
         file_state: &AtomicFileState,
         epoch_part_path: &Path,
         plain_part_path: &Path,
+        retry_after_out: &mut Option<std::time::Duration>,
     ) -> MqResult<DownloadOutcome> {
         self.check_epoch(epoch_guard)?;
 
@@ -768,6 +803,11 @@ impl NetEngine {
         }
 
         if !status.is_success() {
+            *retry_after_out = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_retry_after);
             let body = read_error_body_preview(&mut response, epoch_guard).await;
             let _ = file_state.try_transition(
                 FileState::Downloading,

@@ -2383,6 +2383,7 @@ dependencies = [
 name = "mq-install"
 version = "2.2.0"
 dependencies = [
+ "chrono",
  "dashmap",
  "hex",
  "mq-core",
@@ -2391,6 +2392,8 @@ dependencies = [
  "mq-sched",
  "rayon",
  "reqwest",
+ "rustix 1.1.6",
+ "serde",
  "serde_json",
  "sha1",
  "sha2",
@@ -2486,6 +2489,7 @@ name = "mq-net"
 version = "2.2.0"
 dependencies = [
  "bytes",
+ "chrono",
  "dashmap",
  "futures-util",
  "hex",

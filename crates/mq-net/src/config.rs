@@ -190,6 +190,20 @@ impl DownloadSpec {
         self.expected_size = Some(size);
         self
     }
+
+    /// Returns `true` if this download specification specifies additional fallback mirror URLs.
+    #[must_use]
+    pub fn has_mirrors(&self) -> bool {
+        self.urls.len() > 1
+    }
+
+    /// Returns whether fallback mirrors can be safely used for this download.
+    /// Under MQ integrity rules, fallback mirrors are ONLY permitted if an official expected SHA-1 digest
+    /// is present to verify untrusted or third-party mirrors.
+    #[must_use]
+    pub fn allows_mirrors(&self) -> bool {
+        self.expected_sha1.is_some()
+    }
 }
 
 /// Verified outcome of a single completed download operation.
@@ -211,12 +225,68 @@ pub struct DownloadOutcome {
     pub deduplicated: bool,
 }
 
-/// Computes exponential backoff with fast deterministic FNV-1a jitter.
+/// Parses the HTTP `Retry-After` header value (either integer seconds or RFC 2822 HTTP-date).
 ///
-/// For `attempt` (0-indexed), base delay scales as `base_backoff_ms * 2^attempt` (capped at 10s),
-/// plus deterministic jitter in `0..=max(1, base / 2)` derived from `seed` and `attempt`.
+/// Returns `Some(Duration)` if a valid non-negative delay could be parsed, or `None`.
 #[must_use]
-pub fn compute_backoff_delay(attempt: u32, base_backoff_ms: u64, seed: &str) -> Duration {
+pub fn parse_retry_after(header_val: &str) -> Option<Duration> {
+    let trimmed = header_val.trim();
+    if let Ok(seconds) = trimmed.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+
+    if let Ok(date) = chrono::DateTime::parse_from_rfc2822(trimmed) {
+        let now = chrono::Utc::now();
+        let target = date.with_timezone(&chrono::Utc);
+        if let Ok(diff) = (target - now).to_std() {
+            return Some(diff);
+        } else {
+            return Some(Duration::ZERO);
+        }
+    }
+
+    // Also support standard HTTP-date (RFC 7231 / RFC 2616 format: "Sun, 06 Nov 1994 08:49:37 GMT")
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(trimmed, "%a, %d %b %Y %H:%M:%S GMT") {
+        let target = naive.and_utc();
+        let now = chrono::Utc::now();
+        if let Ok(diff) = (target - now).to_std() {
+            return Some(diff);
+        } else {
+            return Some(Duration::ZERO);
+        }
+    }
+
+    None
+}
+
+/// Computes exponential backoff with fast deterministic FNV-1a jitter, incorporating
+/// any optional server-provided `Retry-After` delay.
+///
+/// If `retry_after` is provided, the returned duration will be at least `retry_after`,
+/// plus a small jitter (up to 20% or 500ms), capped at 60 seconds.
+#[must_use]
+pub fn compute_backoff_delay_with_retry_after(
+    attempt: u32,
+    base_backoff_ms: u64,
+    seed: &str,
+    retry_after: Option<Duration>,
+) -> Duration {
+    if let Some(ra) = retry_after {
+        if !ra.is_zero() {
+            let jitter_span = (ra.as_millis() as u64 / 5).clamp(10, 500);
+            let mut hash: u64 = 0xcbf29ce484222325;
+            for byte in seed.as_bytes() {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x100000001b3);
+            }
+            hash ^= u64::from(attempt).wrapping_mul(0x9e3779b97f4a7c15);
+            let jitter_ms = hash % (jitter_span + 1);
+            return ra
+                .saturating_add(Duration::from_millis(jitter_ms))
+                .min(Duration::from_secs(60));
+        }
+    }
+
     if base_backoff_ms == 0 {
         return Duration::ZERO;
     }
@@ -235,4 +305,13 @@ pub fn compute_backoff_delay(attempt: u32, base_backoff_ms: u64, seed: &str) -> 
     let jitter_ms = hash % (jitter_span + 1);
 
     Duration::from_millis(exp_ms.saturating_add(jitter_ms).min(MAX_BACKOFF_MS))
+}
+
+/// Computes exponential backoff with fast deterministic FNV-1a jitter.
+///
+/// For `attempt` (0-indexed), base delay scales as `base_backoff_ms * 2^attempt` (capped at 10s),
+/// plus deterministic jitter in `0..=max(1, base / 2)` derived from `seed` and `attempt`.
+#[must_use]
+pub fn compute_backoff_delay(attempt: u32, base_backoff_ms: u64, seed: &str) -> Duration {
+    compute_backoff_delay_with_retry_after(attempt, base_backoff_ms, seed, None)
 }
