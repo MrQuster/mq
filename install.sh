@@ -540,6 +540,16 @@ main() {
     install -m 755 "${staged_bin}" "${target_bin_path}"
     log_success "Исполняемый файл установлен в ${target_bin_path}"
 
+    # If ~/.cargo/bin exists and is in PATH, create symlink to avoid collisions with /usr/local/bin
+    cargo_bin="${HOME}/.cargo/bin"
+    if [ -d "${cargo_bin}" ] && [ "${bin_dir}" != "${cargo_bin}" ]; then
+        case ":${PATH}:" in
+            *":${cargo_bin}:"*)
+                ln -sf "${target_bin_path}" "${cargo_bin}/mq" 2>/dev/null || true
+                ;;
+        esac
+    fi
+
     # Install icon
     if [ -f "${staged_svg}" ]; then
         install -m 644 "${staged_svg}" "${target_icon_path}"

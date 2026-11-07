@@ -120,6 +120,13 @@ main() {
     echo "Установка бинарника в ${target_bin}..."
     install -m 755 "${REPO_ROOT}/target/release/mq" "${target_bin}"
 
+    local cargo_bin="${HOME}/.cargo/bin"
+    if [[ -d "${cargo_bin}" && "${bin_dir}" != "${cargo_bin}" ]]; then
+        if [[ ":${PATH}:" == *":${cargo_bin}:"* ]]; then
+            ln -sf "${target_bin}" "${cargo_bin}/mq" 2>/dev/null || true
+        fi
+    fi
+
     echo "Установка иконки в ${target_icon}..."
     install -m 644 "${REPO_ROOT}/packaging/mq.svg" "${target_icon}"
 
