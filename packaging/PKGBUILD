@@ -1,18 +1,30 @@
 # Maintainer: MrQuster <https://github.com/MrQuster>
 pkgname=mq-launcher
-pkgver=2.1.0
+pkgver=2.2.0
 pkgrel=1
 pkgdesc="High-performance modular Minecraft: Java Edition launcher for Linux by MrQuster"
 arch=('x86_64')
 url="https://github.com/MrQuster/mq"
 license=('MIT' 'Apache-2.0')
-depends=('gcc-libs' 'glibc' 'wayland' 'libx11' 'libxcursor' 'libxrandr' 'libxi')
+depends=(
+    'gcc-libs'
+    'glibc'
+    'wayland'
+    'libx11'
+    'libxcursor'
+    'libxrandr'
+    'libxi'
+    'libxkbcommon'
+)
 optdepends=(
     'vulkan-driver: High-performance WGPU Vulkan rendering'
     'mesa: OpenGL / Glow rendering fallback'
     'jdk21-openjdk: Recommended Java 21 runtime for Minecraft 1.20.5+'
     'jdk17-openjdk: Recommended Java 17 runtime for Minecraft 1.18 - 1.20.4'
     'jdk8-openjdk: Recommended Java 8 runtime for Minecraft 1.16.5 and older'
+    'gamemode: GameMode optimizations for Minecraft'
+    'mangohud: In-game performance and telemetry overlay'
+    'minisign: Cryptographic release verification'
 )
 makedepends=('cargo' 'rust')
 source=()
