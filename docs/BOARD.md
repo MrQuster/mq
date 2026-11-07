@@ -1,24 +1,56 @@
-# MQ v2.2.0 Swarm Task Board
+# MQ — Доска координации роя субагентов (BOARD.md)
 
-Общая координационная доска для 10 субагентов.
-
-## 📋 Статусы задач
-
-| ID | Агент | Задача | Статус | Блокеры / Заметки |
-|:---|:---|:---|:---:|:---|
-| **TASK-01** | `ag-01` | Модуль `platform`: пути `%LOCALAPPDATA%`/`%APPDATA%`, санитизация имен, long paths, хардлинки/копии | `In Progress` | - |
-| **TASK-02** | `ag-02` | Запуск игры на Windows: classpath `;`, `rules`, natives-windows, `CREATE_NO_WINDOW`, Adoptium Java | `In Progress` | Зависит от TASK-01 (`platform`) |
-| **TASK-03** | `ag-03` | Windows UI: fallback рендерера, `AttachConsole`, шрифты Segoe UI, замена `xdg-open` | `In Progress` | - |
-| **TASK-04** | `ag-04` | Ely.by OAuth2 PKCE browser-only, удаление старых паролей, хранилище Windows Credential / DPAPI | `In Progress` | - |
-| **TASK-05** | `ag-05` | Универсальный `install.sh`: функция `main()`, sha256sum check, `--uninstall`, `shellcheck` | `In Progress` | - |
-| **TASK-06** | `ag-06` | Inno Setup `mq.iss`, PowerShell `install.ps1`, портативный ZIP, winget/scoop, `WINDOWS_SIGNING.md` | `In Progress` | - |
-| **TASK-07** | `ag-07` | CI матрица Ubuntu/Windows, закрепление SHA Actions, smoke тесты установки, аттестации | `In Progress` | - |
-| **TASK-08** | `ag-08` | Minisign подпись `SHA256SUMS.minisig`, секрет `MQ_SIGNING_KEY`, самообновление на Windows (`.old`) | `In Progress` | - |
-| **TASK-09** | `ag-09` | Харденинг: `SECURITY.md`, `THREAT_MODEL.md`, `PRIVACY.md`, `deny.toml`, защита от zip-бомб и команд | `In Progress` | - |
-| **TASK-10** | `ag-10` | Слияние веток, гейты fmt/clippy/test, zero-stubs, обновление README, CHANGELOG, релиз | `In Progress` | Координация |
+**Ветка интеграции:** `integration`
+**Статус роя:** Фаза параллельной реализации 7 субагентов
 
 ---
 
-## 💬 Сообщения и запросы между агентами
-- `ag-01`: Готовит `mq_core::platform` с `classpath_separator()` и `sanitize_filename()`.
-- `ag-08`: Готовит пару ключей minisign. Публичный ключ будет экспортирован в `mq-update`.
+## Задачи агентов
+
+### [ag-01-repro-doctor]
+- [ ] Добавить аргумент `--install <версия>` в `mq doctor`.
+- [ ] Реализовать пошаговую диагностику: Манифест -> version.json -> Java -> Клиент -> Библиотеки -> Нативные -> Ассеты -> Логирование.
+- [ ] Реализовать структурированный вывод с индикацией `[OK]`, `[WARN]`, `[FAIL]` и выводом точной причины.
+- [ ] Экспорт диагностики для кнопки «Скопировать диагностику» с санитизацией секретов (UUID, токены).
+
+### [ag-02-version-json-core]
+- [ ] Обеспечить безопасную поддержку версий `26.x`, `26.1-snapshot-1`, `-pre-`, `-rc-` без предположений о `1.x.y`.
+- [ ] Проверить и дополнить `rules` (проверка `features`, `os.name`, `os.arch`, `os.version`).
+- [ ] Реализовать строгую подстановку плейсхолдеров: ни один неподставленный `${...}` не должен попадать в командную строку.
+- [ ] Поддержка `logging.client.file` и аргумента `-Dlog4j.configurationFile=...`.
+- [ ] Тесты на fixtures различных эпох (от alpha/beta до 26.x).
+
+### [ag-03-downloader-integrity]
+- [ ] Реализовать схему транзакционности с каталогом `<instance>/.installing/`.
+- [ ] Реализовать запись и чтение `<instance>/install_state.json`.
+- [ ] Добавить проверку свободного места на диске перед началом загрузки.
+- [ ] Обеспечить повторы с экспоненциальной задержкой и джиттером для 429/5xx, учёт `Retry-After`.
+- [ ] Идемпотентность и атомарное переименование `.part` -> файл.
+
+### [ag-04-java-runtime]
+- [ ] Реализовать модуль `crates/mq-launch/src/mojang_java.rs` для загрузки официальных рантаймов Mojang.
+- [ ] Поддержка `java-runtime-epsilon` (Java 25), `delta` (21), `gamma` (17), `jre-legacy` (8).
+- [ ] Приоритет выбора Java: (1) Подходящая системная; (2) Рантайм Mojang; (3) Adoptium/Zulu.
+- [ ] Автоматическая загрузка необходимой версии Java в пайплайне установки `install_game`.
+- [ ] Проверка `<java> -version` после установки и выставление прав `0o755`.
+
+### [ag-05-libs-natives-assets-loaders]
+- [ ] Обработка Maven-библиотек без прямого `downloads` (синтез URL из репозитория профиля).
+- [ ] Поддержка нативных библиотек нового типа (`natives-linux` JARs) и старого типа (classifiers + unpack).
+- [ ] Корректное сохранение и распаковка `logging.client` XML конфигов.
+- [ ] Гарантия сохранения языкового фикса (`--assetsDir`, `--assetIndex`, `lang:ru_ru`).
+- [ ] Проверка профилей модлоадеров Fabric, Quilt, Forge, NeoForge с наследованием `inheritsFrom`.
+
+### [ag-06-install-ux]
+- [ ] Автоматический старт установки при создании инстанса в GUI (или понятный переход к установке).
+- [ ] Отображение этапов установки (`InstallStage`) в реальном времени с прогрессом, скоростью и оставшимся временем.
+- [ ] Экран ошибки установки с деталями по-русски, кнопками «Повторить», «Проверить файлы», «Скопировать подробности».
+- [ ] Полноценная реализация кнопок «Проверить» и «Переустановить» в карточке инстанса.
+- [ ] Следование правилам дизайн-системы (матовый интерфейс, токены `theme`, один акцент).
+
+### [ag-07-e2e-matrix-integrator]
+- [ ] Скрипт полной тестовой матрицы `scripts/e2e-install.sh`.
+- [ ] Mock-сервер Mojang в `testsupport/` с внедрением сбоев (404, 429, 500, обрыв, битый SHA-1).
+- [ ] Регулярная интеграция изменений из веток субагентов в `integration`.
+- [ ] Контроль качества (`cargo fmt`, `cargo clippy`, `cargo test`, `rg` заглушек).
+- [ ] Формирование `docs/FEATURE_MATRIX.md` со статусами `verified`/`limited`.

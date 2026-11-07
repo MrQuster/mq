@@ -40,3 +40,4 @@ Thumbs.db
 *.swo
 *~
 /.cache/
+docs/INSTALL_REPRO.md
