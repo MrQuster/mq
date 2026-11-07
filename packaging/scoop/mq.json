@@ -1,0 +1,41 @@
+{
+    "version": "2.2.0",
+    "description": "High-performance multi-threaded Minecraft launcher written in Rust",
+    "homepage": "https://github.com/MrQuster/mq",
+    "license": "MIT",
+    "notes": [
+        "MQ Launcher runs in portable mode with instances and configurations preserved in the persistent directory.",
+        "To launch MQ: run 'mq' from terminal or use the Start Menu shortcut."
+    ],
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/MrQuster/mq/releases/download/v2.2.0/mq-windows-x86_64-portable.zip",
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+    },
+    "extract_dir": "mq-windows-x86_64-portable",
+    "bin": "mq.exe",
+    "shortcuts": [
+        [
+            "mq.exe",
+            "MQ Launcher",
+            "",
+            "mq.ico"
+        ]
+    ],
+    "persist": [
+        "data",
+        "portable.flag"
+    ],
+    "checkver": {
+        "github": "https://github.com/MrQuster/mq"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/MrQuster/mq/releases/download/v$version/mq-windows-x86_64-portable.zip"
+            }
+        },
+        "extract_dir": "mq-windows-x86_64-portable"
+    }
+}

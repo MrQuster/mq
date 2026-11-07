@@ -1,0 +1,41 @@
+# Single-file test manifest for Windows Package Manager (winget)
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.6.0.schema.json
+
+PackageIdentifier: MrQuster.MQ
+PackageVersion: 2.2.0
+PackageName: MQ Launcher
+Publisher: MrQuster
+PublisherUrl: https://github.com/MrQuster/mq
+PublisherSupportUrl: https://github.com/MrQuster/mq/issues
+Author: MrQuster
+PackageUrl: https://github.com/MrQuster/mq
+License: MIT
+LicenseUrl: https://raw.githubusercontent.com/MrQuster/mq/main/LICENSE
+Copyright: Copyright (c) 2026 MrQuster
+ShortDescription: High-performance multi-threaded Minecraft launcher written in Rust
+Description: |-
+  MQ is a high-performance, multi-threaded Minecraft launcher built from the ground up in Rust.
+  Features include parallel downloads, content-addressable storage (CAS), Ely.by OAuth2 PKCE integration,
+  offline account support, Modrinth & CurseForge catalog browsing, and minimal system resource footprint.
+Moniker: mq
+Tags:
+  - minecraft
+  - launcher
+  - rust
+  - gaming
+  - modrinth
+  - curseforge
+  - elyby
+Installers:
+  - Architecture: x64
+    InstallerType: inno
+    Scope: user
+    InstallerUrl: https://github.com/MrQuster/mq/releases/download/v2.2.0/MQ-Setup-2.2.0.exe
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    InstallerSwitches:
+      Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+      SilentWithProgress: /SILENT /NORESTART
+    UpgradeBehavior: install
+    ProductCode: '{9D7C52A4-325A-4B6A-B68C-7C4E15F59D18}_is1'
+ManifestType: singleton
+ManifestVersion: 1.6.0

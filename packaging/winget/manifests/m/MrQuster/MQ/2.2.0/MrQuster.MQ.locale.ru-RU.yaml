@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.locale.1.6.0.schema.json
+
+PackageIdentifier: MrQuster.MQ
+PackageVersion: 2.2.0
+PackageLocale: ru-RU
+Publisher: MrQuster
+PublisherUrl: https://github.com/MrQuster/mq
+PublisherSupportUrl: https://github.com/MrQuster/mq/issues
+Author: MrQuster
+PackageName: MQ Launcher
+PackageUrl: https://github.com/MrQuster/mq
+License: MIT
+LicenseUrl: https://raw.githubusercontent.com/MrQuster/mq/main/LICENSE
+Copyright: Copyright (c) 2026 MrQuster
+ShortDescription: Высокопроизводительный многопоточный лаунчер Minecraft на Rust
+Description: |-
+  MQ — быстрый, параллельный и надежный неофициальный лаунчер Minecraft, написанный на Rust.
+  Поддерживает параллельное скачивание и валидацию сборок на всех ядрах CPU, дедупликацию файлов через CAS,
+  авторизацию Ely.by через OAuth2 PKCE в браузере, оффлайн аккаунты, встроенный каталог модов Modrinth и CurseForge.
+Moniker: mq
+Tags:
+  - minecraft
+  - майнкрафт
+  - лаунчер
+  - rust
+  - elyby
+  - modrinth
+  - curseforge
+ReleaseNotes: |-
+  - Параллельное скачивание и CAS хранилище
+  - Нативный Windows установщик для одного пользователя (без прав администратора)
+  - Установка в одну команду через PowerShell
+  - Авторизация Ely.by в браузере через OAuth2 PKCE
+  - Встроенный каталог Modrinth и CurseForge
+ReleaseNotesUrl: https://github.com/MrQuster/mq/releases/tag/v2.2.0
+ManifestType: locale
+ManifestVersion: 1.6.0

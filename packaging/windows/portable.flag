@@ -1,0 +1,7 @@
+# MQ Launcher Portable Mode Indicator
+#
+# When this file is present alongside mq.exe, MQ runs in isolated portable mode.
+# All data (instances, configs, cache, accounts) will be stored in a local directory
+# next to the executable instead of %LOCALAPPDATA%\MQ and %APPDATA%\MQ.
+#
+# To revert to standard system-installed mode, delete or rename this file.
