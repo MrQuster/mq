@@ -1129,8 +1129,7 @@ impl InstancesView {
                                 .clicked()
                             {
                                 let inst_dir = state.paths.instance_dir(inst_id.as_str());
-                                let _ =
-                                    std::process::Command::new("xdg-open").arg(inst_dir).spawn();
+                                let _ = crate::opener::open_that(inst_dir);
                             }
 
                             if is_installed {
@@ -1175,9 +1174,7 @@ impl InstancesView {
                                         let mods_dir =
                                             state.paths.instance_dir(inst_id.as_str()).join("mods");
                                         let _ = std::fs::create_dir_all(&mods_dir);
-                                        let _ = std::process::Command::new("xdg-open")
-                                            .arg(mods_dir)
-                                            .spawn();
+                                        let _ = crate::opener::open_that(mods_dir);
                                     }
                                     if is_installed && ui.button("Переустановить").clicked()
                                     {
@@ -1455,7 +1452,7 @@ impl InstancesView {
             if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть mods/").clicked()
             {
                 let mods_dir = state.paths.instance_dir(inst_id.as_str()).join("mods");
-                let _ = std::process::Command::new("xdg-open").arg(mods_dir).spawn();
+                let _ = crate::opener::open_that(mods_dir);
             }
         });
 
@@ -1803,9 +1800,7 @@ impl InstancesView {
             if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть resourcepacks/")
                 .clicked()
             {
-                let _ = std::process::Command::new("xdg-open")
-                    .arg(&packs_dir)
-                    .spawn();
+                let _ = crate::opener::open_that(&packs_dir);
             }
         });
 
@@ -1875,9 +1870,7 @@ impl InstancesView {
             if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть shaderpacks/")
                 .clicked()
             {
-                let _ = std::process::Command::new("xdg-open")
-                    .arg(&shaders_dir)
-                    .spawn();
+                let _ = crate::opener::open_that(&shaders_dir);
             }
         });
 
@@ -1944,9 +1937,7 @@ impl InstancesView {
             {
                 let saves_dir = inst_dir.join("saves");
                 let _ = std::fs::create_dir_all(&saves_dir);
-                let _ = std::process::Command::new("xdg-open")
-                    .arg(saves_dir)
-                    .spawn();
+                let _ = crate::opener::open_that(saves_dir);
             }
         });
 
@@ -2251,7 +2242,7 @@ impl InstancesView {
             {
                 let scr_dir = inst_dir.join("screenshots");
                 let _ = std::fs::create_dir_all(&scr_dir);
-                let _ = std::process::Command::new("xdg-open").arg(scr_dir).spawn();
+                let _ = crate::opener::open_that(scr_dir);
             }
         });
 
@@ -2326,9 +2317,7 @@ impl InstancesView {
                                         )
                                         .clicked()
                                         {
-                                            let _ = std::process::Command::new("xdg-open")
-                                                .arg(&s.path)
-                                                .spawn();
+                                            let _ = crate::opener::open_that(&s.path);
                                         }
                                     },
                                 );

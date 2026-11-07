@@ -1,4 +1,5 @@
 #![deny(clippy::await_holding_lock)]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! `mq` — Command Line Interface and Desktop GUI entrypoint.
 //!
 //! Provides subcommands for:
@@ -475,6 +476,19 @@ struct BenchArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        // If invoked from a console window with arguments, attach to parent console so CLI output is visible
+        if std::env::args().len() > 1 {
+            unsafe {
+                extern "system" {
+                    fn AttachConsole(dw_process_id: u32) -> i32;
+                }
+                AttachConsole(0xFFFFFFFF);
+            }
+        }
+    }
+
     // Initialize structured logging with token redaction
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -484,10 +498,10 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let paths = MqPaths::xdg_default().context("Failed to initialize XDG directories")?;
+    let paths = MqPaths::platform_default().context("Failed to initialize platform directories")?;
     paths
         .ensure_dirs()
-        .context("Failed to create XDG directories")?;
+        .context("Failed to create platform directories")?;
 
     match cli.command {
         None => run_desktop_gui(cli.backend, cli.threads, paths),
@@ -1632,9 +1646,7 @@ async fn cmd_accounts(args: AccountsArgs, paths: MqPaths) -> Result<()> {
                     mq_auth::ElyByOAuthFlow::generate_auth_url(&client_id, port, &state_str);
                 println!("[MQ] Откройте следующую ссылку в браузере для авторизации:");
                 println!("     {auth_url}");
-                let _ = std::process::Command::new("xdg-open")
-                    .arg(&auth_url)
-                    .spawn();
+                let _ = mq_core::platform::open_url(&auth_url);
                 println!("[MQ] Ожидание завершения авторизации в браузере (порт {port})...");
 
                 let code =
