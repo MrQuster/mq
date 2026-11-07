@@ -2,7 +2,7 @@
 //! Accounts manager screen: Offline (Pirate UUID v3), Ely.by (authlib-injector + skins),
 //! and Microsoft Device Code Flow with 1-click switching. Zero emojis!
 
-use egui::{Color32, RichText, ScrollArea, Stroke, Ui};
+use egui::{Color32, RichText, ScrollArea, Stroke, Ui, Vec2};
 use mq_auth::{create_offline_account, ElyByClient};
 
 use crate::state::UiState;
@@ -153,36 +153,54 @@ impl AccountsView {
                                     acc.avatar_head.as_ref(),
                                 );
 
-                                ui.vertical(|ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            RichText::new(&acc.username)
-                                                .color(TEXT_PRIMARY)
-                                                .strong(),
-                                        );
-                                        let badge_col = match acc.kind {
-                                            mq_auth::AccountKind::Offline => ACCENT_COBALT,
-                                            mq_auth::AccountKind::ElyBy => ACCENT_EMERALD,
-                                            mq_auth::AccountKind::Microsoft => {
-                                                Color32::from_rgb(0xF5, 0x9E, 0x0B)
-                                            }
-                                        };
-                                        version_badge(ui, acc.kind.badge_label(), badge_col);
-                                        if is_active {
-                                            version_badge(ui, "АКТИВЕН", ACCENT_EMERALD);
-                                        }
-                                    });
-                                    ui.label(
-                                        RichText::new(format!("UUID: {}", acc.uuid_hyphenated()))
-                                            .color(TEXT_MUTED)
-                                            .small(),
-                                    );
-                                });
+                                let right_w = if !is_active { 150.0 } else { 0.0 };
+                                let middle_w = (ui.available_width() - right_w - 12.0).max(60.0);
 
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(middle_w, 40.0),
+                                    egui::Layout::top_down(egui::Align::Min),
                                     |ui| {
-                                        if !is_active {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                                            let name_w = (ui.available_width() - 110.0).max(50.0);
+                                            ui.add_sized(
+                                                [name_w.min(160.0), 18.0],
+                                                egui::Label::new(
+                                                    RichText::new(&acc.username)
+                                                        .color(TEXT_PRIMARY)
+                                                        .strong(),
+                                                )
+                                                .truncate(),
+                                            );
+                                            let badge_col = match acc.kind {
+                                                mq_auth::AccountKind::Offline => ACCENT_COBALT,
+                                                mq_auth::AccountKind::ElyBy => ACCENT_EMERALD,
+                                                mq_auth::AccountKind::Microsoft => {
+                                                    Color32::from_rgb(0xF5, 0x9E, 0x0B)
+                                                }
+                                            };
+                                            version_badge(ui, acc.kind.badge_label(), badge_col);
+                                            if is_active {
+                                                version_badge(ui, "АКТИВЕН", ACCENT_EMERALD);
+                                            }
+                                        });
+                                        let uuid_w = (ui.available_width() - 8.0).max(40.0);
+                                        ui.add_sized(
+                                            [uuid_w, 16.0],
+                                            egui::Label::new(
+                                                RichText::new(format!("UUID: {}", acc.uuid_hyphenated()))
+                                                    .color(TEXT_MUTED)
+                                                    .small(),
+                                            )
+                                            .truncate(),
+                                        );
+                                    },
+                                );
+
+                                if !is_active {
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
                                             if secondary_glass_button(
                                                 ui,
                                                 Some(VectorIcon::Trash),
@@ -207,9 +225,9 @@ impl AccountsView {
                                                     .select_account(&acc.id.to_string());
                                                 let _ = state.accounts.save(&state.paths);
                                             }
-                                        }
-                                    },
-                                );
+                                        },
+                                    );
+                                }
                             });
                         });
                         ui.add_space(4.0);

@@ -245,6 +245,7 @@ impl InstancesView {
             state.selected_instance_id = Some(state.instances[0].id.clone());
         }
 
+        // Row 1: Header + primary action buttons
         ui.horizontal(|ui| {
             ui.heading(
                 RichText::new("Инстансы и Сборки")
@@ -253,14 +254,28 @@ impl InstancesView {
                     .strong(),
             );
 
-            ui.add_space(16.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать инстанс").clicked() {
+                    state.show_create_instance_dialog = true;
+                }
+                if secondary_glass_button(ui, Some(VectorIcon::Download), "Импорт").clicked() {
+                    self.show_import_dialog = true;
+                }
+            });
+        });
+
+        ui.add_space(6.0);
+
+        // Row 2: Search + sorting filters + view mode toggle
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             ui.add(
                 egui::TextEdit::singleline(&mut self.search_query)
                     .hint_text("Поиск инстанса...")
                     .desired_width(160.0),
             );
 
-            ui.add_space(8.0);
+            ui.add_space(4.0);
             ui.selectable_value(
                 &mut self.sort_mode,
                 InstanceSortMode::Playtime,
@@ -272,17 +287,6 @@ impl InstancesView {
             ui.add_space(8.0);
             ui.selectable_value(&mut self.view_mode, InstanceViewMode::List, "Список");
             ui.selectable_value(&mut self.view_mode, InstanceViewMode::Grid, "Сетка");
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать инстанс").clicked()
-                {
-                    state.show_create_instance_dialog = true;
-                }
-                if secondary_glass_button(ui, Some(VectorIcon::Download), "Импорт").clicked()
-                {
-                    self.show_import_dialog = true;
-                }
-            });
         });
 
         ui.add_space(8.0);
@@ -305,7 +309,8 @@ impl InstancesView {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ui.ctx(), |ui| {
-                    ui.set_width(460.0);
+                    let modal_w = 460.0_f32.min(ui.ctx().screen_rect().width() - 32.0);
+                    ui.set_width(modal_w);
 
                     // 1. Minecraft Version Selection
                     ui.label(
@@ -338,11 +343,6 @@ impl InstancesView {
                     // Category Filter Toggles & Manifest sync
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Категории:").color(TEXT_MUTED).small());
-                        ui.checkbox(&mut self.show_releases, "Релизы");
-                        ui.checkbox(&mut self.show_snapshots, "Снапшоты");
-                        ui.checkbox(&mut self.show_betas, "Beta");
-                        ui.checkbox(&mut self.show_alphas, "Alpha");
-
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if state.is_fetching_manifest {
                                 ui.label(RichText::new("Загрузка...").color(ACCENT_COBALT).small());
@@ -358,6 +358,13 @@ impl InstancesView {
                                     state.cmd_sender.send(UiWorkerCommand::FetchVersionManifest);
                             }
                         });
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
+                        ui.checkbox(&mut self.show_releases, "Релизы");
+                        ui.checkbox(&mut self.show_snapshots, "Снапшоты");
+                        ui.checkbox(&mut self.show_betas, "Beta");
+                        ui.checkbox(&mut self.show_alphas, "Alpha");
                     });
 
                     ui.add_space(4.0);
@@ -525,32 +532,35 @@ impl InstancesView {
                     ui.add_space(10.0);
 
                     // 3. Allocated Memory (RAM)
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "Выделенная память: {} МБ ({:.1} ГБ)",
-                                state.create_inst_ram_mb,
-                                state.create_inst_ram_mb as f32 / 1024.0
-                            ))
-                            .color(TEXT_PRIMARY)
-                            .strong(),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            for &(mb, lbl) in &[
-                                (8192, "8 ГБ"),
-                                (6144, "6 ГБ"),
-                                (4096, "4 ГБ"),
-                                (2048, "2 ГБ"),
-                            ] {
-                                if ui
-                                    .selectable_label(state.create_inst_ram_mb == mb, lbl)
-                                    .clicked()
-                                {
-                                    state.create_inst_ram_mb = mb;
-                                }
+                    ui.label(
+                        RichText::new(format!(
+                            "Выделенная память: {} МБ ({:.1} ГБ)",
+                            state.create_inst_ram_mb,
+                            state.create_inst_ram_mb as f32 / 1024.0
+                        ))
+                        .color(TEXT_PRIMARY)
+                        .strong(),
+                    );
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                        for &(mb, lbl) in &[
+                            (2048, "2 ГБ"),
+                            (4096, "4 ГБ"),
+                            (6144, "6 ГБ"),
+                            (8192, "8 ГБ"),
+                            (12288, "12 ГБ"),
+                            (16384, "16 ГБ"),
+                        ] {
+                            if ui
+                                .selectable_label(state.create_inst_ram_mb == mb, lbl)
+                                .clicked()
+                            {
+                                state.create_inst_ram_mb = mb;
                             }
-                        });
+                        }
                     });
+                    ui.add_space(4.0);
                     ui.add(
                         egui::Slider::new(&mut state.create_inst_ram_mb, 1024..=16384)
                             .step_by(512.0)
@@ -600,7 +610,8 @@ impl InstancesView {
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                     .show(ui.ctx(), |ui| {
-                        ui.set_width(340.0);
+                        let modal_w = 340.0_f32.min(ui.ctx().screen_rect().width() - 32.0);
+                        ui.set_width(modal_w);
                         ui.label("Имя нового инстанса:");
                         ui.text_edit_singleline(&mut self.duplicate_name);
                         ui.add_space(10.0);
@@ -646,7 +657,8 @@ impl InstancesView {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ui.ctx(), |ui| {
-                    ui.set_width(400.0);
+                    let modal_w = 400.0_f32.min(ui.ctx().screen_rect().width() - 32.0);
+                    ui.set_width(modal_w);
                     ui.label("Путь к архиву (.mrpack или .zip):");
                     ui.text_edit_singleline(&mut self.import_file_path);
                     ui.add_space(4.0);
@@ -757,19 +769,39 @@ impl InstancesView {
                                     paint_vector_icon(ui.painter(), rect, icon, icon_col);
 
                                     ui.vertical(|ui| {
-                                        ui.label(
-                                            RichText::new(&inst.name).color(TEXT_PRIMARY).strong(),
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&inst.name)
+                                                    .color(TEXT_PRIMARY)
+                                                    .strong(),
+                                            )
+                                            .truncate(),
                                         );
                                         ui.horizontal(|ui| {
                                             version_badge(ui, &inst.mc_version, ACCENT_COBALT);
                                             loader_badge(ui, inst.loader);
-                                            if is_downloading {
-                                                version_badge(ui, "Загрузка", ACCENT_COBALT);
+
+                                            let (dot_col, tip) = if is_downloading {
+                                                (ACCENT_COBALT, "Загрузка")
                                             } else if is_running {
-                                                version_badge(ui, "Запущен", ACCENT_EMERALD);
-                                            } else if !is_installed {
-                                                version_badge(ui, "Не скачан", STATUS_WARN);
+                                                (ACCENT_EMERALD, "Запущен")
+                                            } else if is_installed {
+                                                (ACCENT_EMERALD.gamma_multiply(0.7), "Установлен")
+                                            } else {
+                                                (STATUS_WARN, "Не скачан")
+                                            };
+                                            let (d_rect, d_resp) = ui.allocate_exact_size(
+                                                Vec2::splat(10.0),
+                                                egui::Sense::hover(),
+                                            );
+                                            if ui.is_rect_visible(d_rect) {
+                                                ui.painter().circle_filled(
+                                                    d_rect.center(),
+                                                    3.5,
+                                                    dot_col,
+                                                );
                                             }
+                                            d_resp.on_hover_text(tip);
                                         });
                                     });
                                 });
@@ -826,7 +858,8 @@ impl InstancesView {
                                     VectorIcon::Warning,
                                     STATUS_DANGER,
                                 );
-                                ui.label(RichText::new(&err).color(TEXT_PRIMARY).size(13.0));
+
+                                let mut close_clicked = false;
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
@@ -837,10 +870,20 @@ impl InstancesView {
                                         )
                                         .clicked()
                                         {
-                                            state.install_error = None;
+                                            close_clicked = true;
                                         }
                                     },
                                 );
+
+                                let text_w = (ui.available_width() - 8.0).max(40.0);
+                                ui.add_sized(
+                                    [text_w, 20.0],
+                                    egui::Label::new(RichText::new(&err).color(TEXT_PRIMARY).size(13.0)).truncate(),
+                                );
+
+                                if close_clicked {
+                                    state.install_error = None;
+                                }
                             });
                         });
                         ui.add_space(8.0);
@@ -895,121 +938,155 @@ impl InstancesView {
                         .inner_margin(egui::Margin::same(14));
 
                     header_frame.show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
-                                ui.heading(
+                        let render_hero_button = |ui: &mut egui::Ui, state: &mut UiState| {
+                            if is_running {
+                                if hero_action_button(
+                                    ui,
+                                    VectorIcon::Stop,
+                                    "ОСТАНОВИТЬ",
+                                    STATUS_DANGER,
+                                )
+                                .clicked()
+                                {
+                                    let _ = state
+                                        .cmd_sender
+                                        .send(UiWorkerCommand::CancelDownload);
+                                }
+                            } else if is_downloading {
+                                if hero_action_button(
+                                    ui,
+                                    VectorIcon::Download,
+                                    "СКАЧИВАНИЕ...",
+                                    ACCENT_COBALT,
+                                )
+                                .clicked()
+                                {
+                                    let _ = state
+                                        .cmd_sender
+                                        .send(UiWorkerCommand::CancelDownload);
+                                }
+                            } else if is_installed {
+                                let btn_text = if state.is_launching {
+                                    "ЗАПУСК..."
+                                } else {
+                                    "ИГРАТЬ"
+                                };
+                                if hero_action_button(
+                                    ui,
+                                    VectorIcon::Play,
+                                    btn_text,
+                                    ACCENT_EMERALD,
+                                )
+                                .clicked()
+                                    && !state.is_launching
+                                    && !is_running
+                                {
+                                    state.is_launching = true;
+                                    let _ = state.cmd_sender.send(
+                                        UiWorkerCommand::LaunchInstance {
+                                            instance_id: inst_id.clone(),
+                                            dry_run: false,
+                                        },
+                                    );
+                                }
+                            } else {
+                                let btn_text = if state.is_launching {
+                                    "СКАЧИВАНИЕ И ЗАПУСК..."
+                                } else {
+                                    "СКАЧАТЬ И ИГРАТЬ"
+                                };
+                                if hero_action_button(
+                                    ui,
+                                    VectorIcon::Download,
+                                    btn_text,
+                                    ACCENT_EMERALD,
+                                )
+                                .clicked()
+                                    && !state.is_launching
+                                    && !is_running
+                                {
+                                    state.is_launching = true;
+                                    let _ = state.cmd_sender.send(
+                                        UiWorkerCommand::LaunchInstance {
+                                            instance_id: inst_id.clone(),
+                                            dry_run: false,
+                                        },
+                                    );
+                                }
+                            }
+                        };
+
+                        // Row 1: Instance Title on the left, Hero Action Button on the right
+                        let avail_w = ui.available_width();
+                        let hero_w = if is_downloading || !is_installed { 210.0 } else { 160.0 };
+
+                        if avail_w < 400.0 {
+                            ui.add(
+                                egui::Label::new(
                                     RichText::new(&inst_name)
                                         .color(TEXT_PRIMARY)
-                                        .size(20.0)
+                                        .size(19.0)
                                         .strong(),
-                                );
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    version_badge(ui, &mc_ver, ACCENT_COBALT);
-                                    loader_badge(ui, loader);
-                                    version_badge(
-                                        ui,
-                                        &format!("{} МБ RAM", memory_max_mb),
-                                        TEXT_MUTED,
-                                    );
-                                    if is_running {
-                                        status_pill(ui, "Игра запущена", ACCENT_EMERALD);
-                                    } else if is_downloading {
-                                        status_pill(ui, "Скачивание файлов...", ACCENT_COBALT);
-                                    } else if is_installed {
-                                        status_pill(ui, "Готов к запуску", ACCENT_EMERALD);
-                                    } else {
-                                        status_pill(ui, "Требуется установка", STATUS_WARN);
-                                    }
-                                });
-                            });
-
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if is_running {
-                                        if hero_action_button(
-                                            ui,
-                                            VectorIcon::Stop,
-                                            "ОСТАНОВИТЬ",
-                                            STATUS_DANGER,
-                                        )
-                                        .clicked()
-                                        {
-                                            let _ = state
-                                                .cmd_sender
-                                                .send(UiWorkerCommand::CancelDownload);
-                                        }
-                                    } else if is_downloading {
-                                        if hero_action_button(
-                                            ui,
-                                            VectorIcon::Download,
-                                            "СКАЧИВАНИЕ...",
-                                            ACCENT_COBALT,
-                                        )
-                                        .clicked()
-                                        {
-                                            let _ = state
-                                                .cmd_sender
-                                                .send(UiWorkerCommand::CancelDownload);
-                                        }
-                                    } else if is_installed {
-                                        let btn_text = if state.is_launching {
-                                            "ЗАПУСК..."
-                                        } else {
-                                            "ИГРАТЬ"
-                                        };
-                                        if hero_action_button(
-                                            ui,
-                                            VectorIcon::Play,
-                                            btn_text,
-                                            ACCENT_EMERALD,
-                                        )
-                                        .clicked()
-                                            && !state.is_launching
-                                            && !is_running
-                                        {
-                                            state.is_launching = true;
-                                            let _ = state.cmd_sender.send(
-                                                UiWorkerCommand::LaunchInstance {
-                                                    instance_id: inst_id.clone(),
-                                                    dry_run: false,
-                                                },
-                                            );
-                                        }
-                                    } else {
-                                        let btn_text = if state.is_launching {
-                                            "СКАЧИВАНИЕ И ЗАПУСК..."
-                                        } else {
-                                            "СКАЧАТЬ И ИГРАТЬ"
-                                        };
-                                        if hero_action_button(
-                                            ui,
-                                            VectorIcon::Download,
-                                            btn_text,
-                                            ACCENT_EMERALD,
-                                        )
-                                        .clicked()
-                                            && !state.is_launching
-                                            && !is_running
-                                        {
-                                            state.is_launching = true;
-                                            let _ = state.cmd_sender.send(
-                                                UiWorkerCommand::LaunchInstance {
-                                                    instance_id: inst_id.clone(),
-                                                    dry_run: false,
-                                                },
-                                            );
-                                        }
-                                    }
-                                },
+                                )
+                                .truncate(),
                             );
+                            ui.add_space(6.0);
+                            render_hero_button(ui, state);
+                        } else {
+                            ui.horizontal(|ui| {
+                                let title_w = (ui.available_width() - hero_w - 12.0).max(100.0);
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(title_w, 40.0),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&inst_name)
+                                                    .color(TEXT_PRIMARY)
+                                                    .size(20.0)
+                                                    .strong(),
+                                            )
+                                            .truncate(),
+                                        );
+                                    },
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        render_hero_button(ui, state);
+                                    },
+                                );
+                            });
+                        }
+
+                        ui.add_space(8.0);
+
+                        // Row 2: Badges row in horizontal_wrapped
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                            version_badge(ui, &mc_ver, ACCENT_COBALT);
+                            loader_badge(ui, loader);
+                            version_badge(
+                                ui,
+                                &format!("{} МБ RAM", memory_max_mb),
+                                TEXT_MUTED,
+                            );
+                            if is_running {
+                                status_pill(ui, "Игра запущена", ACCENT_EMERALD);
+                            } else if is_downloading {
+                                status_pill(ui, "Скачивание файлов...", ACCENT_COBALT);
+                            } else if is_installed {
+                                status_pill(ui, "Готов к запуску", ACCENT_EMERALD);
+                            } else {
+                                status_pill(ui, "Требуется установка", STATUS_WARN);
+                            }
                         });
 
                         ui.add_space(8.0);
 
-                        // Secondary actions toolbar row
+                        // Row 3: Secondary actions toolbar row in horizontal_wrapped
                         ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
                             if !is_downloading {
                                 if is_installed {
                                     if secondary_glass_button(
@@ -1218,9 +1295,9 @@ impl InstancesView {
 
             ui.add_space(28.0);
 
-            // 3 Quick Action Cards in horizontal row
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 16.0;
+            // 3 Quick Action Cards in wrapped row
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(16.0, 16.0);
 
                 // Card 1: Vanilla 1.21.1
                 let card1 = egui::Frame::new()
@@ -1350,25 +1427,24 @@ impl InstancesView {
     }
 
     fn render_mods_tab(&mut self, ui: &mut Ui, state: &mut UiState, inst_id: &mq_core::InstanceId) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             ui.label(
                 RichText::new(format!("Установлено модов: {}", state.installed_mods.len()))
                     .strong(),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Пересканировать")
-                    .clicked()
-                {
-                    let _ = state.cmd_sender.send(UiWorkerCommand::ScanInstanceMods {
-                        instance_id: inst_id.clone(),
-                    });
-                }
-                if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть mods/").clicked()
-                {
-                    let mods_dir = state.paths.instance_dir(inst_id.as_str()).join("mods");
-                    let _ = std::process::Command::new("xdg-open").arg(mods_dir).spawn();
-                }
-            });
+            if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Пересканировать")
+                .clicked()
+            {
+                let _ = state.cmd_sender.send(UiWorkerCommand::ScanInstanceMods {
+                    instance_id: inst_id.clone(),
+                });
+            }
+            if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть mods/").clicked()
+            {
+                let mods_dir = state.paths.instance_dir(inst_id.as_str()).join("mods");
+                let _ = std::process::Command::new("xdg-open").arg(mods_dir).spawn();
+            }
         });
 
         ui.add_space(4.0);
@@ -1424,16 +1500,32 @@ impl InstancesView {
                                 });
                             }
 
-                            ui.vertical(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(&m.name).color(TEXT_PRIMARY).strong());
-                                    version_badge(ui, &m.version, ACCENT_COBALT);
-                                    if let Some(ld) = m.loader {
-                                        version_badge(ui, ld.as_str(), ACCENT_EMERALD);
-                                    }
-                                });
-                                ui.label(RichText::new(format!("Файл: {}", m.file_name)).color(TEXT_MUTED).small());
-                            });
+                            let right_w = 40.0;
+                            let middle_w = (ui.available_width() - right_w - 8.0).max(60.0);
+
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(middle_w, 36.0),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                                        let name_w = (ui.available_width() - 110.0).max(60.0);
+                                        ui.add_sized(
+                                            [name_w.min(180.0), 18.0],
+                                            egui::Label::new(RichText::new(&m.name).color(TEXT_PRIMARY).strong()).truncate(),
+                                        );
+                                        version_badge(ui, &m.version, ACCENT_COBALT);
+                                        if let Some(ld) = m.loader {
+                                            version_badge(ui, ld.as_str(), ACCENT_EMERALD);
+                                        }
+                                    });
+                                    let file_w = (ui.available_width() - 8.0).max(40.0);
+                                    ui.add_sized(
+                                        [file_w, 16.0],
+                                        egui::Label::new(RichText::new(format!("Файл: {}", m.file_name)).color(TEXT_MUTED).small()).truncate(),
+                                    );
+                                },
+                            );
 
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if secondary_glass_button(ui, Some(VectorIcon::Trash), "").clicked() {
@@ -1534,64 +1626,68 @@ impl InstancesView {
             ui.add_space(8.0);
         }
 
-        ui.horizontal(|ui| {
+        // Row 1: Line counter, autoscroll checkbox, action buttons
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             ui.label(
                 RichText::new(format!("Строк в логе: {}", state.game_logs.len())).color(TEXT_MUTED),
             );
             ui.checkbox(&mut self.console_autoscroll, "Автоскролл");
+            if secondary_glass_button(ui, Some(VectorIcon::Copy), "Копировать лог").clicked() {
+                let full_log: String = state
+                    .game_logs
+                    .iter()
+                    .map(|l| l.line.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                ui.ctx().copy_text(full_log);
+            }
+            if secondary_glass_button(ui, None, "Очистить").clicked() {
+                state.game_logs.clear();
+            }
+        });
 
-            ui.add_space(8.0);
+        ui.add_space(4.0);
+
+        // Row 2: Search input and level filters
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             ui.add(
                 egui::TextEdit::singleline(&mut self.console_search)
                     .hint_text("Поиск в логе...")
-                    .desired_width(160.0),
+                    .desired_width(180.0),
             );
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if secondary_glass_button(ui, None, "Очистить").clicked() {
-                    state.game_logs.clear();
-                }
-                if secondary_glass_button(ui, Some(VectorIcon::Copy), "Копировать лог").clicked()
-                {
-                    let full_log: String = state
-                        .game_logs
-                        .iter()
-                        .map(|l| l.line.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    ui.ctx().copy_text(full_log);
-                }
-                if ui
-                    .selectable_label(state.log_filter == Some(GameLogLevel::Error), "ERROR")
-                    .clicked()
-                {
-                    state.log_filter = if state.log_filter == Some(GameLogLevel::Error) {
-                        None
-                    } else {
-                        Some(GameLogLevel::Error)
-                    };
-                }
-                if ui
-                    .selectable_label(state.log_filter == Some(GameLogLevel::Warn), "WARN")
-                    .clicked()
-                {
-                    state.log_filter = if state.log_filter == Some(GameLogLevel::Warn) {
-                        None
-                    } else {
-                        Some(GameLogLevel::Warn)
-                    };
-                }
-                if ui
-                    .selectable_label(state.log_filter == Some(GameLogLevel::Info), "INFO")
-                    .clicked()
-                {
-                    state.log_filter = if state.log_filter == Some(GameLogLevel::Info) {
-                        None
-                    } else {
-                        Some(GameLogLevel::Info)
-                    };
-                }
-            });
+            if ui
+                .selectable_label(state.log_filter == Some(GameLogLevel::Info), "INFO")
+                .clicked()
+            {
+                state.log_filter = if state.log_filter == Some(GameLogLevel::Info) {
+                    None
+                } else {
+                    Some(GameLogLevel::Info)
+                };
+            }
+            if ui
+                .selectable_label(state.log_filter == Some(GameLogLevel::Warn), "WARN")
+                .clicked()
+            {
+                state.log_filter = if state.log_filter == Some(GameLogLevel::Warn) {
+                    None
+                } else {
+                    Some(GameLogLevel::Warn)
+                };
+            }
+            if ui
+                .selectable_label(state.log_filter == Some(GameLogLevel::Error), "ERROR")
+                .clicked()
+            {
+                state.log_filter = if state.log_filter == Some(GameLogLevel::Error) {
+                    None
+                } else {
+                    Some(GameLogLevel::Error)
+                };
+            }
         });
 
         ui.add_space(4.0);
@@ -1654,21 +1750,20 @@ impl InstancesView {
         let _ = std::fs::create_dir_all(&packs_dir);
         let packs = list_packs_in_dir(&packs_dir);
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             ui.label(
                 RichText::new(format!("Ресурспаки: {}", packs.len()))
                     .strong()
                     .size(14.0),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть resourcepacks/")
-                    .clicked()
-                {
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg(&packs_dir)
-                        .spawn();
-                }
-            });
+            if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть resourcepacks/")
+                .clicked()
+            {
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&packs_dir)
+                    .spawn();
+            }
         });
 
         ui.add_space(6.0);
@@ -1693,7 +1788,11 @@ impl InstancesView {
                         {
                             toggle_pack_file(&packs_dir, &name);
                         }
-                        ui.label(RichText::new(&name).color(TEXT_PRIMARY).strong());
+                        let name_w = (ui.available_width() - 80.0).max(60.0);
+                        ui.add_sized(
+                            [name_w, 18.0],
+                            egui::Label::new(RichText::new(&name).color(TEXT_PRIMARY).strong()).truncate(),
+                        );
                         if size > 0 {
                             let mib = (size as f64) / (1024.0 * 1024.0);
                             ui.label(
@@ -1722,21 +1821,20 @@ impl InstancesView {
         let _ = std::fs::create_dir_all(&shaders_dir);
         let shaders = list_packs_in_dir(&shaders_dir);
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             ui.label(
                 RichText::new(format!("Шейдерпаки: {}", shaders.len()))
                     .strong()
                     .size(14.0),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть shaderpacks/")
-                    .clicked()
-                {
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg(&shaders_dir)
-                        .spawn();
-                }
-            });
+            if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть shaderpacks/")
+                .clicked()
+            {
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&shaders_dir)
+                    .spawn();
+            }
         });
 
         ui.add_space(6.0);
@@ -1761,7 +1859,11 @@ impl InstancesView {
                         {
                             toggle_pack_file(&shaders_dir, &name);
                         }
-                        ui.label(RichText::new(&name).color(TEXT_PRIMARY).strong());
+                        let name_w = (ui.available_width() - 80.0).max(60.0);
+                        ui.add_sized(
+                            [name_w, 18.0],
+                            egui::Label::new(RichText::new(&name).color(TEXT_PRIMARY).strong()).truncate(),
+                        );
                         if size > 0 {
                             let mib = (size as f64) / (1024.0 * 1024.0);
                             ui.label(
@@ -1786,22 +1888,20 @@ impl InstancesView {
         let inst_dir = state.paths.instance_dir(inst_id.as_str());
         let backups_root = state.paths.backups_dir();
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             ui.label(
                 RichText::new("Сохранения миров (Worlds)")
                     .strong()
                     .size(14.0),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть saves/").clicked()
-                {
-                    let saves_dir = inst_dir.join("saves");
-                    let _ = std::fs::create_dir_all(&saves_dir);
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg(saves_dir)
-                        .spawn();
-                }
-            });
+            if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть saves/").clicked() {
+                let saves_dir = inst_dir.join("saves");
+                let _ = std::fs::create_dir_all(&saves_dir);
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(saves_dir)
+                    .spawn();
+            }
         });
 
         ui.add_space(6.0);
@@ -1822,78 +1922,76 @@ impl InstancesView {
                     .inner_margin(egui::Margin::same(10));
 
                 card.show(ui, |ui| {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                         let (r, _) =
-                            ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
+                            ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
                         paint_vector_icon(ui.painter(), r, VectorIcon::Cube, ACCENT_EMERALD);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&w.display_name).color(TEXT_PRIMARY).strong(),
+                            )
+                            .truncate(),
+                        );
+                        version_badge(ui, &w.game_mode, ACCENT_COBALT);
+                        let mib = (w.size_bytes as f64) / (1024.0 * 1024.0);
+                        ui.label(
+                            RichText::new(format!("{mib:.1} МБ"))
+                                .color(TEXT_MUTED)
+                                .small(),
+                        );
+                    });
 
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(&w.display_name).color(TEXT_PRIMARY).strong(),
-                                );
-                                version_badge(ui, &w.game_mode, ACCENT_COBALT);
-                                let mib = (w.size_bytes as f64) / (1024.0 * 1024.0);
-                                ui.label(
-                                    RichText::new(format!("{mib:.1} МБ"))
-                                        .color(TEXT_MUTED)
-                                        .small(),
-                                );
-                            });
-                            ui.label(
-                                RichText::new(format!("Папка: saves/{}", w.folder_name))
-                                    .color(TEXT_MUTED)
-                                    .small(),
-                            );
-                        });
+                    ui.label(
+                        RichText::new(format!("Папка: saves/{}", w.folder_name))
+                            .color(TEXT_MUTED)
+                            .small(),
+                    );
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if secondary_glass_button(ui, Some(VectorIcon::Trash), "").clicked() {
-                                let _ = delete_world(&inst_dir, &w.folder_name);
-                                state.status_message =
-                                    Some((format!("Мир '{}' удален", w.display_name), false));
-                            }
-                            if secondary_glass_button(ui, Some(VectorIcon::Download), "Экспорт")
-                                .clicked()
-                            {
-                                let export_path =
-                                    backups_root.join(format!("{}.zip", w.folder_name));
-                                if let Ok(()) =
-                                    export_world_to_zip(&inst_dir, &w.folder_name, &export_path)
-                                {
+                    ui.add_space(4.0);
+
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                        if secondary_glass_button(ui, Some(VectorIcon::Download), "Бэкап").clicked() {
+                            match backup_world(
+                                &inst_dir,
+                                &backups_root,
+                                inst_id.as_str(),
+                                &w.folder_name,
+                            ) {
+                                Ok(bp) => {
                                     state.status_message = Some((
-                                        format!("Мир экспортирован в {}", export_path.display()),
+                                        format!(
+                                            "Бэкап создан: {}",
+                                            bp.file_name()
+                                                .unwrap_or_default()
+                                                .to_string_lossy()
+                                        ),
                                         false,
                                     ));
                                 }
-                            }
-                            if secondary_glass_button(ui, Some(VectorIcon::Download), "Бэкап")
-                                .clicked()
-                            {
-                                match backup_world(
-                                    &inst_dir,
-                                    &backups_root,
-                                    inst_id.as_str(),
-                                    &w.folder_name,
-                                ) {
-                                    Ok(bp) => {
-                                        state.status_message = Some((
-                                            format!(
-                                                "Бэкап создан: {}",
-                                                bp.file_name()
-                                                    .unwrap_or_default()
-                                                    .to_string_lossy()
-                                            ),
-                                            false,
-                                        ));
-                                    }
-                                    Err(e) => {
-                                        state.status_message =
-                                            Some((format!("Ошибка бэкапа: {e}"), true));
-                                    }
+                                Err(e) => {
+                                    state.status_message =
+                                        Some((format!("Ошибка бэкапа: {e}"), true));
                                 }
                             }
-                        });
+                        }
+                        if secondary_glass_button(ui, Some(VectorIcon::Download), "Экспорт").clicked() {
+                            let export_path = backups_root.join(format!("{}.zip", w.folder_name));
+                            if let Ok(()) =
+                                export_world_to_zip(&inst_dir, &w.folder_name, &export_path)
+                            {
+                                state.status_message = Some((
+                                    format!("Мир экспортирован в {}", export_path.display()),
+                                    false,
+                                ));
+                            }
+                        }
+                        if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить").clicked() {
+                            let _ = delete_world(&inst_dir, &w.folder_name);
+                            state.status_message =
+                                Some((format!("Мир '{}' удален", w.display_name), false));
+                        }
                     });
                 });
                 ui.add_space(4.0);
@@ -1960,18 +2058,16 @@ impl InstancesView {
         let inst_dir = state.paths.instance_dir(inst_id.as_str());
         let mut servers = load_servers_dat(&inst_dir).unwrap_or_default();
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             ui.label(
                 RichText::new(format!("Серверы (servers.dat): {}", servers.len()))
                     .strong()
                     .size(14.0),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if primary_emerald_button(ui, Some(VectorIcon::Plus), "Добавить сервер").clicked()
-                {
-                    self.show_add_server_dialog = true;
-                }
-            });
+            if primary_emerald_button(ui, Some(VectorIcon::Plus), "Добавить сервер").clicked() {
+                self.show_add_server_dialog = true;
+            }
         });
 
         ui.add_space(6.0);
@@ -1992,46 +2088,48 @@ impl InstancesView {
                     .inner_margin(egui::Margin::same(10));
 
                 card.show(ui, |ui| {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
                         let (r, _) =
-                            ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
+                            ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
                         paint_vector_icon(ui.painter(), r, VectorIcon::Server, ACCENT_COBALT);
+                        ui.add(
+                            egui::Label::new(RichText::new(&s.name).color(TEXT_PRIMARY).strong())
+                                .truncate(),
+                        );
+                        ui.label(RichText::new(&s.ip).color(TEXT_MUTED));
+                    });
 
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(&s.name).color(TEXT_PRIMARY).strong());
-                                ui.label(RichText::new(&s.ip).color(TEXT_MUTED));
-                            });
-                            if let Some(res) = state.server_pings.get(&s.ip) {
-                                ui.horizontal(|ui| {
-                                    version_badge(
-                                        ui,
-                                        &format!("{} ms", res.latency_ms),
-                                        ACCENT_EMERALD,
-                                    );
-                                    version_badge(
-                                        ui,
-                                        &format!("{}/{}", res.players_online, res.players_max),
-                                        ACCENT_COBALT,
-                                    );
-                                    ui.label(RichText::new(&res.motd).color(TEXT_PRIMARY).small());
-                                });
-                            }
+                    if let Some(res) = state.server_pings.get(&s.ip) {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                            version_badge(
+                                ui,
+                                &format!("{} ms", res.latency_ms),
+                                ACCENT_EMERALD,
+                            );
+                            version_badge(
+                                ui,
+                                &format!("{}/{}", res.players_online, res.players_max),
+                                ACCENT_COBALT,
+                            );
+                            ui.label(RichText::new(&res.motd).color(TEXT_PRIMARY).small());
                         });
+                    }
 
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if secondary_glass_button(ui, Some(VectorIcon::Trash), "").clicked() {
-                                server_to_delete = Some(idx);
+                    ui.add_space(4.0);
+
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                        if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Пинг").clicked() {
+                            let ip = s.ip.clone();
+                            if let Ok(res) = ping_server(&ip, 3000) {
+                                state.server_pings.insert(ip, res);
                             }
-                            if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Пинг")
-                                .clicked()
-                            {
-                                let ip = s.ip.clone();
-                                if let Ok(res) = ping_server(&ip, 3000) {
-                                    state.server_pings.insert(ip, res);
-                                }
-                            }
-                        });
+                        }
+                        if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить").clicked() {
+                            server_to_delete = Some(idx);
+                        }
                     });
                 });
                 ui.add_space(4.0);
@@ -2049,7 +2147,8 @@ impl InstancesView {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ui.ctx(), |ui| {
-                    ui.set_width(320.0);
+                    let modal_w = 320.0_f32.min(ui.ctx().screen_rect().width() - 32.0);
+                    ui.set_width(modal_w);
                     ui.label("Название сервера:");
                     ui.text_edit_singleline(&mut self.new_server_name);
                     ui.add_space(4.0);
@@ -2093,21 +2192,20 @@ impl InstancesView {
         let inst_dir = state.paths.instance_dir(inst_id.as_str());
         let screenshots = list_screenshots(&inst_dir).unwrap_or_default();
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             ui.label(
                 RichText::new(format!("Скриншоты: {}", screenshots.len()))
                     .strong()
                     .size(14.0),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть screenshots/")
-                    .clicked()
-                {
-                    let scr_dir = inst_dir.join("screenshots");
-                    let _ = std::fs::create_dir_all(&scr_dir);
-                    let _ = std::process::Command::new("xdg-open").arg(scr_dir).spawn();
-                }
-            });
+            if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть screenshots/")
+                .clicked()
+            {
+                let scr_dir = inst_dir.join("screenshots");
+                let _ = std::fs::create_dir_all(&scr_dir);
+                let _ = std::process::Command::new("xdg-open").arg(scr_dir).spawn();
+            }
         });
 
         ui.add_space(6.0);
@@ -2119,6 +2217,7 @@ impl InstancesView {
             ScrollArea::vertical()
                 .id_salt("screenshots_scroll")
                 .show(ui, |ui| {
+                    let mut file_to_delete = None;
                     for s in screenshots {
                         let card = egui::Frame::new()
                             .fill(CARD_SURFACE)
@@ -2132,20 +2231,33 @@ impl InstancesView {
                                     ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
                                 paint_vector_icon(ui.painter(), r, VectorIcon::Eye, ACCENT_EMERALD);
 
-                                ui.vertical(|ui| {
-                                    ui.label(
-                                        RichText::new(&s.file_name).color(TEXT_PRIMARY).strong(),
-                                    );
-                                    let mib = (s.size_bytes as f64) / (1024.0 * 1024.0);
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "{mib:.2} МБ • {}",
-                                            s.created_at.format("%Y-%m-%d %H:%M")
-                                        ))
-                                        .color(TEXT_MUTED)
-                                        .small(),
-                                    );
-                                });
+                                let right_w = 120.0;
+                                let middle_w = (ui.available_width() - right_w - 8.0).max(60.0);
+
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(middle_w, 38.0),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        let text_w = (ui.available_width() - 8.0).max(40.0);
+                                        ui.add_sized(
+                                            [text_w, 18.0],
+                                            egui::Label::new(RichText::new(&s.file_name).color(TEXT_PRIMARY).strong()).truncate(),
+                                        );
+                                        let mib = (s.size_bytes as f64) / (1024.0 * 1024.0);
+                                        ui.add_sized(
+                                            [text_w, 16.0],
+                                            egui::Label::new(
+                                                RichText::new(format!(
+                                                    "{mib:.2} МБ • {}",
+                                                    s.created_at.format("%Y-%m-%d %H:%M")
+                                                ))
+                                                .color(TEXT_MUTED)
+                                                .small(),
+                                            )
+                                            .truncate(),
+                                        );
+                                    },
+                                );
 
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
@@ -2153,7 +2265,7 @@ impl InstancesView {
                                         if secondary_glass_button(ui, Some(VectorIcon::Trash), "")
                                             .clicked()
                                         {
-                                            let _ = std::fs::remove_file(&s.path);
+                                            file_to_delete = Some(s.path.clone());
                                         }
                                         if secondary_glass_button(
                                             ui,
@@ -2171,6 +2283,9 @@ impl InstancesView {
                             });
                         });
                         ui.add_space(4.0);
+                    }
+                    if let Some(path) = file_to_delete {
+                        let _ = std::fs::remove_file(path);
                     }
                 });
         }
@@ -2224,7 +2339,8 @@ impl InstancesView {
                 .map(|i| i.display_label())
                 .unwrap_or_else(|| effective_loc.to_string());
 
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
                 version_badge(ui, &display_name, ACCENT_EMERALD);
                 if secondary_glass_button(ui, Some(VectorIcon::Globe), "Выбрать другой язык...")
                     .clicked()
@@ -2249,7 +2365,8 @@ impl InstancesView {
                     .resizable(true)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                     .show(ui.ctx(), |ui| {
-                        ui.set_width(380.0);
+                        let modal_w = 380.0_f32.min(ui.ctx().screen_rect().width() - 32.0);
+                        ui.set_width(modal_w);
                         ui.horizontal(|ui| {
                             let (r, _) =
                                 ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
@@ -2289,20 +2406,19 @@ impl InstancesView {
             let mut should_delete = false;
             let mut should_save = false;
 
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(10.0, 8.0);
                 if primary_emerald_button(ui, Some(VectorIcon::Check), "Сохранить параметры")
                     .clicked()
                 {
                     should_save = true;
                 }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить инстанс")
-                        .clicked()
-                    {
-                        should_delete = true;
-                    }
-                });
+                if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить инстанс")
+                    .clicked()
+                {
+                    should_delete = true;
+                }
             });
 
             if should_save {

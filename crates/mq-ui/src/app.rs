@@ -11,7 +11,7 @@ use crate::hud::{is_zero_viewport, render_bottom_hud, BottomHudData};
 use crate::instances_view::InstancesView;
 use crate::perf_view::PerfView;
 use crate::settings_view::SettingsView;
-use crate::sidebar::{render_sidebar, NavTab, SidebarAction};
+use crate::sidebar::{render_sidebar, sidebar_width, NavTab, SidebarAction};
 use crate::state::{UiState, UiWorkerCommand, UiWorkerResponse};
 use crate::theme::{apply_theme, solid_sidebar_frame, Tokens};
 
@@ -560,7 +560,7 @@ impl MqApp {
 
         SidePanel::left("mq_sidebar")
             .resizable(false)
-            .exact_width(220.0)
+            .exact_width(sidebar_width(ctx))
             .frame(solid_sidebar_frame(&tokens))
             .show(ctx, |ui| {
                 let _ = render_sidebar(
@@ -645,7 +645,7 @@ impl eframe::App for MqApp {
         let tokens = Tokens::from_config(&self.state.config.theme);
         SidePanel::left("mq_sidebar")
             .resizable(false)
-            .exact_width(220.0)
+            .exact_width(sidebar_width(ctx))
             .frame(solid_sidebar_frame(&tokens))
             .show(ctx, |ui| {
                 sidebar_action = render_sidebar(

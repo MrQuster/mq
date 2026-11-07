@@ -159,8 +159,9 @@ fn render_smooth_progress_bar(ui: &mut Ui, fraction: f32) {
 
 /// Renders the bottom status bar and per-core CPU telemetry HUD inside `ui`.
 pub fn render_bottom_hud(ui: &mut Ui, data: &BottomHudData) {
+    let avail_w = ui.available_width();
     ui.horizontal_centered(|ui| {
-        ui.spacing_mut().item_spacing.x = 12.0;
+        ui.spacing_mut().item_spacing.x = 10.0;
 
         // Left: Phase status dot + label + optional progress bar + throughput metrics
         let (dot_color, phase_text) = match data.active_phase.as_deref() {
@@ -170,25 +171,40 @@ pub fn render_bottom_hud(ui: &mut Ui, data: &BottomHudData) {
         status_dot(ui, dot_color, phase_text);
 
         if let Some(frac) = data.progress_fraction {
-            render_smooth_progress_bar(ui, frac);
+            if avail_w >= 500.0 {
+                render_smooth_progress_bar(ui, frac);
+            }
         }
 
-        ui.separator();
-
         let mono_font = FontId::new(12.0, FontFamily::Monospace);
-        let metrics_text = format!(
-            "{:.0} файлов/с | {:.1} МБ/с | Активных задач DAG: {}",
-            data.files_per_sec, data.mib_per_sec, data.active_dag_tasks
-        );
-        ui.label(
-            RichText::new(metrics_text)
-                .font(mono_font.clone())
-                .color(TEXT_MUTED),
-        );
+
+        if avail_w >= 940.0 {
+            ui.separator();
+            let metrics_text = format!(
+                "{:.0} файлов/с | {:.1} МБ/с | Активных задач DAG: {}",
+                data.files_per_sec, data.mib_per_sec, data.active_dag_tasks
+            );
+            ui.label(
+                RichText::new(metrics_text)
+                    .font(mono_font.clone())
+                    .color(TEXT_MUTED),
+            );
+        } else if avail_w >= 760.0 {
+            ui.separator();
+            let metrics_text = format!(
+                "{:.0} ф/с | {:.1} МБ/с | DAG: {}",
+                data.files_per_sec, data.mib_per_sec, data.active_dag_tasks
+            );
+            ui.label(
+                RichText::new(metrics_text)
+                    .font(mono_font.clone())
+                    .color(TEXT_MUTED),
+            );
+        }
 
         // Right: Per-core CPU telemetry vertical bars + RSS + Watchdog indicator
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
+            ui.spacing_mut().item_spacing.x = 8.0;
 
             if data.watchdog_violations > 0 {
                 let badge_col = if data.watchdog_violations > 5 {
@@ -199,10 +215,14 @@ pub fn render_bottom_hud(ui: &mut Ui, data: &BottomHudData) {
                 version_badge(ui, &format!("WD: {}", data.watchdog_violations), badge_col);
             }
 
-            let rss_label = format!(
-                "ЦП {:>4.0}% | RSS: {:.1} МиБ",
-                data.cpu_snapshot.total_pct, data.cpu_snapshot.rss_mib
-            );
+            let rss_label = if avail_w < 550.0 {
+                format!("ЦП {:>3.0}%", data.cpu_snapshot.total_pct)
+            } else {
+                format!(
+                    "ЦП {:>3.0}% | RSS: {:.1} МиБ",
+                    data.cpu_snapshot.total_pct, data.cpu_snapshot.rss_mib
+                )
+            };
             ui.label(RichText::new(rss_label).font(mono_font).color(TEXT_PRIMARY));
 
             render_per_core_bars(ui, &data.cpu_snapshot);

@@ -39,13 +39,14 @@ impl SettingsView {
             .unwrap_or(SettingsSection::Customization);
         let lang = state.config.launcher_locale.clone();
 
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(12.0, 6.0);
             ui.heading(
                 RichText::new(tr("tab_settings", &lang))
                     .color(TEXT_PRIMARY)
                     .strong(),
             );
-            ui.add_space(16.0);
+            ui.add_space(8.0);
 
             // Sub-navigation tabs
             if ui
@@ -199,13 +200,18 @@ impl SettingsView {
             );
             ui.add_space(6.0);
 
+            let slider_w = 180.0_f32.max((ui.available_width() - 20.0).min(360.0));
             let mut style_dirty = false;
-            ui.horizontal(|ui| {
-                ui.label("Прозрачность окна (Window Opacity):");
+
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Прозрачность окна (Window Opacity):").color(TEXT_PRIMARY));
+                ui.add_space(2.0);
                 if ui
-                    .add(
+                    .add_sized(
+                        [slider_w, 20.0],
                         egui::Slider::new(&mut state.config.theme.window_opacity, 0.25..=1.00)
-                            .step_by(0.01),
+                            .step_by(0.01)
+                            .trailing_fill(true),
                     )
                     .changed()
                 {
@@ -214,10 +220,14 @@ impl SettingsView {
                 }
             });
 
-            ui.horizontal(|ui| {
-                ui.label("Прозрачность карточек (Card Opacity):");
+            ui.add_space(6.0);
+
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Прозрачность карточек (Card Opacity):").color(TEXT_PRIMARY));
+                ui.add_space(2.0);
                 if ui
-                    .add(
+                    .add_sized(
+                        [slider_w, 20.0],
                         egui::Slider::new(&mut state.config.theme.card_opacity, 0.35..=1.00)
                             .step_by(0.01),
                     )
@@ -228,10 +238,14 @@ impl SettingsView {
                 }
             });
 
-            ui.horizontal(|ui| {
-                ui.label("Стеклянный блик обводки (Glass Border Glow):");
+            ui.add_space(6.0);
+
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Стеклянный блик обводки (Glass Border Glow):").color(TEXT_PRIMARY));
+                ui.add_space(2.0);
                 if ui
-                    .add(
+                    .add_sized(
+                        [slider_w, 20.0],
                         egui::Slider::new(&mut state.config.theme.border_glow, 0.00..=1.00)
                             .step_by(0.05),
                     )
@@ -254,10 +268,12 @@ impl SettingsView {
             );
             ui.add_space(6.0);
 
-            ui.horizontal(|ui| {
-                ui.label("Радиус скругления углов (Corner Radius):");
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Радиус скругления углов (Corner Radius):").color(TEXT_PRIMARY));
+                ui.add_space(2.0);
                 if ui
-                    .add(
+                    .add_sized(
+                        [slider_w, 20.0],
                         egui::Slider::new(&mut state.config.theme.corner_radius, 0.0..=20.0)
                             .suffix(" px"),
                     )
@@ -268,10 +284,14 @@ impl SettingsView {
                 }
             });
 
-            ui.horizontal(|ui| {
-                ui.label("Масштаб интерфейса (UI Scale):");
+            ui.add_space(6.0);
+
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Масштаб интерфейса (UI Scale):").color(TEXT_PRIMARY));
+                ui.add_space(2.0);
                 if ui
-                    .add(
+                    .add_sized(
+                        [slider_w, 20.0],
                         egui::Slider::new(&mut state.config.theme.ui_scale, 0.80..=1.50)
                             .step_by(0.05),
                     )
@@ -281,10 +301,14 @@ impl SettingsView {
                 }
             });
 
-            ui.horizontal(|ui| {
-                ui.label("Размер шрифта:");
+            ui.add_space(6.0);
+
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Размер шрифта:").color(TEXT_PRIMARY));
+                ui.add_space(2.0);
                 if ui
-                    .add(
+                    .add_sized(
+                        [slider_w, 20.0],
                         egui::Slider::new(&mut state.config.theme.font_size, 12.0..=18.0)
                             .suffix(" px"),
                     )
@@ -294,7 +318,10 @@ impl SettingsView {
                 }
             });
 
-            ui.horizontal(|ui| {
+            ui.add_space(6.0);
+
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
                 ui.label("Плотность компоновки (Density):");
                 if ui
                     .selectable_label(
@@ -575,7 +602,8 @@ impl SettingsView {
             );
             ui.add_space(4.0);
 
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
                 if secondary_glass_button(ui, Some(VectorIcon::Cpu), "Aikar's Flags (High Perf)")
                     .clicked()
                 {
@@ -758,7 +786,8 @@ impl SettingsView {
 
             ui.add_space(6.0);
             ui.label("Скачать проверенную Eclipse Temurin JRE напрямую из Adoptium:");
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
                 for &ver in &[8u32, 17u32, 21u32] {
                     let btn_label = match ver {
                         8 => "Скачать Java 8 (<= 1.16.5)",

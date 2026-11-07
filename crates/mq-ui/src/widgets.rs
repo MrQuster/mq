@@ -780,31 +780,48 @@ pub fn render_download_progress_card(
                 VectorIcon::Download,
                 crate::theme::ACCENT_COBALT,
             );
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("ЗАГРУЗКА И ПОДГОТОВКА ИНСТАНСА")
-                            .color(TEXT_PRIMARY)
-                            .size(13.5)
-                            .strong(),
+
+            let cancel_w = 110.0;
+            let middle_w = (ui.available_width() - cancel_w - 8.0).max(80.0);
+
+            ui.allocate_ui_with_layout(
+                Vec2::new(middle_w, 38.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    ui.horizontal(|ui| {
+                        let title_w = (ui.available_width() - 20.0).max(40.0);
+                        ui.add_sized(
+                            [title_w, 18.0],
+                            egui::Label::new(
+                                egui::RichText::new("ЗАГРУЗКА И ПОДГОТОВКА ИНСТАНСА")
+                                    .color(TEXT_PRIMARY)
+                                    .size(13.5)
+                                    .strong(),
+                            )
+                            .truncate(),
+                        );
+                        let dot_alpha = 0.5 + pulse * 0.5;
+                        ui.painter().circle_filled(
+                            Pos2::new(ui.cursor().min.x + 6.0, ui.cursor().center().y),
+                            3.5,
+                            crate::theme::ACCENT_COBALT.gamma_multiply(dot_alpha),
+                        );
+                    });
+                    let stage_w = (ui.available_width() - 8.0).max(40.0);
+                    ui.add_sized(
+                        [stage_w, 16.0],
+                        egui::Label::new(
+                            egui::RichText::new(stage_name)
+                                .color(crate::theme::ACCENT_COBALT)
+                                .size(12.0),
+                        )
+                        .truncate(),
                     );
-                    let dot_alpha = 0.5 + pulse * 0.5;
-                    ui.painter().circle_filled(
-                        Pos2::new(ui.cursor().min.x + 6.0, ui.cursor().center().y),
-                        3.5,
-                        crate::theme::ACCENT_COBALT.gamma_multiply(dot_alpha),
-                    );
-                });
-                ui.label(
-                    egui::RichText::new(stage_name)
-                        .color(crate::theme::ACCENT_COBALT)
-                        .size(12.0),
-                );
-            });
+                },
+            );
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if secondary_glass_button(ui, Some(VectorIcon::Cross), "Отменить").clicked()
-                {
+                if secondary_glass_button(ui, Some(VectorIcon::Cross), "Отменить").clicked() {
                     on_cancel();
                 }
             });

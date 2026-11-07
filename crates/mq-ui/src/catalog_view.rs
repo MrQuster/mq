@@ -29,7 +29,8 @@ impl CatalogView {
         ui.add_space(8.0);
 
         // Source and Content type selector
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             ui.label(RichText::new("Источник:").strong());
             if ui
                 .selectable_label(state.catalog_source == CatalogSource::Modrinth, "Modrinth")
@@ -116,20 +117,40 @@ impl CatalogView {
 
         ui.add_space(8.0);
 
-        // Search bar + version/loader filters
+        // Search bar (Row 1) + version/loader filters (Row 2)
+        let mut do_search = false;
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
             paint_vector_icon(ui.painter(), rect, VectorIcon::Search, ACCENT_COBALT);
 
+            let search_w = (ui.available_width() - 110.0).max(120.0);
             let search_resp = ui.add(
                 egui::TextEdit::singleline(&mut state.catalog_query_text)
-                    .hint_text("Поиск модов (например, Sodium, Lithium, Fabric API)...")
-                    .desired_width(320.0),
+                    .hint_text("Поиск модов (Sodium, Iris, Lithium, Fabric API)...")
+                    .desired_width(search_w),
             );
 
-            ui.label("Версия MC:");
-            ui.text_edit_singleline(&mut state.catalog_filter_version);
+            if search_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                do_search = true;
+            }
 
+            if primary_emerald_button(ui, Some(VectorIcon::Search), "Искать").clicked() {
+                do_search = true;
+            }
+        });
+
+        ui.add_space(4.0);
+
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+            ui.label("Версия MC:");
+            ui.add(
+                egui::TextEdit::singleline(&mut state.catalog_filter_version)
+                    .hint_text("Все версии")
+                    .desired_width(100.0),
+            );
+
+            ui.add_space(8.0);
             ui.label("Лоадер:");
             egui::ComboBox::from_id_salt("cat_loader_combo")
                 .selected_text(self.selected_loader.map(|l| l.as_str()).unwrap_or("Все"))
@@ -156,29 +177,27 @@ impl CatalogView {
                         "NeoForge",
                     );
                 });
-
-            if primary_emerald_button(ui, Some(VectorIcon::Search), "Искать").clicked()
-                || (search_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-            {
-                state.catalog_searching = true;
-                let q = SearchQuery {
-                    query: state.catalog_query_text.clone(),
-                    project_kind: state.catalog_kind,
-                    mc_version: if state.catalog_filter_version.trim().is_empty() {
-                        None
-                    } else {
-                        Some(state.catalog_filter_version.trim().to_string())
-                    },
-                    loader: self.selected_loader,
-                    limit: 30,
-                    offset: 0,
-                };
-                let _ = state.cmd_sender.send(UiWorkerCommand::SearchCatalog {
-                    source: state.catalog_source,
-                    query: q,
-                });
-            }
         });
+
+        if do_search {
+            state.catalog_searching = true;
+            let q = SearchQuery {
+                query: state.catalog_query_text.clone(),
+                project_kind: state.catalog_kind,
+                mc_version: if state.catalog_filter_version.trim().is_empty() {
+                    None
+                } else {
+                    Some(state.catalog_filter_version.trim().to_string())
+                },
+                loader: self.selected_loader,
+                limit: 30,
+                offset: 0,
+            };
+            let _ = state.cmd_sender.send(UiWorkerCommand::SearchCatalog {
+                source: state.catalog_source,
+                query: q,
+            });
+        }
 
         ui.separator();
 
@@ -236,28 +255,48 @@ impl CatalogView {
                         || name_lower.contains(&slug_lower)
                 });
 
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(&hit.title).color(TEXT_PRIMARY).strong());
-                        ui.label(
-                            RichText::new(format!("от {}", hit.author))
-                                .color(TEXT_MUTED)
-                                .small(),
+                let right_w = 140.0;
+                let middle_w = (ui.available_width() - right_w - 12.0).max(80.0);
+
+                ui.allocate_ui_with_layout(
+                    Vec2::new(middle_w, 48.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                            let title_w = (ui.available_width() - 140.0).max(60.0);
+                            ui.add_sized(
+                                [title_w.min(220.0), 18.0],
+                                egui::Label::new(
+                                    RichText::new(&hit.title).color(TEXT_PRIMARY).strong(),
+                                )
+                                .truncate(),
+                            );
+                            ui.label(
+                                RichText::new(format!("от {}", hit.author))
+                                    .color(TEXT_MUTED)
+                                    .small(),
+                            );
+                            version_badge(ui, &format!("{} скачиваний", hit.downloads), ACCENT_COBALT);
+                            if is_already_installed {
+                                version_badge(ui, "Установлен", ACCENT_EMERALD);
+                            }
+                        });
+
+                        let desc_w = (ui.available_width() - 8.0).max(40.0);
+                        ui.add_sized(
+                            [desc_w, 16.0],
+                            egui::Label::new(RichText::new(&hit.description).color(TEXT_MUTED).small()).truncate(),
                         );
-                        version_badge(ui, &format!("{} скачиваний", hit.downloads), ACCENT_COBALT);
-                        if is_already_installed {
-                            version_badge(ui, "Установлен", ACCENT_EMERALD);
-                        }
-                    });
 
-                    ui.label(RichText::new(&hit.description).color(TEXT_MUTED).small());
-
-                    ui.horizontal(|ui| {
-                        for l in &hit.loaders {
-                            version_badge(ui, l, ACCENT_EMERALD);
-                        }
-                    });
-                });
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+                            for l in &hit.loaders {
+                                version_badge(ui, l, ACCENT_EMERALD);
+                            }
+                        });
+                    },
+                );
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if hit.project_kind == ProjectKind::Modpack {
@@ -272,9 +311,9 @@ impl CatalogView {
                     } else if is_already_installed {
                         version_badge(ui, "Уже добавлен", ACCENT_EMERALD);
                     } else if let Some(inst) = state.selected_instance() {
-                        let btn_label = format!("В '{}'", inst.name);
-                        if primary_emerald_button(ui, Some(VectorIcon::Plus), &btn_label).clicked()
-                        {
+                        let resp = primary_emerald_button(ui, Some(VectorIcon::Plus), "Установить");
+                        let tooltip = format!("Установить в '{}'", inst.name);
+                        if resp.on_hover_text(tooltip).clicked() {
                             let _ = state.cmd_sender.send(UiWorkerCommand::InstallMod {
                                 instance_id: inst.id.clone(),
                                 project_id_or_slug: hit.slug.clone(),
@@ -284,7 +323,7 @@ impl CatalogView {
                         }
                     } else {
                         ui.label(
-                            RichText::new("Выберите инстанс для установки")
+                            RichText::new("Выберите инстанс")
                                 .color(TEXT_MUTED)
                                 .small(),
                         );

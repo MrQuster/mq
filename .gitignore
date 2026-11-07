@@ -30,6 +30,8 @@
 *.profdata
 perf.data*
 flamegraph.svg
+/snapshots/
+*.png
 
 # OS metadata and editor swap files
 .DS_Store

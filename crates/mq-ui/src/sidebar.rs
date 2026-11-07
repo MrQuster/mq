@@ -13,6 +13,17 @@ use crate::widgets::{paint_vector_icon, VectorIcon};
 
 /// Fixed width of the left navigation sidebar in logical points (strictly 220px).
 pub const SIDEBAR_WIDTH: f32 = 220.0;
+/// Compact width of the left navigation sidebar when window is narrow (< 800px).
+pub const COMPACT_SIDEBAR_WIDTH: f32 = 64.0;
+
+/// Returns the responsive width for the left navigation sidebar based on window width.
+pub fn sidebar_width(ctx: &Context) -> f32 {
+    if ctx.screen_rect().width() < 800.0 {
+        COMPACT_SIDEBAR_WIDTH
+    } else {
+        SIDEBAR_WIDTH
+    }
+}
 
 /// Primary navigation tabs in the `mq` desktop launcher.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -125,7 +136,8 @@ fn render_nav_row(
     lang_code: &str,
     tokens: &Tokens,
 ) -> bool {
-    let available_w = ui.available_width().max(160.0);
+    let is_compact = ui.available_width() < 120.0;
+    let available_w = ui.available_width().max(if is_compact { 48.0 } else { 160.0 });
     let row_h = 36.0;
     let (rect, response) = ui.allocate_exact_size(Vec2::new(available_w, row_h), Sense::click());
 
@@ -157,11 +169,6 @@ fn render_nav_row(
             painter.rect_filled(rect, cr, tokens.bg_surface);
         }
 
-        // Vector Icon
-        let icon_rect = Rect::from_center_size(
-            Pos2::new(rect.left() + 20.0, rect.center().y),
-            Vec2::splat(16.0),
-        );
         let icon_color = if is_active {
             tokens.accent
         } else if hovered {
@@ -169,22 +176,38 @@ fn render_nav_row(
         } else {
             tokens.text_muted
         };
-        paint_vector_icon(painter, icon_rect, tab.icon(), icon_color);
 
-        // Label
-        let text_color = if is_active || hovered {
-            tokens.text
+        if is_compact {
+            // Vector Icon centered in compact mode
+            let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(18.0));
+            paint_vector_icon(painter, icon_rect, tab.icon(), icon_color);
         } else {
-            tokens.text_muted
-        };
-        let font_id = FontId::proportional(13.0);
-        let galley =
-            painter.layout_no_wrap(tab.label_for(lang_code).to_owned(), font_id, text_color);
-        let text_pos = Pos2::new(rect.left() + 38.0, rect.center().y - galley.size().y * 0.5);
-        painter.galley(text_pos, galley, text_color);
+            // Vector Icon
+            let icon_rect = Rect::from_center_size(
+                Pos2::new(rect.left() + 20.0, rect.center().y),
+                Vec2::splat(16.0),
+            );
+            paint_vector_icon(painter, icon_rect, tab.icon(), icon_color);
+
+            // Label
+            let text_color = if is_active || hovered {
+                tokens.text
+            } else {
+                tokens.text_muted
+            };
+            let font_id = FontId::proportional(13.0);
+            let galley =
+                painter.layout_no_wrap(tab.label_for(lang_code).to_owned(), font_id, text_color);
+            let text_pos = Pos2::new(rect.left() + 38.0, rect.center().y - galley.size().y * 0.5);
+            painter.galley(text_pos, galley, text_color);
+        }
     }
 
-    response.clicked()
+    if is_compact {
+        response.on_hover_text(tab.label_for(lang_code)).clicked()
+    } else {
+        response.clicked()
+    }
 }
 
 fn render_bottom_account_profile(
@@ -212,6 +235,7 @@ fn render_bottom_account_profile(
     };
 
     let popup_id = Id::new("mq_sidebar_quick_account_popup");
+    let is_compact = ui.available_width() < 120.0;
     let available_w = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(available_w, 40.0), Sense::click());
 
@@ -229,11 +253,6 @@ fn render_bottom_account_profile(
             );
         }
 
-        // 24x24 avatar
-        let avatar_rect = Rect::from_min_size(
-            Pos2::new(rect.left() + 6.0, rect.center().y - 12.0),
-            Vec2::splat(24.0),
-        );
         let fallback;
         let resolved = match avatar_opt {
             Some(av) if av.rgba.len() == mq_auth::SkinHeadAvatar::BYTE_LEN => av,
@@ -242,32 +261,49 @@ fn render_bottom_account_profile(
                 &fallback
             }
         };
-        crate::widgets::paint_skin_head_in_rect(painter, avatar_rect, resolved);
 
-        // Nickname + account type
-        let name_font = FontId::proportional(12.5);
-        let galley = painter.layout_no_wrap(username.to_string(), name_font, tokens.text);
-        let name_pos = Pos2::new(rect.left() + 36.0, rect.top() + 6.0);
-        painter.galley(name_pos, galley, tokens.text);
-
-        let kind_font = FontId::proportional(10.5);
-        let kind_galley =
-            painter.layout_no_wrap(kind_str.to_string(), kind_font, tokens.text_muted);
-        let kind_pos = Pos2::new(rect.left() + 36.0, rect.top() + 22.0);
-        painter.galley(kind_pos, kind_galley, tokens.text_muted);
-
-        // Chevron on right
-        let chev_rect = Rect::from_center_size(
-            Pos2::new(rect.right() - 14.0, rect.center().y),
-            Vec2::splat(12.0),
-        );
-        let icon = if accounts.len() > 1 {
-            VectorIcon::ChevronDown
+        if is_compact {
+            let avatar_rect = Rect::from_center_size(rect.center(), Vec2::splat(24.0));
+            crate::widgets::paint_skin_head_in_rect(painter, avatar_rect, resolved);
         } else {
-            VectorIcon::ChevronRight
-        };
-        paint_vector_icon(painter, chev_rect, icon, tokens.text_muted);
+            // 24x24 avatar
+            let avatar_rect = Rect::from_min_size(
+                Pos2::new(rect.left() + 6.0, rect.center().y - 12.0),
+                Vec2::splat(24.0),
+            );
+            crate::widgets::paint_skin_head_in_rect(painter, avatar_rect, resolved);
+
+            // Nickname + account type
+            let name_font = FontId::proportional(12.5);
+            let galley = painter.layout_no_wrap(username.to_string(), name_font, tokens.text);
+            let name_pos = Pos2::new(rect.left() + 36.0, rect.top() + 6.0);
+            painter.galley(name_pos, galley, tokens.text);
+
+            let kind_font = FontId::proportional(10.5);
+            let kind_galley =
+                painter.layout_no_wrap(kind_str.to_string(), kind_font, tokens.text_muted);
+            let kind_pos = Pos2::new(rect.left() + 36.0, rect.top() + 22.0);
+            painter.galley(kind_pos, kind_galley, tokens.text_muted);
+
+            // Chevron on right
+            let chev_rect = Rect::from_center_size(
+                Pos2::new(rect.right() - 14.0, rect.center().y),
+                Vec2::splat(12.0),
+            );
+            let icon = if accounts.len() > 1 {
+                VectorIcon::ChevronDown
+            } else {
+                VectorIcon::ChevronRight
+            };
+            paint_vector_icon(painter, chev_rect, icon, tokens.text_muted);
+        }
     }
+
+    let resp = if is_compact {
+        resp.on_hover_text(format!("{username} ({kind_str})"))
+    } else {
+        resp
+    };
 
     if resp.clicked() {
         if accounts.len() > 1 {
@@ -331,77 +367,136 @@ pub fn render_sidebar(
 ) -> Option<SidebarAction> {
     let mut action = None;
     let lang_popup_id = Id::new("mq_sidebar_language_popup");
+    let is_compact = ui.available_width() < 120.0;
 
-    // 1. Brand Header: MQ emblem + title + version 11px gray + Language button
-    ui.horizontal(|ui| {
-        let (emblem_rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
-        if ui.is_rect_visible(emblem_rect) {
-            paint_mq_emblem(ui.painter(), emblem_rect, tokens);
-        }
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            ui.label(
-                RichText::new("MQ LAUNCHER")
-                    .color(tokens.text)
-                    .size(14.0)
-                    .strong(),
-            );
-            ui.label(RichText::new("v2.0.0").color(tokens.text_muted).size(11.0));
-        });
+    if is_compact {
+        // Compact brand header: emblem centered + small globe button below
+        let emblem_rect = Rect::from_center_size(
+            Pos2::new(ui.available_rect_before_wrap().center().x, ui.cursor().top() + 18.0),
+            Vec2::splat(32.0),
+        );
+        let _ = ui.allocate_space(Vec2::new(ui.available_width(), 36.0));
+        paint_mq_emblem(ui.painter(), emblem_rect, tokens);
 
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let (globe_rect, globe_resp) =
-                ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
-            if ui.is_rect_visible(globe_rect) {
-                let hovered = globe_resp.hovered();
+        ui.add_space(4.0);
+        let (globe_rect, globe_resp) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::click());
+        if ui.is_rect_visible(globe_rect) {
+            let hovered = globe_resp.hovered();
+            let center_rect = Rect::from_center_size(globe_rect.center(), Vec2::splat(16.0));
+            paint_vector_icon(
+                ui.painter(),
+                center_rect,
+                VectorIcon::Globe,
                 if hovered {
-                    ui.painter()
-                        .rect_filled(globe_rect, RADIUS_BUTTON, tokens.bg_surface);
-                }
-                paint_vector_icon(
-                    ui.painter(),
-                    globe_rect.shrink(4.0),
-                    VectorIcon::Globe,
-                    if hovered {
-                        tokens.accent
-                    } else {
-                        tokens.text_muted
-                    },
-                );
-            }
-            if globe_resp.clicked() {
-                ui.memory_mut(|mem| mem.toggle_popup(lang_popup_id));
-            }
-
-            egui::popup_below_widget(
-                ui,
-                lang_popup_id,
-                &globe_resp,
-                egui::PopupCloseBehavior::CloseOnClickOutside,
-                |ui| {
-                    ui.set_min_width(150.0);
-                    ui.label(
-                        RichText::new("Язык / Language")
-                            .color(tokens.text_muted)
-                            .size(11.0),
-                    );
-                    ui.separator();
-                    for lang in Language::ALL {
-                        let is_current = lang_code == lang.code();
-                        if ui
-                            .selectable_label(is_current, lang.native_name())
-                            .clicked()
-                        {
-                            action = Some(SidebarAction::ChangeLanguage(lang.code().to_string()));
-                            ui.memory_mut(|mem| mem.close_popup());
-                        }
-                    }
+                    tokens.accent
+                } else {
+                    tokens.text_muted
                 },
             );
-        });
-    });
+        }
+        let globe_resp = globe_resp.on_hover_text("Язык / Language");
+        if globe_resp.clicked() {
+            ui.memory_mut(|mem| mem.toggle_popup(lang_popup_id));
+        }
 
-    ui.add_space(12.0);
+        egui::popup_below_widget(
+            ui,
+            lang_popup_id,
+            &globe_resp,
+            egui::PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                ui.set_min_width(150.0);
+                ui.label(
+                    RichText::new("Язык / Language")
+                        .color(tokens.text_muted)
+                        .size(11.0),
+                );
+                ui.separator();
+                for lang in Language::ALL {
+                    let is_current = lang_code == lang.code();
+                    if ui
+                        .selectable_label(is_current, lang.native_name())
+                        .clicked()
+                    {
+                        action = Some(SidebarAction::ChangeLanguage(lang.code().to_string()));
+                        ui.memory_mut(|mem| mem.close_popup());
+                    }
+                }
+            },
+        );
+    } else {
+        // 1. Brand Header: MQ emblem + title + version 11px gray + Language button
+        ui.horizontal(|ui| {
+            let (emblem_rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
+            if ui.is_rect_visible(emblem_rect) {
+                paint_mq_emblem(ui.painter(), emblem_rect, tokens);
+            }
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.label(
+                    RichText::new("MQ LAUNCHER")
+                        .color(tokens.text)
+                        .size(14.0)
+                        .strong(),
+                );
+                ui.label(RichText::new("v2.0.0").color(tokens.text_muted).size(11.0));
+            });
+
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let (globe_rect, globe_resp) =
+                    ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
+                if ui.is_rect_visible(globe_rect) {
+                    let hovered = globe_resp.hovered();
+                    if hovered {
+                        ui.painter()
+                            .rect_filled(globe_rect, RADIUS_BUTTON, tokens.bg_surface);
+                    }
+                    paint_vector_icon(
+                        ui.painter(),
+                        globe_rect.shrink(4.0),
+                        VectorIcon::Globe,
+                        if hovered {
+                            tokens.accent
+                        } else {
+                            tokens.text_muted
+                        },
+                    );
+                }
+                if globe_resp.clicked() {
+                    ui.memory_mut(|mem| mem.toggle_popup(lang_popup_id));
+                }
+
+                egui::popup_below_widget(
+                    ui,
+                    lang_popup_id,
+                    &globe_resp,
+                    egui::PopupCloseBehavior::CloseOnClickOutside,
+                    |ui| {
+                        ui.set_min_width(150.0);
+                        ui.label(
+                            RichText::new("Язык / Language")
+                                .color(tokens.text_muted)
+                                .size(11.0),
+                        );
+                        ui.separator();
+                        for lang in Language::ALL {
+                            let is_current = lang_code == lang.code();
+                            if ui
+                                .selectable_label(is_current, lang.native_name())
+                                .clicked()
+                            {
+                                action = Some(SidebarAction::ChangeLanguage(lang.code().to_string()));
+                                ui.memory_mut(|mem| mem.close_popup());
+                            }
+                        }
+                    },
+                );
+            });
+        });
+    }
+
+    ui.add_space(8.0);
     ui.separator();
     ui.add_space(8.0);
 
@@ -435,9 +530,10 @@ pub fn show_sidebar(
     lang_code: &str,
     tokens: &Tokens,
 ) -> Option<SidebarAction> {
+    let width = sidebar_width(ctx);
     SidePanel::left("mq_left_sidebar")
         .resizable(false)
-        .exact_width(SIDEBAR_WIDTH)
+        .exact_width(width)
         .frame(solid_sidebar_frame(tokens))
         .show(ctx, |ui| {
             render_sidebar(
@@ -465,5 +561,6 @@ mod tests {
         assert_eq!(NavTab::Settings.label(), "Настройки");
         assert_eq!(NavTab::ALL.len(), 5);
         assert_eq!(SIDEBAR_WIDTH, 220.0);
+        assert_eq!(COMPACT_SIDEBAR_WIDTH, 64.0);
     }
 }
