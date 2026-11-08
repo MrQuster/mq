@@ -13,6 +13,9 @@ categories = ["command-line-utilities"]
 name = "mq"
 path = "src/main.rs"
 
+[features]
+test-hooks = ["mq-ui/test-hooks"]
+
 [dependencies]
 mq-core.workspace = true
 mq-sched.workspace = true

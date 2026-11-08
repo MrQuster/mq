@@ -9,6 +9,9 @@ description = "Immediate-mode desktop user interface built with egui and eframe 
 keywords = ["minecraft", "launcher", "gui", "egui", "eframe"]
 categories = ["gui"]
 
+[features]
+test-hooks = []
+
 [dependencies]
 mq-core.workspace = true
 mq-sched.workspace = true

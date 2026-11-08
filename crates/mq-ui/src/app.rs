@@ -15,6 +15,81 @@ use crate::sidebar::{render_sidebar, sidebar_width, NavTab, SidebarAction};
 use crate::state::{UiState, UiWorkerCommand, UiWorkerResponse};
 use crate::theme::{apply_theme, solid_sidebar_frame, Tokens};
 
+#[cfg(any(feature = "test-hooks", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestAction {
+    Install {
+        mc_version: String,
+        loader: mq_core::ModLoaderKind,
+    },
+}
+
+#[cfg(any(feature = "test-hooks", test))]
+pub fn parse_test_action(raw: &str) -> Option<TestAction> {
+    let trimmed = raw.trim();
+    let rest = trimmed.strip_prefix("install:")?;
+    let mut parts = rest.split(':');
+    let mc_version = parts.next()?.trim();
+    if mc_version.is_empty() {
+        return None;
+    }
+    let loader = match parts.next() {
+        Some(ldr_str) if !ldr_str.trim().is_empty() => {
+            ldr_str.trim().parse::<mq_core::ModLoaderKind>().ok()?
+        }
+        _ => mq_core::ModLoaderKind::Vanilla,
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(TestAction::Install {
+        mc_version: mc_version.to_string(),
+        loader,
+    })
+}
+
+#[cfg(feature = "test-hooks")]
+#[derive(Debug, Clone)]
+struct TestHookRuntimeState {
+    initialized: bool,
+    action_active: bool,
+    started_at: Option<std::time::Instant>,
+    cancel_after_ms: Option<u64>,
+    cancel_sent: bool,
+    exit_on_finish: bool,
+    finish_frames: u32,
+}
+
+#[cfg(feature = "test-hooks")]
+impl Default for TestHookRuntimeState {
+    fn default() -> Self {
+        Self {
+            initialized: false,
+            action_active: false,
+            started_at: None,
+            cancel_after_ms: None,
+            cancel_sent: false,
+            exit_on_finish: false,
+            finish_frames: 0,
+        }
+    }
+}
+
+#[inline]
+fn configured_mock_base_url() -> Option<String> {
+    #[cfg(feature = "test-hooks")]
+    {
+        std::env::var("MQ_TEST_MOCK_URL")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    }
+    #[cfg(not(feature = "test-hooks"))]
+    {
+        None
+    }
+}
+
 pub struct MqApp {
     pub state: UiState,
     pub current_tab: NavTab,
@@ -240,7 +315,7 @@ impl MqApp {
                                     loader: inst.loader,
                                     loader_version: inst.loader_version.clone(),
                                     instance_dir: inst_dir.clone(),
-                                    mock_base_url: None,
+                                    mock_base_url: configured_mock_base_url(),
                                 };
 
                                 match mq_install::install_game(
@@ -319,7 +394,7 @@ impl MqApp {
                                 loader: inst.loader,
                                 loader_version: inst.loader_version.clone(),
                                 instance_dir: inst_dir.clone(),
-                                mock_base_url: None,
+                                mock_base_url: configured_mock_base_url(),
                             };
 
                             match mq_install::install_game(
@@ -392,7 +467,7 @@ impl MqApp {
                                 loader: inst.loader,
                                 loader_version: inst.loader_version.clone(),
                                 instance_dir: inst_dir.clone(),
-                                mock_base_url: None,
+                                mock_base_url: configured_mock_base_url(),
                             };
 
                             match mq_install::install_game(
@@ -473,7 +548,7 @@ impl MqApp {
                                     loader: inst.loader,
                                     loader_version: inst.loader_version.clone(),
                                     instance_dir: inst_dir.clone(),
-                                    mock_base_url: None,
+                                    mock_base_url: configured_mock_base_url(),
                                 };
 
                                 match mq_install::install_game(
@@ -786,6 +861,128 @@ impl MqApp {
             NavTab::Settings => self.settings_view.ui(ui, &mut self.state),
         });
     }
+    #[cfg(feature = "test-hooks")]
+    pub fn step_test_hooks(&mut self, ctx: &egui::Context) {
+        let hook_id = egui::Id::new("mq_test_hook_state");
+        let mut hook = ctx.data_mut(|d| {
+            d.get_temp::<TestHookRuntimeState>(hook_id)
+                .unwrap_or_default()
+        });
+
+        if !hook.initialized {
+            hook.initialized = true;
+            hook.cancel_after_ms = std::env::var("MQ_TEST_CANCEL_AFTER_MS")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok());
+            hook.exit_on_finish = std::env::var("MQ_TEST_EXIT_ON_FINISH")
+                .ok()
+                .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+                .unwrap_or(false);
+
+            if let Ok(raw_action) = std::env::var("MQ_TEST_ACTION") {
+                if let Some(TestAction::Install { mc_version, loader }) =
+                    parse_test_action(&raw_action)
+                {
+                    let existing_id = self
+                        .state
+                        .instances
+                        .iter()
+                        .find(|i| i.mc_version == mc_version && i.loader == loader)
+                        .map(|i| i.id.clone());
+
+                    let inst_id_opt = if let Some(id) = existing_id {
+                        Some(id)
+                    } else {
+                        let inst_name = format!("{} {}", mc_version, loader.as_str());
+                        match self.state.instance_mgr.create_instance(
+                            &inst_name,
+                            &mc_version,
+                            loader,
+                            None,
+                        ) {
+                            Ok(mut manifest) => {
+                                manifest.memory_max_mb = self.state.create_inst_ram_mb;
+                                let _ = self.state.instance_mgr.save_instance(&manifest);
+                                let id = manifest.id.clone();
+                                self.state.instances.push(manifest);
+                                Some(id)
+                            }
+                            Err(e) => {
+                                tracing::error!("MQ_TEST_ACTION failed to create instance: {e}");
+                                self.state.status_message = Some((
+                                    format!("Ошибка создания инстанса (MQ_TEST_ACTION): {e}"),
+                                    true,
+                                ));
+                                None
+                            }
+                        }
+                    };
+
+                    if let Some(inst_id) = inst_id_opt {
+                        self.state.selected_instance_id = Some(inst_id.clone());
+                        self.state.installing_instance = Some(inst_id.clone());
+                        self.state.install_error = None;
+                        self.state.detailed_install_error = None;
+                        self.state.current_install_stage =
+                            crate::install_types::InstallStage::Manifest;
+                        self.state.install_retries_count = 0;
+                        self.state.install_eta_secs = None;
+                        self.state.status_message = Some((
+                            format!(
+                                "Инстанс '{}' выбран. Запущена автоматическая установка...",
+                                inst_id
+                            ),
+                            false,
+                        ));
+                        let _ = self
+                            .state
+                            .cmd_sender
+                            .send(UiWorkerCommand::InstallInstance {
+                                instance_id: inst_id,
+                            });
+                        hook.action_active = true;
+                        hook.started_at = Some(std::time::Instant::now());
+                    }
+                }
+            }
+        }
+
+        if hook.action_active {
+            if let (Some(cancel_ms), Some(started_at)) = (hook.cancel_after_ms, hook.started_at) {
+                if !hook.cancel_sent
+                    && started_at.elapsed() >= std::time::Duration::from_millis(cancel_ms)
+                {
+                    hook.cancel_sent = true;
+                    let _ = self.state.cmd_sender.send(UiWorkerCommand::CancelDownload);
+                }
+            }
+        }
+
+        ctx.data_mut(|d| d.insert_temp(hook_id, hook));
+    }
+
+    #[cfg(feature = "test-hooks")]
+    fn post_frame_test_hooks(&mut self, ctx: &egui::Context) {
+        let hook_id = egui::Id::new("mq_test_hook_state");
+        let mut hook = ctx.data_mut(|d| {
+            d.get_temp::<TestHookRuntimeState>(hook_id)
+                .unwrap_or_default()
+        });
+
+        if hook.action_active {
+            ctx.request_repaint();
+            let waiting_for_cancel = hook.cancel_after_ms.is_some() && !hook.cancel_sent;
+            if self.state.installing_instance.is_none() && !waiting_for_cancel {
+                hook.finish_frames = hook.finish_frames.saturating_add(1);
+                if hook.exit_on_finish && hook.finish_frames >= 3 {
+                    hook.action_active = false;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+
+        ctx.data_mut(|d| d.insert_temp(hook_id, hook));
+    }
 }
 
 impl eframe::App for MqApp {
@@ -797,6 +994,9 @@ impl eframe::App for MqApp {
         if is_zero_viewport(ctx) {
             return;
         }
+
+        #[cfg(feature = "test-hooks")]
+        self.step_test_hooks(ctx);
 
         // Drain background worker events
         self.state.drain_events();
@@ -892,6 +1092,9 @@ impl eframe::App for MqApp {
         if self.state.active_phase.is_some() || self.state.game_running {
             ctx.request_repaint();
         }
+
+        #[cfg(feature = "test-hooks")]
+        self.post_frame_test_hooks(ctx);
     }
 }
 
@@ -917,4 +1120,91 @@ pub fn run_gui(state: UiState, backend: GuiBackend) -> Result<(), eframe::Error>
         options,
         Box::new(|cc| Ok(Box::new(MqApp::new(cc, state)))),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mq_core::ModLoaderKind;
+
+    #[test]
+    fn parse_test_action_supports_version_and_loader_variants() {
+        assert_eq!(
+            parse_test_action("install:26.3"),
+            Some(TestAction::Install {
+                mc_version: "26.3".to_string(),
+                loader: ModLoaderKind::Vanilla,
+            })
+        );
+        assert_eq!(
+            parse_test_action("install:26.3:vanilla"),
+            Some(TestAction::Install {
+                mc_version: "26.3".to_string(),
+                loader: ModLoaderKind::Vanilla,
+            })
+        );
+        assert_eq!(
+            parse_test_action("  install:1.20.1:fabric  "),
+            Some(TestAction::Install {
+                mc_version: "1.20.1".to_string(),
+                loader: ModLoaderKind::Fabric,
+            })
+        );
+        assert_eq!(
+            parse_test_action("install:1.21.4:neoforge"),
+            Some(TestAction::Install {
+                mc_version: "1.21.4".to_string(),
+                loader: ModLoaderKind::NeoForge,
+            })
+        );
+        assert_eq!(parse_test_action(""), None);
+        assert_eq!(parse_test_action("install:"), None);
+        assert_eq!(parse_test_action("install:1.20.1:unknown"), None);
+        assert_eq!(parse_test_action("install:1.20.1:fabric:extra"), None);
+        assert_eq!(parse_test_action("launch:1.20.1"), None);
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[test]
+    fn step_test_hooks_creates_instance_and_queues_install_once() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let paths = mq_core::MqPaths::with_root(tmp.path().to_path_buf());
+        let config = mq_core::AppConfig::default();
+        let pool = std::sync::Arc::new(mq_sched::ComputePool::new(2));
+        let state = UiState::new(paths, config, pool).expect("ui state");
+
+        let mut app = MqApp {
+            state,
+            current_tab: NavTab::Instances,
+            instances_view: InstancesView::default(),
+            catalog_view: CatalogView::default(),
+            accounts_view: AccountsView::default(),
+            perf_view: PerfView,
+            settings_view: SettingsView::default(),
+        };
+
+        std::env::set_var("MQ_TEST_ACTION", "install:26.3:vanilla");
+        let ctx = egui::Context::default();
+
+        app.step_test_hooks(&ctx);
+        assert_eq!(app.state.instances.len(), 1);
+        assert_eq!(app.state.instances[0].mc_version, "26.3");
+        assert_eq!(app.state.instances[0].loader, ModLoaderKind::Vanilla);
+        let created_id = app.state.instances[0].id.clone();
+        assert_eq!(app.state.selected_instance_id, Some(created_id.clone()));
+        assert_eq!(app.state.installing_instance, Some(created_id.clone()));
+
+        match app.state.cmd_receiver.try_recv() {
+            Ok(UiWorkerCommand::InstallInstance { instance_id }) => {
+                assert_eq!(instance_id, created_id);
+            }
+            other => panic!("expected InstallInstance command, got {:?}", other.is_ok()),
+        }
+
+        // Calling step_test_hooks a second time on the same Context must not duplicate the command
+        app.step_test_hooks(&ctx);
+        assert!(app.state.cmd_receiver.try_recv().is_err());
+
+        std::env::remove_var("MQ_TEST_ACTION");
+    }
 }
