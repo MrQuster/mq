@@ -16,8 +16,8 @@ use crate::components::{
 };
 use crate::state::{UiState, UiWorkerCommand};
 use crate::theme::{
-    ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE, CARD_SURFACE_HOVER, RADIUS_CARD,
-    STATUS_DANGER, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY, Tokens,
+    Tokens, ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE, CARD_SURFACE_HOVER,
+    RADIUS_CARD, STATUS_DANGER, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY,
 };
 use crate::widgets::{
     danger_button, hero_action_button, loader_badge, paint_vector_icon, primary_emerald_button,
@@ -1560,8 +1560,12 @@ impl InstancesView {
                     let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
                     let (icon, icon_col) = match inst.loader {
                         ModLoaderKind::Vanilla => (VectorIcon::Cube, tokens.text),
-                        ModLoaderKind::Fabric | ModLoaderKind::Quilt => (VectorIcon::Layers, tokens.accent),
-                        ModLoaderKind::Forge | ModLoaderKind::NeoForge => (VectorIcon::Shield, ACCENT_COBALT),
+                        ModLoaderKind::Fabric | ModLoaderKind::Quilt => {
+                            (VectorIcon::Layers, tokens.accent)
+                        }
+                        ModLoaderKind::Forge | ModLoaderKind::NeoForge => {
+                            (VectorIcon::Shield, ACCENT_COBALT)
+                        }
                     };
                     paint_vector_icon(ui.painter(), icon_rect, icon, icon_col);
 
@@ -1598,8 +1602,14 @@ impl InstancesView {
 
                 ui.horizontal(|ui| {
                     let (dot_rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
-                    ui.painter().circle_filled(dot_rect.center(), 3.5, status_col);
-                    ui.label(RichText::new(status_text).color(status_col).small().strong());
+                    ui.painter()
+                        .circle_filled(dot_rect.center(), 3.5, status_col);
+                    ui.label(
+                        RichText::new(status_text)
+                            .color(status_col)
+                            .small()
+                            .strong(),
+                    );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let hours = (inst.playtime_secs as f32) / 3600.0;
@@ -1610,11 +1620,7 @@ impl InstancesView {
                                     .small(),
                             );
                         } else {
-                            ui.label(
-                                RichText::new("Новый")
-                                    .color(tokens.text_muted)
-                                    .small(),
-                            );
+                            ui.label(RichText::new("Новый").color(tokens.text_muted).small());
                         }
                     });
                 });
@@ -1625,17 +1631,23 @@ impl InstancesView {
 
                 // Bottom row: Actions
                 ui.horizontal(|ui| {
-                    let play_label = if is_running { "Стоп" } else { "Играть" };
+                    let play_label = if is_running {
+                        "Стоп"
+                    } else {
+                        "Играть"
+                    };
                     if primary_emerald_button(ui, Some(VectorIcon::Play), play_label).clicked() {
                         state.selected_instance_id = Some(inst.id.clone());
                     }
 
-                    if secondary_glass_button(ui, Some(VectorIcon::Settings), "Детали").clicked() {
+                    if secondary_glass_button(ui, Some(VectorIcon::Settings), "Детали").clicked()
+                    {
                         state.selected_instance_id = Some(inst.id.clone());
                         self.view_mode = InstanceViewMode::List;
                     }
 
-                    if secondary_glass_button(ui, Some(VectorIcon::Folder), "Папка").clicked() {
+                    if secondary_glass_button(ui, Some(VectorIcon::Folder), "Папка").clicked()
+                    {
                         let inst_dir = state.paths.instance_dir(inst.id.as_str());
                         let _ = crate::opener::open_that(inst_dir);
                     }

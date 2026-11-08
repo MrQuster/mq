@@ -153,7 +153,12 @@ impl SettingsView {
             ui.set_width(ui.available_width());
 
             // 1. Presets Row
-            ui.label(RichText::new("1. Готовые пресеты тем").color(tokens.text).strong().size(14.0));
+            ui.label(
+                RichText::new("1. Готовые пресеты тем")
+                    .color(tokens.text)
+                    .strong()
+                    .size(14.0),
+            );
             ui.add_space(4.0);
 
             let mut preset_changed = false;
@@ -176,7 +181,12 @@ impl SettingsView {
             ui.add_space(10.0);
 
             // 2. Live Preview Card
-            ui.label(RichText::new("Живое превью стиля темы").color(tokens.text).strong().size(13.0));
+            ui.label(
+                RichText::new("Живое превью стиля темы")
+                    .color(tokens.text)
+                    .strong()
+                    .size(13.0),
+            );
             ui.add_space(4.0);
 
             let preview_card = egui::Frame::new()
@@ -248,9 +258,7 @@ impl SettingsView {
             ui.add_space(6.0);
 
             ui.vertical(|ui| {
-                ui.label(
-                    RichText::new("Прозрачность карточек (Card Opacity):").color(tokens.text),
-                );
+                ui.label(RichText::new("Прозрачность карточек (Card Opacity):").color(tokens.text));
                 ui.add_space(2.0);
                 if ui
                     .add_sized(

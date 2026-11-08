@@ -30,7 +30,7 @@ use mq_install::{
     build_game_install_dag_plan, collect_instance_verify_targets, install_game,
     verify_files_parallel, CasStore, InstallRequest,
 };
-use mq_instances::{InstanceManifest, InstanceManager};
+use mq_instances::{InstanceManager, InstanceManifest};
 use mq_launch::{
     build_launch_command, discover_java_runtimes, ensure_prelaunch_assets,
     required_java_major_for_mc, select_java_runtime, spawn_and_stream_game,
@@ -1975,7 +1975,8 @@ async fn build_snapshot_app(
         // 1. Instances: Vanilla 1.21.4, Fabric Optimization, NeoForge Adventures
         let inst1_dir = demo_paths.instance_dir("vanilla-1-21-4");
         std::fs::create_dir_all(&inst1_dir)?;
-        let mut m1 = InstanceManifest::new("Vanilla 1.21.4", "1.21.4", ModLoaderKind::Vanilla, None);
+        let mut m1 =
+            InstanceManifest::new("Vanilla 1.21.4", "1.21.4", ModLoaderKind::Vanilla, None);
         m1.id = InstanceId::new("vanilla-1-21-4")?;
         m1.playtime_secs = 18_420;
         m1.last_played = Some(chrono::Utc::now() - chrono::Duration::hours(2));
@@ -1991,7 +1992,10 @@ async fn build_snapshot_app(
             "assets_count": 1280,
             "natives_count": 8
         });
-        std::fs::write(inst1_dir.join("install_state.json"), serde_json::to_string_pretty(&st1)?)?;
+        std::fs::write(
+            inst1_dir.join("install_state.json"),
+            serde_json::to_string_pretty(&st1)?,
+        )?;
 
         let inst2_dir = demo_paths.instance_dir("fabric-optimization");
         std::fs::create_dir_all(&inst2_dir)?;
@@ -2017,14 +2021,26 @@ async fn build_snapshot_app(
             "assets_count": 1340,
             "natives_count": 8
         });
-        std::fs::write(inst2_dir.join("install_state.json"), serde_json::to_string_pretty(&st2)?)?;
+        std::fs::write(
+            inst2_dir.join("install_state.json"),
+            serde_json::to_string_pretty(&st2)?,
+        )?;
 
         let shaders_dir = inst2_dir.join("shaderpacks");
         std::fs::create_dir_all(&shaders_dir)?;
-        std::fs::write(shaders_dir.join("ComplementaryReimagined_r5.2.2.zip"), vec![0u8; 3_452_190])?;
+        std::fs::write(
+            shaders_dir.join("ComplementaryReimagined_r5.2.2.zip"),
+            vec![0u8; 3_452_190],
+        )?;
         std::fs::write(shaders_dir.join("BSL_v8.2.09.zip"), vec![0u8; 2_150_840])?;
-        std::fs::write(shaders_dir.join("Solas_Shader_V2.1.zip"), vec![0u8; 1_842_300])?;
-        std::fs::write(shaders_dir.join("Make_Up_Ultra_Fast_v8.8.zip.disabled"), vec![0u8; 1_280_450])?;
+        std::fs::write(
+            shaders_dir.join("Solas_Shader_V2.1.zip"),
+            vec![0u8; 1_842_300],
+        )?;
+        std::fs::write(
+            shaders_dir.join("Make_Up_Ultra_Fast_v8.8.zip.disabled"),
+            vec![0u8; 1_280_450],
+        )?;
 
         let inst3_dir = demo_paths.instance_dir("neoforge-adventures");
         std::fs::create_dir_all(&inst3_dir)?;
@@ -2050,7 +2066,10 @@ async fn build_snapshot_app(
             "assets_count": 1340,
             "natives_count": 8
         });
-        std::fs::write(inst3_dir.join("install_state.json"), serde_json::to_string_pretty(&st3)?)?;
+        std::fs::write(
+            inst3_dir.join("install_state.json"),
+            serde_json::to_string_pretty(&st3)?,
+        )?;
 
         state.instances = vec![m1, m2, m3];
         state.selected_instance_id = Some(InstanceId::new("fabric-optimization")?);
@@ -2256,10 +2275,22 @@ async fn build_snapshot_app(
         state.latest_cpu = CpuSnapshot {
             total_pct: 4.2,
             per_core: vec![
-                CoreCpuLoad { core_id: 0, usage_pct: 4.5 },
-                CoreCpuLoad { core_id: 1, usage_pct: 3.8 },
-                CoreCpuLoad { core_id: 2, usage_pct: 4.4 },
-                CoreCpuLoad { core_id: 3, usage_pct: 4.1 },
+                CoreCpuLoad {
+                    core_id: 0,
+                    usage_pct: 4.5,
+                },
+                CoreCpuLoad {
+                    core_id: 1,
+                    usage_pct: 3.8,
+                },
+                CoreCpuLoad {
+                    core_id: 2,
+                    usage_pct: 4.4,
+                },
+                CoreCpuLoad {
+                    core_id: 3,
+                    usage_pct: 4.1,
+                },
             ],
             rss_mib: 142.0,
         };
@@ -2389,7 +2420,9 @@ async fn cmd_ui_snapshot(
         ];
 
         let out_dir = if args.out.extension().is_some() {
-            args.out.parent().unwrap_or_else(|| std::path::Path::new("docs/assets/screenshots"))
+            args.out
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("docs/assets/screenshots"))
         } else {
             args.out.as_path()
         };
@@ -2408,7 +2441,10 @@ async fn cmd_ui_snapshot(
             let (mut app, _guard) = build_snapshot_app(scr, is_demo, &paths, threads).await?;
             mq_ui::capture_app_snapshot(&mut app, args.width, args.height, &out_file).await?;
         }
-        println!("[MQ] Все 7 снимков успешно сгенерированы в {}", out_dir.display());
+        println!(
+            "[MQ] Все 7 снимков успешно сгенерированы в {}",
+            out_dir.display()
+        );
     } else {
         println!(
             "[MQ] Генерация снимка экрана '{}' ({}x{}, demo: {})...",

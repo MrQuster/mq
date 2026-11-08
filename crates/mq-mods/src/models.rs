@@ -9,8 +9,11 @@ use mq_core::{ModLoaderKind, MqError, MqResult, Sha1Digest, Sha512Digest};
 use serde::{Deserialize, Serialize};
 
 /// Mandatory User-Agent header sent on all Modrinth and CurseForge HTTP requests.
-pub const MQ_USER_AGENT: &str =
-    concat!("mq-launcher/", env!("CARGO_PKG_VERSION"), " (https://github.com/MrQuster/mq)");
+pub const MQ_USER_AGENT: &str = concat!(
+    "mq-launcher/",
+    env!("CARGO_PKG_VERSION"),
+    " (https://github.com/MrQuster/mq)"
+);
 
 /// Upstream mod ecosystem catalog provider.
 #[derive(
