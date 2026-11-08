@@ -158,6 +158,23 @@ impl InstallError {
         let raw_lower = raw.to_lowercase();
         let url = Self::extract_url_from_text(raw);
 
+        // 0. Internal failure or worker panic
+        if raw_lower.contains("установка прервана из-за внутренней ошибки")
+            || raw_lower.contains("внутренней ошибки")
+            || raw_lower.contains("паника")
+            || raw_lower.contains("panic")
+        {
+            return (
+                "Установка прервана из-за внутренней ошибки".to_string(),
+                format!(
+                    "В процессе установки произошла внутренняя ошибка. Отчёт об аварии записан в журнал: {raw}"
+                ),
+                url,
+                None,
+                true,
+            );
+        }
+
         // 1. HTTP 404 Not Found
         if raw_lower.contains("404") || raw_lower.contains("not found") {
             return (

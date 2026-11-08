@@ -5,7 +5,7 @@ use egui::{CornerRadius, Rect, Ui, Vec2};
 use crate::theme::Tokens;
 
 pub fn render_progress_bar(ui: &mut Ui, tokens: &Tokens, progress: f32, height: f32) {
-    let p = progress.clamp(0.0, 1.0);
+    let p = crate::state::safe_progress_clamp(progress);
     let desired_width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(
         Vec2::new(desired_width, height.max(2.0)),
