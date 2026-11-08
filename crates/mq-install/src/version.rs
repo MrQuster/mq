@@ -1,6 +1,8 @@
 //! Resilient `version.json` parsing, cycle-safe `inheritsFrom` resolution,
 //! and forward-compatibility with modern Minecraft formats (including 26.x).
 
+#![allow(clippy::result_large_err)]
+
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 

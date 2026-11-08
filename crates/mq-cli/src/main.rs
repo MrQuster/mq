@@ -498,6 +498,7 @@ struct BenchArgs {
 }
 
 #[cfg(target_os = "linux")]
+#[allow(clippy::unnecessary_cast)]
 fn bump_nofile_limit() {
     unsafe {
         let mut rlim = libc::rlimit {
@@ -2526,6 +2527,8 @@ async fn build_snapshot_app(
             accounts_view,
             perf_view: mq_ui::PerfView,
             settings_view,
+            frame_crash_message: None,
+            recovery_journal: None,
         };
 
         Ok((app, Some(temp_dir)))
@@ -2568,6 +2571,8 @@ async fn build_snapshot_app(
             accounts_view: mq_ui::AccountsView::default(),
             perf_view: mq_ui::PerfView,
             settings_view: mq_ui::SettingsView::default(),
+            frame_crash_message: None,
+            recovery_journal: None,
         };
 
         if screen == "detail" {

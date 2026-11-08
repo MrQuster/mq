@@ -669,7 +669,7 @@ mod tests {
 
             let ratio = safe_progress_ratio(done, total);
             assert!(
-                ratio >= 0.0 && ratio <= 1.0,
+                (0.0..=1.0).contains(&ratio),
                 "ratio out of bounds: {ratio} for done={done}, total={total}"
             );
             assert!(
@@ -688,14 +688,14 @@ mod tests {
 
             let unit_clamped = safe_progress_clamp(val);
             assert!(
-                unit_clamped >= 0.0 && unit_clamped <= 1.0,
+                (0.0..=1.0).contains(&unit_clamped),
                 "unit clamped out of range: {unit_clamped} for val={val}"
             );
 
             let speed = extreme_f64[(next_rand() as usize) % extreme_f64.len()];
             let eta = calculate_eta_secs(done, total, speed);
             if let Some(secs) = eta {
-                assert!(secs <= u64::MAX);
+                let _ = secs;
             }
 
             let phase_str = string_samples[(next_rand() as usize) % string_samples.len()];

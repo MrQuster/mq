@@ -581,7 +581,7 @@ impl NetEngine {
                         let is_final = completed_items == total_items;
                         let should_emit = is_first
                             || is_final
-                            || last_progress_at.map_or(true, |t| t.elapsed() >= PROGRESS_INTERVAL);
+                            || last_progress_at.is_none_or(|t| t.elapsed() >= PROGRESS_INTERVAL);
 
                         if should_emit {
                             last_progress_at = Some(Instant::now());
