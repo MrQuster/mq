@@ -6,12 +6,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use mq_core::crash::InstallJournal;
+use mq_core::fs_util::{
+    remove_dir_all_with_retry, remove_file_with_retry, rename_with_retry,
+    validate_windows_safe_filename,
+};
 use mq_core::{Event, EventBus, ModLoaderKind, MqError, MqPaths, MqResult};
 use mq_meta::{
     fetch_asset_index_raw, fetch_fabric_loader_versions, fetch_fabric_profile,
-    fetch_quilt_loader_versions, fetch_quilt_profile, fetch_vanilla_version,
-    fetch_version_manifest, find_version_entry, merge_inherits_from, parse_asset_index, AssetIndex,
-    ResolvedVersion, RuleContext,
+    fetch_quilt_loader_versions, fetch_quilt_profile, fetch_version_manifest, find_version_entry,
+    merge_inherits_from, parse_asset_index, AssetIndex, ResolvedVersion, RuleContext,
 };
 use mq_net::{DownloadSpec, NetEngine};
 use mq_sched::{ComputePool, DagNodeSpec, DagPlan, EpochGuard};
@@ -22,6 +26,7 @@ use crate::state::{
     check_free_disk_space, InstallClientJarInfo, InstallError, InstallJavaInfo, InstallStage,
     InstallState, InstallStatus, InstanceInstallLock,
 };
+use crate::version::resolve_version_inherits_from_async;
 
 /// Request specifying which version and loader to install into an instance.
 #[derive(Debug, Clone)]
@@ -232,15 +237,36 @@ pub async fn install_game(
     epoch_guard: &EpochGuard,
     event_bus: Option<&EventBus>,
 ) -> MqResult<InstallSummary> {
+    let folder_name = req
+        .instance_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    if !validate_windows_safe_filename(folder_name) {
+        return Err(MqError::Internal(format!(
+            "Недопустимое имя папки инстанса '{folder_name}': зарезервированное имя Windows или содержит запрещенные символы"
+        )));
+    }
+
+    let instance_id = if folder_name.is_empty() {
+        &req.mc_version
+    } else {
+        folder_name
+    };
+
     let start = Instant::now();
     paths.ensure_dirs()?;
     fs::create_dir_all(&req.instance_dir)?;
 
-    let instance_id = req
-        .instance_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(&req.mc_version);
+    // 0. Initialize install.journal with active status
+    let mut journal = InstallJournal::start(
+        paths,
+        instance_id,
+        &req.mc_version,
+        &req.loader.to_string(),
+        "manifest",
+    )?;
 
     // 1. Inter-process and in-process installation lock
     let _install_lock = InstanceInstallLock::acquire(&req.instance_dir, instance_id).await?;
@@ -257,7 +283,7 @@ pub async fn install_game(
     // 3. Prepare temporary working directory `<instance_dir>/.installing/`
     let installing_dir = req.instance_dir.join(".installing");
     if installing_dir.exists() {
-        let _ = fs::remove_dir_all(&installing_dir);
+        let _ = remove_dir_all_with_retry(&installing_dir);
     }
     fs::create_dir_all(&installing_dir)?;
     fs::create_dir_all(installing_dir.join("natives"))?;
@@ -272,21 +298,29 @@ pub async fn install_game(
         event_bus,
         &installing_dir,
         &mut state,
+        &mut journal,
         start,
     )
     .await;
 
     match res {
-        Ok(summary) => Ok(summary),
+        Ok(summary) => {
+            let _ = journal.mark_closed(paths);
+            Ok(summary)
+        }
         Err((stage, err)) => {
             // Clean up temporary .installing directory on failure or cancellation
-            let _ = fs::remove_dir_all(&installing_dir);
+            let _ = remove_dir_all_with_retry(&installing_dir);
 
             // Record failure in install_state.json
             let install_err = InstallError::from_mq_error(stage, &err);
             state.status = InstallStatus::Failed;
             state.last_error = Some(install_err);
             let _ = state.save(&req.instance_dir);
+
+            // Record failure in install.journal and mark closed
+            let _ = journal.record_error(paths, err.to_string());
+            let _ = journal.mark_closed(paths);
 
             Err(err)
         }
@@ -304,6 +338,7 @@ async fn install_game_transactional(
     event_bus: Option<&EventBus>,
     installing_dir: &Path,
     state: &mut InstallState,
+    journal: &mut InstallJournal,
     start: Instant,
 ) -> Result<InstallSummary, (InstallStage, MqError)> {
     let mut current_stage = InstallStage::Manifest;
@@ -325,6 +360,12 @@ async fn install_game_transactional(
     }
 
     // 1. Fetch Version Manifest
+    let _ = journal.record_stage(
+        paths,
+        "manifest",
+        format!("Загрузка манифеста версий Mojang для {}", req.mc_version),
+    );
+
     let client = reqwest::Client::builder()
         .user_agent(mq_net::USER_AGENT)
         .build()
@@ -337,6 +378,11 @@ async fn install_game_transactional(
 
     // 2. Fetch Vanilla version.json
     current_stage = InstallStage::VersionJson;
+    let _ = journal.record_stage(
+        paths,
+        "version_json",
+        format!("Загрузка и парсинг version.json для {}", req.mc_version),
+    );
     if epoch_guard.is_cancelled() {
         return Err((
             current_stage,
@@ -347,13 +393,101 @@ async fn install_game_transactional(
     }
 
     let rule_ctx = RuleContext::linux_x86_64();
-    let mut resolved_ver = fetch_vanilla_version(&client, entry, &rule_ctx)
+    let raw_version_json = client
+        .get(&entry.url)
+        .send()
         .await
-        .map_err(|e| (current_stage, e))?;
+        .map_err(|e| (current_stage, MqError::Network(e.to_string())))?
+        .error_for_status()
+        .map_err(|e| (current_stage, MqError::Network(e.to_string())))?
+        .text()
+        .await
+        .map_err(|e| (current_stage, MqError::Network(e.to_string())))?;
+
+    let mut resolved_ver =
+        resolve_version_inherits_from_async(&raw_version_json, &rule_ctx, |parent_id| {
+            let client = client.clone();
+            let mock_url = req.mock_base_url.clone();
+            async move {
+                let manifest = fetch_version_manifest(&client, mock_url.as_deref())
+                    .await
+                    .map_err(|e| InstallError {
+                        stage: InstallStage::VersionJson,
+                        localized_title: "Сбой загрузки манифеста версий".to_string(),
+                        localized_details: format!(
+                            "Не удалось загрузить манифест версий для inheritsFrom: {e}"
+                        ),
+                        target_url: None,
+                        file_path: None,
+                        http_status: None,
+                        is_retryable: e.is_retryable(),
+                        raw_cause: e.to_string(),
+                    })?;
+                let parent_entry =
+                    find_version_entry(&manifest, &parent_id).map_err(|e| InstallError {
+                        stage: InstallStage::VersionJson,
+                        localized_title: "Родительская версия не найдена".to_string(),
+                        localized_details: format!(
+                            "Версия '{parent_id}' отсутствует в манифесте версий: {e}"
+                        ),
+                        target_url: None,
+                        file_path: None,
+                        http_status: None,
+                        is_retryable: false,
+                        raw_cause: e.to_string(),
+                    })?;
+                let resp = client
+                    .get(&parent_entry.url)
+                    .send()
+                    .await
+                    .map_err(|e| InstallError {
+                        stage: InstallStage::VersionJson,
+                        localized_title: "Сетевая ошибка".to_string(),
+                        localized_details: format!(
+                            "Не удалось загрузить конфигурацию родительской версии: {e}"
+                        ),
+                        target_url: Some(parent_entry.url.clone()),
+                        file_path: None,
+                        http_status: None,
+                        is_retryable: true,
+                        raw_cause: e.to_string(),
+                    })?
+                    .error_for_status()
+                    .map_err(|e| InstallError {
+                        stage: InstallStage::VersionJson,
+                        localized_title: "Ошибка HTTP".to_string(),
+                        localized_details: format!(
+                            "HTTP ошибка при загрузке родительской версии: {e}"
+                        ),
+                        target_url: Some(parent_entry.url.clone()),
+                        file_path: None,
+                        http_status: e.status().map(|s| s.as_u16()),
+                        is_retryable: false,
+                        raw_cause: e.to_string(),
+                    })?;
+                resp.text().await.map_err(|e| InstallError {
+                    stage: InstallStage::VersionJson,
+                    localized_title: "Ошибка чтения ответа".to_string(),
+                    localized_details: format!("Не удалось прочитать тело ответа: {e}"),
+                    target_url: None,
+                    file_path: None,
+                    http_status: None,
+                    is_retryable: false,
+                    raw_cause: e.to_string(),
+                })
+            }
+        })
+        .await
+        .map_err(|e| (current_stage, MqError::Metadata(e.localized_details)))?;
 
     // 3. ModLoader resolution if requested
     if req.loader != ModLoaderKind::Vanilla {
         current_stage = InstallStage::ModLoader;
+        let _ = journal.record_stage(
+            paths,
+            "loader",
+            format!("Разрешение и слияние профиля модлоадера {}", req.loader),
+        );
         if epoch_guard.is_cancelled() {
             return Err((
                 current_stage,
@@ -436,6 +570,14 @@ async fn install_game_transactional(
 
     // 3b. Ensure compatible Java runtime is present (Mojang / System / Adoptium / Zulu)
     current_stage = InstallStage::JavaRuntime;
+    let _ = journal.record_stage(
+        paths,
+        "java_runtime",
+        format!(
+            "Проверка среды выполнения Java (major {})",
+            resolved_ver.java_version.major_version
+        ),
+    );
     if let Some(bus) = event_bus {
         bus.publish(Event::PhaseStarted {
             phase: "java_runtime".to_string(),
@@ -467,6 +609,11 @@ async fn install_game_transactional(
 
     // 4. Fetch Asset Index
     current_stage = InstallStage::Assets;
+    let _ = journal.record_stage(
+        paths,
+        "assets_index",
+        format!("Загрузка индекса ресурсов {}", resolved_ver.asset_index.id),
+    );
     if epoch_guard.is_cancelled() {
         return Err((
             current_stage,
@@ -552,6 +699,14 @@ async fn install_game_transactional(
 
     // 6. Build Download Specs with fast CAS resumption and safe mirrors
     current_stage = InstallStage::Libraries;
+    let _ = journal.record_stage(
+        paths,
+        "libraries",
+        format!(
+            "Подготовка и загрузка {} библиотек",
+            resolved_ver.libraries.len()
+        ),
+    );
     if epoch_guard.is_cancelled() {
         return Err((
             current_stage,
@@ -679,6 +834,15 @@ async fn install_game_transactional(
     let mut prioritized_objs = lang_objs;
     prioritized_objs.append(&mut other_objs);
 
+    let _ = journal.record_stage(
+        paths,
+        "assets_objects",
+        format!(
+            "Подготовка и загрузка {} объектов ассетов",
+            prioritized_objs.len()
+        ),
+    );
+
     for obj in prioritized_objs {
         let rel_path = obj.relative_object_path();
         let target = objects_base.join(&rel_path);
@@ -724,7 +888,7 @@ async fn install_game_transactional(
             fs::create_dir_all(p).map_err(|e| (current_stage, MqError::Io(e)))?;
         }
         if dst.exists() {
-            let _ = fs::remove_file(&dst);
+            let _ = remove_file_with_retry(&dst);
         }
         if fs::hard_link(&src, &dst).is_ok() {
             hardlinks_created += 1;
@@ -836,27 +1000,32 @@ async fn install_game_transactional(
 
     // 12. Atomic Commit (Swap) from `.installing/` to `<instance_dir>/`
     current_stage = InstallStage::Finalize;
+    let _ = journal.record_stage(
+        paths,
+        "finalize",
+        "Финализация установки: верификация и атомарная замена файлов",
+    );
 
     // Atomic move of client.jar
     let final_client_jar = req.instance_dir.join("client.jar");
-    fs::rename(&installed_client_jar, &final_client_jar)
+    rename_with_retry(&installed_client_jar, &final_client_jar)
         .map_err(|e| (current_stage, MqError::Io(e)))?;
 
     // Atomic move of resolved_version.json
     let final_resolved_json = req.instance_dir.join("resolved_version.json");
-    fs::rename(&installing_resolved_json, &final_resolved_json)
+    rename_with_retry(&installing_resolved_json, &final_resolved_json)
         .map_err(|e| (current_stage, MqError::Io(e)))?;
 
     // Atomic swap of natives
     let final_natives_dir = req.instance_dir.join("natives");
     let old_natives_dir = req.instance_dir.join(".natives.old");
     if final_natives_dir.exists() {
-        let _ = fs::rename(&final_natives_dir, &old_natives_dir);
+        let _ = rename_with_retry(&final_natives_dir, &old_natives_dir);
     }
-    fs::rename(&installing_natives_dir, &final_natives_dir)
+    rename_with_retry(&installing_natives_dir, &final_natives_dir)
         .map_err(|e| (current_stage, MqError::Io(e)))?;
     if old_natives_dir.exists() {
-        let _ = fs::remove_dir_all(&old_natives_dir);
+        let _ = remove_dir_all_with_retry(&old_natives_dir);
     }
 
     // Atomic swap of resources if present
@@ -865,16 +1034,16 @@ async fn install_game_transactional(
         let final_resources = req.instance_dir.join("resources");
         let old_resources = req.instance_dir.join(".resources.old");
         if final_resources.exists() {
-            let _ = fs::rename(&final_resources, &old_resources);
+            let _ = rename_with_retry(&final_resources, &old_resources);
         }
-        let _ = fs::rename(&installing_resources, &final_resources);
+        let _ = rename_with_retry(&installing_resources, &final_resources);
         if old_resources.exists() {
-            let _ = fs::remove_dir_all(&old_resources);
+            let _ = remove_dir_all_with_retry(&old_resources);
         }
     }
 
     // Clean up temporary .installing directory
-    let _ = fs::remove_dir_all(installing_dir);
+    let _ = remove_dir_all_with_retry(installing_dir);
 
     // 13. Persist valid install_state.json with status Ready
     let now_str = chrono::Utc::now().to_rfc3339();
@@ -971,6 +1140,36 @@ mod tests {
         assert!(!inst_dir.join("resolved_version.json").exists());
         assert!(!inst_dir.join("natives").exists());
         assert!(!loaded.is_ready(&inst_dir));
+
+        // 4. InstallJournal must record failure and mark active=false
+        let journal = InstallJournal::load_any(&paths).expect("journal must exist");
+        assert!(!journal.active);
+        assert!(journal.last_error.is_some());
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_windows_folder_name_before_installation() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let inst_dir = tmp.path().join("instances").join("CON"); // Reserved on Windows
+        let paths = MqPaths::with_root(tmp.path().join("mq_root"));
+        let cas = CasStore::new(paths.clone());
+        let net = NetEngine::with_defaults().expect("net engine");
+        let compute = ComputePool::new(2);
+        let epoch = Arc::new(CancelEpoch::new());
+        let guard = epoch.snapshot();
+
+        let req = InstallRequest {
+            mc_version: "1.21.4".to_string(),
+            loader: ModLoaderKind::Vanilla,
+            loader_version: None,
+            instance_dir: inst_dir,
+            mock_base_url: None,
+        };
+
+        let res = install_game(&req, &paths, &net, &cas, &compute, &guard, None).await;
+        assert!(res.is_err());
+        let err_str = res.unwrap_err().to_string();
+        assert!(err_str.contains("Недопустимое имя папки инстанса"));
     }
 
     #[test]
@@ -1037,23 +1236,23 @@ mod tests {
         // Perform atomic swap
         let installed_client_jar = installing_dir.join("client.jar");
         let final_client_jar = inst_dir.join("client.jar");
-        fs::rename(&installed_client_jar, &final_client_jar).unwrap();
+        rename_with_retry(&installed_client_jar, &final_client_jar).unwrap();
 
         let installed_resolved = installing_dir.join("resolved_version.json");
         let final_resolved = inst_dir.join("resolved_version.json");
-        fs::rename(&installed_resolved, &final_resolved).unwrap();
+        rename_with_retry(&installed_resolved, &final_resolved).unwrap();
 
         let installing_natives_dir = installing_dir.join("natives");
         let final_natives_dir = inst_dir.join("natives");
         let old_natives_dir = inst_dir.join(".natives.old");
         if final_natives_dir.exists() {
-            fs::rename(&final_natives_dir, &old_natives_dir).unwrap();
+            rename_with_retry(&final_natives_dir, &old_natives_dir).unwrap();
         }
-        fs::rename(&installing_natives_dir, &final_natives_dir).unwrap();
+        rename_with_retry(&installing_natives_dir, &final_natives_dir).unwrap();
         if old_natives_dir.exists() {
-            fs::remove_dir_all(&old_natives_dir).unwrap();
+            remove_dir_all_with_retry(&old_natives_dir).unwrap();
         }
-        let _ = fs::remove_dir_all(&installing_dir);
+        let _ = remove_dir_all_with_retry(&installing_dir);
 
         // Verification after swap
         assert_eq!(

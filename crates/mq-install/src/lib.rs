@@ -8,6 +8,7 @@ pub mod natives;
 pub mod pipeline;
 pub mod state;
 pub mod verify;
+pub mod version;
 
 pub use cas::{CasStore, LinkMethod, CAS_STREAM_CHUNK_SIZE};
 pub use natives::{
@@ -24,4 +25,8 @@ pub use verify::{
     append_logging_verify_target, collect_instance_verify_targets,
     collect_instance_verify_targets_with_logging, verify_files_parallel, VerifyFileTarget,
     VerifyReport,
+};
+pub use version::{
+    parse_flexible_version_json, parse_version_document, resolve_version_inherits_from,
+    resolve_version_inherits_from_async, FlexibleVersionJson, MAX_INHERITS_FROM_DEPTH,
 };
