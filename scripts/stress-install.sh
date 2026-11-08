@@ -47,27 +47,28 @@ sleep 0.2
 kill -9 "${WORKER_PID}" 2>/dev/null || true
 wait "${WORKER_PID}" 2>/dev/null || true
 
-# Verify install.journal or check if journal file exists / is unclosed
-JOURNAL_PATH="${MQ_DATA_DIR}/instances/crash_inst/install.journal"
-# If install-worker didn't create it directly in this mock layout, let's create a test journal or verify if it exists
-if [ -f "${JOURNAL_PATH}" ]; then
-    jq -e '.active == true or .active == false' "${JOURNAL_PATH}" || true
-else
-    # Create a dummy unclosed journal for testing load_unclosed logic if needed
-    mkdir -p "$(dirname "${JOURNAL_PATH}")"
-    echo '{"active":true,"stage":"download"}' > "${JOURNAL_PATH}"
+# Verify install.journal is created at ${MQ_DATA_DIR}/install.journal and remains active after kill -9
+JOURNAL_PATH="${MQ_DATA_DIR}/install.journal"
+if [ ! -f "${JOURNAL_PATH}" ]; then
+    echo "Error: ${JOURNAL_PATH} was not created by install-worker!"
+    exit 1
 fi
-jq -e '.active == true' "${JOURNAL_PATH}"
-echo "Test 2 PASSED: Worker crash and unclosed journal detected."
+jq -e '.active == true' "${JOURNAL_PATH}" >/dev/null
+echo "Test 2 PASSED: Worker crash left unclosed journal at ${JOURNAL_PATH} (active=true)."
 
-echo "=== Test 3: CLI/GUI hook MQ_TEST_ACTION via headless compositor ==="
+echo "=== Test 3: Headless Weston GUI hook MQ_TEST_ACTION ==="
 export MQ_DATA_DIR="${TEST_DATA_DIR}/hook_test"
 mkdir -p "${MQ_DATA_DIR}"
+if [ -d "${HOME}/.local/share/mq/cas" ]; then
+    ln -s "${HOME}/.local/share/mq/cas" "${MQ_DATA_DIR}/cas"
+fi
+if [ -d "${HOME}/.local/share/mq/runtimes" ]; then
+    ln -s "${HOME}/.local/share/mq/runtimes" "${MQ_DATA_DIR}/runtimes"
+fi
 
-# Start headless weston in background if available
 WESTON_PID=""
 if command -v weston &>/dev/null; then
-    weston --backend=headless --socket=mq-wl-stress &
+    weston --backend=headless --socket=mq-wl-stress --width=1280 --height=800 --idle-time=0 >/dev/null 2>&1 &
     WESTON_PID=$!
     export WAYLAND_DISPLAY=mq-wl-stress
     sleep 1
@@ -78,7 +79,7 @@ export MQ_TEST_CANCEL_AFTER_MS=300
 export MQ_TEST_EXIT_ON_FINISH=1
 
 set +e
-"${MQ_BIN}" --version
+(ulimit -Sn 1024; timeout 25 "${MQ_BIN}" --backend glow)
 RET=$?
 set -e
 
