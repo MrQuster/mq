@@ -11,6 +11,7 @@ pub mod components;
 pub mod fonts;
 pub mod hud;
 pub mod i18n;
+pub mod install_types;
 pub mod instances_view;
 pub mod opener;
 pub mod perf_view;
@@ -35,6 +36,8 @@ pub use fonts::*;
 pub use hud::*;
 #[allow(unused_imports)]
 pub use i18n::*;
+#[allow(unused_imports)]
+pub use install_types::*;
 #[allow(unused_imports)]
 pub use instances_view::*;
 #[allow(unused_imports)]

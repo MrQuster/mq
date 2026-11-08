@@ -605,16 +605,37 @@ impl InstancesView {
                         if primary_emerald_button(ui, Some(VectorIcon::Check), "Создать инстанс")
                             .clicked()
                         {
-                            if let Ok(mut manifest) = state.instance_mgr.create_instance(
+                            match state.instance_mgr.create_instance(
                                 &state.create_inst_name,
                                 &state.create_inst_mc_ver,
                                 state.create_inst_loader,
                                 None,
                             ) {
-                                manifest.memory_max_mb = state.create_inst_ram_mb;
-                                let _ = state.instance_mgr.save_instance(&manifest);
-                                state.selected_instance_id = Some(manifest.id.clone());
-                                state.instances.push(manifest);
+                                Ok(mut manifest) => {
+                                    manifest.memory_max_mb = state.create_inst_ram_mb;
+                                    let _ = state.instance_mgr.save_instance(&manifest);
+                                    let inst_id = manifest.id.clone();
+                                    state.selected_instance_id = Some(inst_id.clone());
+                                    state.instances.push(manifest.clone());
+
+                                    // Auto-start installation immediately upon instance creation
+                                    state.installing_instance = Some(inst_id.clone());
+                                    state.install_error = None;
+                                    state.detailed_install_error = None;
+                                    state.current_install_stage = crate::install_types::InstallStage::Manifest;
+                                    state.install_retries_count = 0;
+                                    state.install_eta_secs = None;
+                                    state.status_message = Some((
+                                        format!("Инстанс '{}' создан. Запущена автоматическая установка...", manifest.name),
+                                        false,
+                                    ));
+                                    let _ = state.cmd_sender.send(UiWorkerCommand::InstallInstance {
+                                        instance_id: inst_id,
+                                    });
+                                }
+                                Err(e) => {
+                                    state.status_message = Some((format!("Ошибка создания инстанса: {e}"), true));
+                                }
                             }
                             state.show_create_instance_dialog = false;
                         }
@@ -1020,64 +1041,64 @@ impl InstancesView {
                     let is_running =
                         state.game_running && state.running_instance.as_ref() == Some(&inst_id);
 
-                    // 1. Error Banner (if any)
-                    if let Some(err) = state.install_error.clone() {
-                        let err_frame = egui::Frame::new()
-                            .fill(Color32::from_rgba_unmultiplied(239, 68, 68, 28))
-                            .stroke(Stroke::new(1.0_f32, STATUS_DANGER))
-                            .corner_radius(RADIUS_CARD)
-                            .inner_margin(egui::Margin::same(10));
+                    // 1. Error Card (if any installation/verification error occurred)
+                    let error_opt = if let Some(detailed) = state.detailed_install_error.clone() {
+                        Some(detailed)
+                    } else if let Some(err_str) = state.install_error.clone() {
+                        Some(crate::install_types::InstallError::from_error_str(
+                            state.current_install_stage,
+                            &err_str,
+                        ))
+                    } else {
+                        None
+                    };
 
-                        err_frame.show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                let (rect, _) =
-                                    ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::hover());
-                                paint_vector_icon(
-                                    ui.painter(),
-                                    rect,
-                                    VectorIcon::Warning,
-                                    STATUS_DANGER,
-                                );
-
-                                let mut close_clicked = false;
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if secondary_glass_button(
-                                            ui,
-                                            Some(VectorIcon::Cross),
-                                            "Закрыть",
-                                        )
-                                        .clicked()
-                                        {
-                                            close_clicked = true;
-                                        }
-                                    },
-                                );
-
-                                let text_w = (ui.available_width() - 8.0).max(40.0);
-                                ui.add_sized(
-                                    [text_w, 20.0],
-                                    egui::Label::new(
-                                        RichText::new(&err).color(TEXT_PRIMARY).size(13.0),
-                                    )
-                                    .truncate(),
-                                );
-
-                                if close_clicked {
+                    if let Some(err) = error_opt {
+                        if let Some(action) = crate::widgets::render_detailed_install_error_card(
+                            ui,
+                            &tokens,
+                            &err,
+                        ) {
+                            match action {
+                                crate::widgets::InstallErrorCardAction::Retry => {
                                     state.install_error = None;
+                                    state.detailed_install_error = None;
+                                    state.installing_instance = Some(inst_id.clone());
+                                    let _ = state.cmd_sender.send(UiWorkerCommand::InstallInstance {
+                                        instance_id: inst_id.clone(),
+                                    });
                                 }
-                            });
-                        });
+                                crate::widgets::InstallErrorCardAction::Verify => {
+                                    state.install_error = None;
+                                    state.detailed_install_error = None;
+                                    let _ = state.cmd_sender.send(
+                                        UiWorkerCommand::VerifyAndRepairInstance {
+                                            instance_id: inst_id.clone(),
+                                        },
+                                    );
+                                }
+                                crate::widgets::InstallErrorCardAction::CopyDetails => {
+                                    ui.ctx().copy_text(err.format_for_clipboard());
+                                    state.status_message = Some((
+                                        "Подробности ошибки скопированы в буфер обмена".to_string(),
+                                        false,
+                                    ));
+                                }
+                                crate::widgets::InstallErrorCardAction::OpenLog => {
+                                    let inst_dir = state.paths.instance_dir(inst_id.as_str());
+                                    let _ = crate::opener::open_that(inst_dir);
+                                }
+                                crate::widgets::InstallErrorCardAction::Dismiss => {
+                                    state.install_error = None;
+                                    state.detailed_install_error = None;
+                                }
+                            }
+                        }
                         ui.add_space(8.0);
                     }
 
                     // 2. Active Download Progress Card (prominent real-time view)
                     if is_downloading {
-                        let stage = state
-                            .active_phase
-                            .as_deref()
-                            .unwrap_or("Загрузка данных игры...");
                         let (frac, speed, comp_bytes, tot_bytes, comp_items, tot_items) =
                             if let Some(prog) = &state.phase_progress {
                                 let f = if prog.total_items > 0 {
@@ -1097,15 +1118,18 @@ impl InstancesView {
                                 (0.0, 0.0, 0, 0, 0, 0)
                             };
 
-                        crate::widgets::render_download_progress_card(
+                        crate::widgets::render_detailed_install_progress_card(
                             ui,
-                            stage,
+                            &tokens,
+                            state.current_install_stage,
                             frac,
                             speed,
                             comp_bytes,
                             tot_bytes,
                             comp_items,
                             tot_items,
+                            state.install_eta_secs,
+                            state.install_retries_count,
                             || {
                                 let _ = state.cmd_sender.send(UiWorkerCommand::CancelDownload);
                             },
@@ -1292,13 +1316,23 @@ impl InstancesView {
 
                             if is_installed {
                                 if secondary_glass_button(ui, Some(VectorIcon::Verify), "Проверить")
-                                    .on_hover_text("Проверить целостность файлов и хешей")
+                                    .on_hover_text("Проверить целостность и починить повреждённые файлы")
                                     .clicked()
                                 {
                                     let _ =
-                                        state.cmd_sender.send(UiWorkerCommand::VerifyInstance {
+                                        state.cmd_sender.send(UiWorkerCommand::VerifyAndRepairInstance {
                                             instance_id: inst_id.clone(),
                                         });
+                                }
+                                if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Переустановить")
+                                    .on_hover_text("Переустановить версию без потери миров (saves) и настроек (options.txt)")
+                                    .clicked()
+                                {
+                                    let _ = state.cmd_sender.send(
+                                        UiWorkerCommand::ReinstallInstance {
+                                            instance_id: inst_id.clone(),
+                                        },
+                                    );
                                 }
                             } else if !is_downloading
                                 && secondary_glass_button(
@@ -1337,7 +1371,7 @@ impl InstancesView {
                                     if is_installed && ui.button("Переустановить").clicked()
                                     {
                                         let _ = state.cmd_sender.send(
-                                            UiWorkerCommand::InstallInstance {
+                                            UiWorkerCommand::ReinstallInstance {
                                                 instance_id: inst_id.clone(),
                                             },
                                         );

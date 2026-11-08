@@ -897,6 +897,395 @@ pub fn render_download_progress_card(
     });
 }
 
+/// Renders detailed installation progress card with 7-milestone stepper and telemetry.
+#[allow(clippy::too_many_arguments)]
+pub fn render_detailed_install_progress_card(
+    ui: &mut Ui,
+    tokens: &crate::theme::Tokens,
+    current_stage: crate::install_types::InstallStage,
+    progress_frac: f32,
+    speed_bytes_sec: f64,
+    completed_bytes: u64,
+    total_bytes: u64,
+    completed_items: u64,
+    total_items: u64,
+    eta_secs: Option<u64>,
+    retry_count: u32,
+    mut on_cancel: impl FnMut(),
+) {
+    let card_frame = egui::Frame::new()
+        .fill(tokens.bg_surface)
+        .stroke(Stroke::new(1.0_f32, tokens.border_strong))
+        .corner_radius(crate::theme::RADIUS_CARD)
+        .inner_margin(egui::Margin::same(16));
+
+    card_frame.show(ui, |ui| {
+        // 1. Header with title, active stage and cancel button
+        ui.horizontal(|ui| {
+            let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::hover());
+            paint_vector_icon(ui.painter(), icon_rect, VectorIcon::Download, tokens.accent);
+
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                ui.label(
+                    egui::RichText::new("УСТАНОВКА И ПОДГОТОВКА ИНСТАНСА")
+                        .color(tokens.text)
+                        .size(13.5)
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Текущий этап: {}",
+                        current_stage.full_localized_name()
+                    ))
+                    .color(tokens.accent)
+                    .size(12.0),
+                );
+            });
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if secondary_glass_button(ui, Some(VectorIcon::Cross), "Отменить").clicked()
+                {
+                    on_cancel();
+                }
+            });
+        });
+
+        ui.add_space(12.0);
+
+        // 2. 7-milestone pipeline stepper:
+        // «Манифест версии → Java → Клиент → Библиотеки → Нативные библиотеки → Ассеты → Проверка»
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+            let cur_idx = current_stage.pipeline_index();
+
+            for (i, stage) in crate::install_types::InstallStage::ALL_DISPLAY_STAGES
+                .iter()
+                .enumerate()
+            {
+                if i > 0 {
+                    ui.label(
+                        egui::RichText::new("→")
+                            .color(tokens.text_disabled)
+                            .size(12.0),
+                    );
+                }
+
+                let stage_idx = stage.pipeline_index();
+                if stage_idx < cur_idx {
+                    // Completed step
+                    let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
+                    paint_vector_icon(ui.painter(), icon_rect, VectorIcon::Check, tokens.accent);
+                    ui.label(
+                        egui::RichText::new(stage.localized_name())
+                            .color(tokens.accent)
+                            .size(12.0)
+                            .strong(),
+                    );
+                } else if stage_idx == cur_idx {
+                    // Active step
+                    let label = stage.localized_name();
+                    let resp = ui.label(
+                        egui::RichText::new(label)
+                            .color(tokens.accent)
+                            .size(12.0)
+                            .strong(),
+                    );
+                    ui.painter().line_segment(
+                        [
+                            Pos2::new(resp.rect.min.x, resp.rect.max.y + 1.0),
+                            Pos2::new(resp.rect.max.x, resp.rect.max.y + 1.0),
+                        ],
+                        Stroke::new(1.5_f32, tokens.accent),
+                    );
+                } else {
+                    // Pending step
+                    let label = stage.localized_name();
+                    ui.label(
+                        egui::RichText::new(label)
+                            .color(tokens.text_disabled)
+                            .size(12.0),
+                    );
+                }
+            }
+        });
+
+        ui.add_space(10.0);
+
+        // 3. Smooth animated progress bar
+        let clamped = progress_frac.clamp(0.0, 1.0);
+        let smooth_prog =
+            ui.ctx()
+                .animate_value_with_time(ui.id().with("inst_detailed_dl_bar"), clamped, 0.15);
+
+        let bar_h = 8.0;
+        let (bar_rect, _) =
+            ui.allocate_exact_size(Vec2::new(ui.available_width(), bar_h), Sense::hover());
+
+        if ui.is_rect_visible(bar_rect) {
+            let painter = ui.painter();
+            painter.rect_filled(bar_rect, RADIUS_TAG, tokens.border);
+            if smooth_prog > 0.001 {
+                let fill_w = (bar_rect.width() * smooth_prog).max(4.0);
+                let fill_rect = Rect::from_min_size(bar_rect.min, Vec2::new(fill_w, bar_h));
+                painter.rect_filled(fill_rect, RADIUS_TAG, tokens.accent);
+            }
+        }
+
+        ui.add_space(10.0);
+
+        // 4. Telemetry status badges (progress %, files N/M, speed, data, ETA, retry counter)
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
+
+            // Percentage
+            crate::components::render_badge(
+                ui,
+                tokens,
+                &format!("Прогресс: {:.1}%", smooth_prog * 100.0),
+                crate::components::BadgeKind::Accent,
+            );
+
+            // File counter (N / M)
+            let files_text = if total_items > 0 {
+                format!("Файлы: {} / {}", completed_items, total_items)
+            } else {
+                format!("Файлы: {}", completed_items)
+            };
+            crate::components::render_badge(
+                ui,
+                tokens,
+                &files_text,
+                crate::components::BadgeKind::Neutral,
+            );
+
+            // Speed
+            let speed_mib = speed_bytes_sec / (1024.0 * 1024.0);
+            let speed_text = if speed_mib >= 1.0 {
+                format!("Скорость: {:.1} МБ/с", speed_mib)
+            } else {
+                format!("Скорость: {:.0} КБ/с", speed_bytes_sec / 1024.0)
+            };
+            crate::components::render_badge(
+                ui,
+                tokens,
+                &speed_text,
+                crate::components::BadgeKind::Neutral,
+            );
+
+            // Data bytes
+            let cur_mib = completed_bytes as f64 / (1024.0 * 1024.0);
+            let tot_mib = total_bytes as f64 / (1024.0 * 1024.0);
+            let bytes_text = if total_bytes > 0 {
+                format!("Данные: {:.1} / {:.1} МБ", cur_mib, tot_mib)
+            } else {
+                format!("Данные: {:.1} МБ", cur_mib)
+            };
+            crate::components::render_badge(
+                ui,
+                tokens,
+                &bytes_text,
+                crate::components::BadgeKind::Neutral,
+            );
+
+            // Estimated Remaining Time (ETA)
+            let eta_text = if let Some(secs) = eta_secs {
+                if secs < 60 {
+                    format!("Осталось: ~{} с", secs)
+                } else if secs < 3600 {
+                    format!("Осталось: ~{} мин {} с", secs / 60, secs % 60)
+                } else {
+                    format!("Осталось: ~{} ч {} мин", secs / 3600, (secs % 3600) / 60)
+                }
+            } else {
+                "Осталось: расчет...".to_string()
+            };
+            crate::components::render_badge(
+                ui,
+                tokens,
+                &eta_text,
+                crate::components::BadgeKind::Neutral,
+            );
+
+            // Retries counter
+            let retry_text = format!("Повторов: {}", retry_count);
+            let retry_kind = if retry_count > 0 {
+                crate::components::BadgeKind::Warning
+            } else {
+                crate::components::BadgeKind::Neutral
+            };
+            crate::components::render_badge(ui, tokens, &retry_text, retry_kind);
+        });
+    });
+}
+
+/// Actions that can be triggered by the user on the installation error card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallErrorCardAction {
+    Retry,
+    Verify,
+    CopyDetails,
+    OpenLog,
+    Dismiss,
+}
+
+/// Renders detailed interactive installation error card with clear Russian diagnostic copy and actions.
+pub fn render_detailed_install_error_card(
+    ui: &mut Ui,
+    tokens: &crate::theme::Tokens,
+    err: &crate::install_types::InstallError,
+) -> Option<InstallErrorCardAction> {
+    let mut triggered_action = None;
+    let frame = egui::Frame::new()
+        .fill(tokens.bg_surface)
+        .stroke(Stroke::new(1.0_f32, tokens.danger))
+        .corner_radius(crate::theme::RADIUS_CARD)
+        .inner_margin(egui::Margin::same(16));
+
+    frame.show(ui, |ui| {
+        // 1. Header with Warning icon, title, stage badge, and dismiss button
+        ui.horizontal(|ui| {
+            let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::hover());
+            paint_vector_icon(ui.painter(), icon_rect, VectorIcon::Warning, tokens.danger);
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new("Сбой установки")
+                    .size(15.0)
+                    .strong()
+                    .color(tokens.text),
+            );
+            ui.add_space(8.0);
+            crate::components::render_badge(
+                ui,
+                tokens,
+                &format!("Этап: {}", err.stage.full_localized_name()),
+                crate::components::BadgeKind::Neutral,
+            );
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if secondary_glass_button(ui, Some(VectorIcon::Cross), "Закрыть").clicked() {
+                    triggered_action = Some(InstallErrorCardAction::Dismiss);
+                }
+            });
+        });
+
+        ui.add_space(10.0);
+
+        // 2. Friendly Russian explanation
+        ui.label(
+            egui::RichText::new(&err.localized_title)
+                .size(14.0)
+                .strong()
+                .color(tokens.danger),
+        );
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(&err.localized_details)
+                .size(13.0)
+                .color(tokens.text),
+        );
+
+        // 3. Metadata details (HTTP code, target URL, file path)
+        if err.http_status.is_some() || err.target_url.is_some() || err.file_path.is_some() {
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
+                if let Some(status) = err.http_status {
+                    crate::components::render_badge(
+                        ui,
+                        tokens,
+                        &format!("HTTP {}", status),
+                        crate::components::BadgeKind::Warning,
+                    );
+                }
+                if let Some(ref url) = err.target_url {
+                    ui.label(
+                        egui::RichText::new(format!("Адрес: {url}"))
+                            .size(11.5)
+                            .color(tokens.text_muted),
+                    );
+                }
+                if let Some(ref path) = err.file_path {
+                    ui.label(
+                        egui::RichText::new(format!("Файл: {path}"))
+                            .size(11.5)
+                            .color(tokens.text_muted),
+                    );
+                }
+            });
+        }
+
+        // 4. Technical cause box
+        ui.add_space(10.0);
+        let cause_frame = egui::Frame::new()
+            .fill(tokens.bg_input)
+            .stroke(Stroke::new(1.0_f32, tokens.border))
+            .corner_radius(crate::theme::RADIUS_TAG)
+            .inner_margin(egui::Margin::same(8));
+
+        cause_frame.show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                egui::RichText::new(&err.raw_cause)
+                    .font(FontId::monospace(11.5))
+                    .color(tokens.text_muted),
+            );
+        });
+
+        // 5. Interactive action buttons:
+        // «Повторить» — «Проверить файлы» — «Скопировать подробности» — «Открыть лог»
+        ui.add_space(14.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+
+            if crate::components::button_primary(ui, tokens, Some(VectorIcon::Refresh), "Повторить")
+                .on_hover_text("Повторить процесс установки инстанса")
+                .clicked()
+            {
+                triggered_action = Some(InstallErrorCardAction::Retry);
+            }
+
+            if crate::components::button_secondary(
+                ui,
+                tokens,
+                Some(VectorIcon::Verify),
+                "Проверить файлы",
+            )
+            .on_hover_text("Проверить целостность и докачать недостающие или повреждённые файлы")
+            .clicked()
+            {
+                triggered_action = Some(InstallErrorCardAction::Verify);
+            }
+
+            if crate::components::button_secondary(
+                ui,
+                tokens,
+                Some(VectorIcon::Copy),
+                "Скопировать подробности",
+            )
+            .on_hover_text("Скопировать детальный отчёт об ошибке без секретов в буфер обмена")
+            .clicked()
+            {
+                triggered_action = Some(InstallErrorCardAction::CopyDetails);
+            }
+
+            if crate::components::button_secondary(
+                ui,
+                tokens,
+                Some(VectorIcon::Folder),
+                "Открыть лог",
+            )
+            .on_hover_text("Открыть каталог инстанса или лог-файлы")
+            .clicked()
+            {
+                triggered_action = Some(InstallErrorCardAction::OpenLog);
+            }
+        });
+    });
+
+    triggered_action
+}
+
 /// Clean status pill badge with glowing dot and label.
 pub fn status_pill(ui: &mut Ui, label: &str, color: Color32) {
     let font_id = FontId::proportional(11.5);

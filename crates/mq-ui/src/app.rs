@@ -151,15 +151,35 @@ impl MqApp {
                         }
                     });
                 }
-                UiWorkerCommand::VerifyInstance { instance_id } => {
+                UiWorkerCommand::VerifyInstance { instance_id }
+                | UiWorkerCommand::VerifyAndRepairInstance { instance_id } => {
                     let inst_dir = self.state.paths.instance_dir(instance_id.as_str());
                     let resolved_path = inst_dir.join("resolved_version.json");
                     let paths = self.state.paths.clone();
+                    let net = self.state.net.clone();
+                    let cas = self.state.cas.clone();
                     let pool = self.state.compute_pool.clone();
                     let guard = self.state.cancel_epoch.snapshot();
                     let bus = self.state.event_bus.clone();
+                    let resp_tx = self.state.resp_sender.clone();
+                    let inst_opt = self
+                        .state
+                        .instances
+                        .iter()
+                        .find(|i| i.id == instance_id)
+                        .cloned();
+
+                    let _ = resp_tx.send(UiWorkerResponse::InstanceInstallStarted(
+                        instance_id.clone(),
+                    ));
 
                     tokio::spawn(async move {
+                        bus.publish(mq_core::Event::PhaseStarted {
+                            phase: "verify".to_string(),
+                            total_items: 100,
+                        });
+
+                        let mut verified_ok = false;
                         if let Ok(bytes) = std::fs::read(&resolved_path) {
                             if let Ok(ver) =
                                 serde_json::from_slice::<mq_meta::ResolvedVersion>(&bytes)
@@ -175,18 +195,168 @@ impl MqApp {
                                         let targets = mq_install::collect_instance_verify_targets(
                                             &paths, &inst_dir, &ver, &idx,
                                         );
-                                        let _ = mq_install::verify_files_parallel(
+                                        match mq_install::verify_files_parallel(
                                             &targets,
                                             &pool,
                                             &guard,
                                             Some(&bus),
                                         )
-                                        .await;
+                                        .await
+                                        {
+                                            Ok(report) => {
+                                                if report.is_clean() {
+                                                    bus.publish(mq_core::Event::PhaseCompleted {
+                                                        phase: "verify".to_string(),
+                                                        elapsed_ms: report.elapsed_ms,
+                                                    });
+                                                    let _ = resp_tx.send(
+                                                        UiWorkerResponse::InstanceInstallCompleted(
+                                                            instance_id.clone(),
+                                                        ),
+                                                    );
+                                                    verified_ok = true;
+                                                } else {
+                                                    for corrupt in &report.corrupted_files {
+                                                        let _ = std::fs::remove_file(corrupt);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                bus.publish(mq_core::Event::TaskError {
+                                                    context: "Проверка файлов".to_string(),
+                                                    message: e.to_string(),
+                                                });
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
+
+                        if !verified_ok {
+                            if let Some(inst) = inst_opt {
+                                let req = mq_install::InstallRequest {
+                                    mc_version: inst.mc_version.clone(),
+                                    loader: inst.loader,
+                                    loader_version: inst.loader_version.clone(),
+                                    instance_dir: inst_dir.clone(),
+                                    mock_base_url: None,
+                                };
+
+                                match mq_install::install_game(
+                                    &req,
+                                    &paths,
+                                    &net,
+                                    &cas,
+                                    &pool,
+                                    &guard,
+                                    Some(&bus),
+                                )
+                                .await
+                                {
+                                    Ok(summary) => {
+                                        bus.publish(mq_core::Event::PhaseCompleted {
+                                            phase: "verify_and_repair".to_string(),
+                                            elapsed_ms: summary.elapsed_ms,
+                                        });
+                                        let _ = resp_tx.send(
+                                            UiWorkerResponse::InstanceInstallCompleted(
+                                                instance_id.clone(),
+                                            ),
+                                        );
+                                    }
+                                    Err(e) => {
+                                        let err_msg = format!("Ошибка починки {}: {e}", inst.name);
+                                        bus.publish(mq_core::Event::TaskError {
+                                            context: format!("Починка {}", inst.name),
+                                            message: e.to_string(),
+                                        });
+                                        let _ = resp_tx.send(UiWorkerResponse::InstanceError {
+                                            instance_id,
+                                            error: err_msg,
+                                        });
+                                    }
+                                }
+                            } else {
+                                let _ = resp_tx
+                                    .send(UiWorkerResponse::InstanceInstallCompleted(instance_id));
+                            }
+                        }
                     });
+                }
+                UiWorkerCommand::ReinstallInstance { instance_id } => {
+                    let inst_dir = self.state.paths.instance_dir(instance_id.as_str());
+                    let paths = self.state.paths.clone();
+                    let bus = self.state.event_bus.clone();
+                    let net = self.state.net.clone();
+                    let cas = self.state.cas.clone();
+                    let pool = self.state.compute_pool.clone();
+                    let guard = self.state.cancel_epoch.snapshot();
+                    let resp_tx = self.state.resp_sender.clone();
+
+                    if let Some(inst) = self
+                        .state
+                        .instances
+                        .iter()
+                        .find(|i| i.id == instance_id)
+                        .cloned()
+                    {
+                        // Safely remove game binaries and temporary directories while preserving
+                        // user saves/, options.txt, resourcepacks/, shaderpacks/, and servers.dat!
+                        let _ = std::fs::remove_file(inst_dir.join("client.jar"));
+                        let _ = std::fs::remove_file(inst_dir.join("resolved_version.json"));
+                        let _ = std::fs::remove_file(inst_dir.join("install_state.json"));
+                        let _ = std::fs::remove_dir_all(inst_dir.join("natives"));
+                        let _ = std::fs::remove_dir_all(inst_dir.join(".installing"));
+
+                        let _ = resp_tx.send(UiWorkerResponse::InstanceInstallStarted(
+                            instance_id.clone(),
+                        ));
+
+                        tokio::spawn(async move {
+                            let req = mq_install::InstallRequest {
+                                mc_version: inst.mc_version.clone(),
+                                loader: inst.loader,
+                                loader_version: inst.loader_version.clone(),
+                                instance_dir: inst_dir.clone(),
+                                mock_base_url: None,
+                            };
+
+                            match mq_install::install_game(
+                                &req,
+                                &paths,
+                                &net,
+                                &cas,
+                                &pool,
+                                &guard,
+                                Some(&bus),
+                            )
+                            .await
+                            {
+                                Ok(summary) => {
+                                    bus.publish(mq_core::Event::PhaseCompleted {
+                                        phase: "reinstall".to_string(),
+                                        elapsed_ms: summary.elapsed_ms,
+                                    });
+                                    let _ = resp_tx.send(
+                                        UiWorkerResponse::InstanceInstallCompleted(instance_id),
+                                    );
+                                }
+                                Err(e) => {
+                                    let err_msg =
+                                        format!("Ошибка переустановки {}: {e}", inst.name);
+                                    bus.publish(mq_core::Event::TaskError {
+                                        context: format!("Переустановка {}", inst.name),
+                                        message: e.to_string(),
+                                    });
+                                    let _ = resp_tx.send(UiWorkerResponse::InstanceError {
+                                        instance_id,
+                                        error: err_msg,
+                                    });
+                                }
+                            }
+                        });
+                    }
                 }
                 UiWorkerCommand::CancelDownload => {
                     self.state.cancel_epoch.cancel_and_advance();
