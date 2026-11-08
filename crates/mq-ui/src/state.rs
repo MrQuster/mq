@@ -20,6 +20,8 @@ use mq_mods::{CatalogHit, InstalledModEntry, ModConflict, ProjectKind, SearchQue
 use mq_net::NetEngine;
 use mq_sched::{CancelEpoch, ComputePool, UiWatchdog};
 
+use crate::install_types::{InstallError, InstallStage};
+
 /// Max lines retained in memory for live game log console (10,000 lines).
 pub const MAX_GAME_LOG_LINES: usize = 10000;
 
@@ -77,6 +79,12 @@ pub enum UiWorkerCommand {
     VerifyInstance {
         instance_id: InstanceId,
     },
+    VerifyAndRepairInstance {
+        instance_id: InstanceId,
+    },
+    ReinstallInstance {
+        instance_id: InstanceId,
+    },
     InstallInstance {
         instance_id: InstanceId,
     },
@@ -122,6 +130,10 @@ pub struct UiState {
     pub is_launching: bool,
     pub installing_instance: Option<InstanceId>,
     pub install_error: Option<String>,
+    pub detailed_install_error: Option<InstallError>,
+    pub current_install_stage: InstallStage,
+    pub install_retries_count: u32,
+    pub install_eta_secs: Option<u64>,
     pub last_game_exit_code: Option<i32>,
     pub game_logs: VecDeque<GameLogEntry>,
     pub log_filter: Option<GameLogLevel>,
@@ -229,6 +241,10 @@ impl UiState {
             is_launching: false,
             installing_instance: None,
             install_error: None,
+            detailed_install_error: None,
+            current_install_stage: InstallStage::Manifest,
+            install_retries_count: 0,
+            install_eta_secs: None,
             last_game_exit_code: None,
             game_logs: VecDeque::with_capacity(MAX_GAME_LOG_LINES),
             log_filter: None,
@@ -284,11 +300,18 @@ impl UiState {
                 UiWorkerResponse::InstanceInstallStarted(id) => {
                     self.installing_instance = Some(id);
                     self.install_error = None;
+                    self.detailed_install_error = None;
+                    self.install_retries_count = 0;
+                    self.install_eta_secs = None;
+                    self.current_install_stage = InstallStage::Manifest;
                 }
                 UiWorkerResponse::InstanceInstallCompleted(id) => {
                     if self.installing_instance.as_ref() == Some(&id) {
                         self.installing_instance = None;
                     }
+                    self.install_eta_secs = None;
+                    self.active_phase = None;
+                    self.phase_progress = None;
                     self.status_message = Some(("Инстанс успешно установлен".to_string(), false));
                 }
                 UiWorkerResponse::InstanceError {
@@ -298,6 +321,8 @@ impl UiState {
                     self.installing_instance = None;
                     self.is_launching = false;
                     self.install_error = Some(error.clone());
+                    let stage = self.current_install_stage;
+                    self.detailed_install_error = Some(InstallError::from_error_str(stage, &error));
                     self.status_message = Some((error, true));
                 }
                 UiWorkerResponse::GameStarted(id) => {
@@ -332,21 +357,34 @@ impl UiState {
         for event in self.event_bus.try_drain(256) {
             match event {
                 Event::PhaseStarted { phase, .. } => {
-                    self.active_phase = Some(phase);
+                    self.active_phase = Some(phase.clone());
+                    self.current_install_stage = InstallStage::from_phase_str(&phase);
                 }
                 Event::Progress(prog) => {
                     self.active_phase = Some(prog.phase.clone());
+                    self.current_install_stage = InstallStage::from_phase_str(&prog.phase);
+                    if prog.mib_per_sec > 0.001 && prog.bytes_total > prog.bytes_done {
+                        let remaining = prog.bytes_total - prog.bytes_done;
+                        let speed_bytes = prog.mib_per_sec * 1024.0 * 1024.0;
+                        self.install_eta_secs = Some((remaining as f64 / speed_bytes) as u64);
+                    } else {
+                        self.install_eta_secs = None;
+                    }
                     self.phase_progress = Some(prog);
                 }
                 Event::PhaseCompleted { phase, elapsed_ms } => {
                     self.active_phase = None;
                     self.phase_progress = None;
+                    self.install_eta_secs = None;
                     self.status_message = Some((
                         format!("Фаза '{phase}' успешно завершена за {elapsed_ms} мс"),
                         false,
                     ));
                 }
                 Event::TaskError { context, message } => {
+                    if self.installing_instance.is_some() {
+                        self.install_retries_count = self.install_retries_count.saturating_add(1);
+                    }
                     self.status_message = Some((format!("Ошибка [{context}]: {message}"), true));
                 }
                 Event::CpuTelemetry(snap) => {
@@ -381,6 +419,20 @@ impl UiState {
     /// Checks whether an instance has already been installed into the local CAS and instance directory.
     pub fn is_instance_installed(&self, id: &InstanceId) -> bool {
         let inst_dir = self.paths.instance_dir(id.as_str());
+        let state_file = inst_dir.join("install_state.json");
+        if state_file.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&state_file) {
+                if let Ok(st) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(status) = st.get("status").and_then(|v| v.as_str()) {
+                        if status == "ready" {
+                            return true;
+                        } else if status == "failed" || status == "installing" {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
         inst_dir.join("resolved_version.json").exists() && inst_dir.join("client.jar").exists()
     }
 }

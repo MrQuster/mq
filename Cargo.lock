@@ -2546,6 +2546,7 @@ dependencies = [
  "mq-update",
  "parking_lot",
  "reqwest",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
