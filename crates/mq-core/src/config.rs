@@ -14,11 +14,31 @@ use crate::error::{MqError, MqResult};
 use crate::paths::MqPaths;
 use crate::secret::SecretString;
 
-/// Environment variable overriding `curseforge_api_key` in `config.toml`.
+/// Primary environment variable for the CurseForge Core API v1 key (used when no user key is set in config/keyring).
+pub const ENV_CURSEFORGE_API_KEY: &str = "MQ_CURSEFORGE_API_KEY";
+
+/// Legacy environment variable for the CurseForge Core API v1 key (backward-compatible fallback).
 pub const ENV_CF_API_KEY: &str = "MQ_CF_API_KEY";
+
+/// Redaction mask used when displaying or scrubbing the CurseForge API key in UI/logs.
+pub const CURSEFORGE_API_KEY_MASK: &str = "***";
+
+/// Dedicated `0600` secret file name inside `<config_dir>` used as keyring fallback for the CurseForge API key.
+pub const CURSEFORGE_SECRET_FILE_NAME: &str = "curseforge_api_key.secret";
 
 /// Environment variable overriding `ms_client_id` in `config.toml`.
 pub const ENV_MS_CLIENT_ID: &str = "MQ_MS_CLIENT_ID";
+
+/// Replaces any occurrence of `key` in `text` with [`CURSEFORGE_API_KEY_MASK`] (`"***"`).
+pub fn mask_curseforge_api_key(text: &str, key: Option<&str>) -> String {
+    let Some(secret) = key.map(str::trim).filter(|s| !s.is_empty()) else {
+        return text.to_owned();
+    };
+    if text.is_empty() || !text.contains(secret) {
+        return text.to_owned();
+    }
+    text.replace(secret, CURSEFORGE_API_KEY_MASK)
+}
 
 /// Graphical rendering backend selection for the `eframe`/`egui` launcher UI.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -448,12 +468,98 @@ impl AppConfig {
             }
         }
 
+        // If `curseforge_api_key` is not set in `config.toml`, check the `0600` keyring/secret fallback file.
+        let has_cfg_key = cfg
+            .curseforge_api_key
+            .as_ref()
+            .is_some_and(|s| !s.expose_secret().trim().is_empty());
+        if !has_cfg_key {
+            if let Some(secret_key) = Self::load_cf_api_key_secret_file(paths) {
+                cfg.curseforge_api_key = Some(secret_key);
+            }
+        }
+
         Ok(cfg)
+    }
+
+    /// Returns the path to the dedicated `0600` CurseForge API key secret file (`<config_dir>/curseforge_api_key.secret`).
+    #[inline]
+    pub fn cf_secret_file_path(paths: &MqPaths) -> std::path::PathBuf {
+        paths.config_dir.join(CURSEFORGE_SECRET_FILE_NAME)
+    }
+
+    /// Loads the CurseForge API key from the `0600` secret file fallback if present and non-empty.
+    pub fn load_cf_api_key_secret_file(paths: &MqPaths) -> Option<SecretString> {
+        let secret_path = Self::cf_secret_file_path(paths);
+        let raw = fs::read_to_string(&secret_path).ok()?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(SecretString::new(trimmed))
+        }
+    }
+
+    /// Atomically writes or removes the dedicated `0600` CurseForge API key secret file.
+    pub fn save_cf_api_key_secret_file(
+        paths: &MqPaths,
+        key: Option<&SecretString>,
+    ) -> MqResult<()> {
+        let secret_path = Self::cf_secret_file_path(paths);
+        let Some(secret_val) = key
+            .map(|s| s.expose_secret().trim())
+            .filter(|s| !s.is_empty())
+        else {
+            if secret_path.exists() {
+                let _ = fs::remove_file(&secret_path);
+            }
+            return Ok(());
+        };
+
+        if let Some(parent) = secret_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let tmp_path = secret_path.with_extension(format!("tmp.{}", std::process::id()));
+        let write_res = (|| -> std::io::Result<()> {
+            let mut opts = OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut file = opts.open(&tmp_path)?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(fs::Permissions::from_mode(0o600))?;
+            }
+
+            file.write_all(secret_val.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+
+            fs::rename(&tmp_path, &secret_path)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&secret_path, fs::Permissions::from_mode(0o600))?;
+            }
+            Ok(())
+        })();
+
+        if let Err(err) = write_res {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(MqError::Io(err));
+        }
+        Ok(())
     }
 
     /// Atomically persists this configuration to `paths.config_file()` (`write temp -> fsync -> rename`)
     /// with `0600` permissions on Unix systems to protect embedded API keys.
-    /// Also saves `self.theme` to `paths.theme_file()`.
+    /// Also saves `self.theme` to `paths.theme_file()` and syncs the `0600` CurseForge secret file.
     pub fn save(&self, paths: &MqPaths) -> MqResult<()> {
         let config_path = paths.config_file();
         if let Some(parent) = config_path.parent() {
@@ -464,11 +570,14 @@ impl AppConfig {
         let tmp_path = config_path.with_extension(format!("tmp.{}", std::process::id()));
 
         let write_res = (|| -> std::io::Result<()> {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&tmp_path)?;
+            let mut opts = OpenOptions::new();
+            opts.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut file = opts.open(&tmp_path)?;
 
             #[cfg(unix)]
             {
@@ -482,6 +591,11 @@ impl AppConfig {
             drop(file);
 
             fs::rename(&tmp_path, &config_path)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&config_path, fs::Permissions::from_mode(0o600))?;
+            }
             Ok(())
         })();
 
@@ -490,29 +604,80 @@ impl AppConfig {
             return Err(MqError::Io(err));
         }
 
+        // Sync dedicated 0600 secret fallback file for CurseForge API key
+        let _ = Self::save_cf_api_key_secret_file(paths, self.curseforge_api_key.as_ref());
+
         // Save theme.toml in parallel
         let _ = self.theme.save_to_file(&paths.theme_file());
 
         Ok(())
     }
 
-    /// Resolves the effective CurseForge API key, checking `$MQ_CF_API_KEY` first
-    /// and falling back to `self.curseforge_api_key`.
+    /// Resolves the effective CurseForge API key following the strict priority order:
+    /// 1. User setting (`self.curseforge_api_key` from keyring / `0600` secret file / `config.toml`)
+    /// 2. Environment variable `$MQ_CURSEFORGE_API_KEY` (or legacy `$MQ_CF_API_KEY`)
     pub fn effective_cf_api_key(&self) -> Option<String> {
-        let env_val = env::var(ENV_CF_API_KEY).ok();
-        self.effective_cf_api_key_with_env(env_val.as_deref())
+        let primary_env = env::var(ENV_CURSEFORGE_API_KEY).ok();
+        let legacy_env = env::var(ENV_CF_API_KEY).ok();
+        self.effective_cf_api_key_with_envs(primary_env.as_deref(), legacy_env.as_deref())
     }
 
-    /// Deterministic helper for testing `$MQ_CF_API_KEY` precedence without mutating process env.
+    /// Deterministic helper for testing CurseForge API key precedence with a single env value.
+    ///
+    /// Priority: (1) `self.curseforge_api_key`, (2) `env_val`.
     pub fn effective_cf_api_key_with_env(&self, env_val: Option<&str>) -> Option<String> {
-        if let Some(val) = env_val.map(str::trim).filter(|s| !s.is_empty()) {
-            return Some(val.to_owned());
-        }
-        self.curseforge_api_key
+        self.effective_cf_api_key_with_envs(env_val, None)
+    }
+
+    /// Deterministic helper for testing CurseForge API key precedence across user config,
+    /// `$MQ_CURSEFORGE_API_KEY`, and legacy `$MQ_CF_API_KEY`.
+    pub fn effective_cf_api_key_with_envs(
+        &self,
+        primary_env: Option<&str>,
+        legacy_env: Option<&str>,
+    ) -> Option<String> {
+        if let Some(cfg_val) = self
+            .curseforge_api_key
             .as_ref()
             .map(|s| s.expose_secret().trim())
             .filter(|s| !s.is_empty())
+        {
+            return Some(cfg_val.to_owned());
+        }
+        if let Some(val) = primary_env.map(str::trim).filter(|s| !s.is_empty()) {
+            return Some(val.to_owned());
+        }
+        legacy_env
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .map(ToOwned::to_owned)
+    }
+
+    /// Returns [`CURSEFORGE_API_KEY_MASK`] (`"***"`) when an effective CurseForge API key is present,
+    /// or `None` when unconfigured. Never exposes the raw key.
+    #[inline]
+    pub fn masked_cf_api_key(&self) -> Option<&'static str> {
+        if self.effective_cf_api_key().is_some() {
+            Some(CURSEFORGE_API_KEY_MASK)
+        } else {
+            None
+        }
+    }
+
+    /// Scrubs any configured or environment CurseForge API key from `text`, replacing it with `"***"`.
+    pub fn sanitize_cf_api_key(&self, text: &str) -> String {
+        let cfg_key = self
+            .curseforge_api_key
+            .as_ref()
+            .map(|s| s.expose_secret().trim())
+            .filter(|s| !s.is_empty());
+        let primary_env = env::var(ENV_CURSEFORGE_API_KEY).ok();
+        let legacy_env = env::var(ENV_CF_API_KEY).ok();
+
+        let mut out = mask_curseforge_api_key(text, cfg_key);
+        out = mask_curseforge_api_key(&out, primary_env.as_deref());
+        out = mask_curseforge_api_key(&out, legacy_env.as_deref());
+        out
     }
 
     /// Resolves the effective Microsoft OAuth2 client ID, checking `$MQ_MS_CLIENT_ID` first
@@ -625,25 +790,89 @@ mod tests {
     }
 
     #[test]
-    fn env_overrides_take_precedence_over_file_config() {
+    fn curseforge_api_key_priority_user_setting_then_env_and_masking() {
         let cfg = AppConfig {
-            curseforge_api_key: Some(SecretString::new("config_cf_key")),
+            curseforge_api_key: Some(SecretString::new("user_setting_cf_key")),
             ms_client_id: Some("config_ms_id".into()),
             ..AppConfig::default()
         };
 
+        // 1. User setting takes priority over MQ_CURSEFORGE_API_KEY and MQ_CF_API_KEY
         assert_eq!(
-            cfg.effective_cf_api_key_with_env(None).as_deref(),
-            Some("config_cf_key")
+            cfg.effective_cf_api_key_with_envs(Some("env_primary_key"), Some("env_legacy_key"))
+                .as_deref(),
+            Some("user_setting_cf_key")
         );
         assert_eq!(
             cfg.effective_cf_api_key_with_env(Some("  env_cf_key  "))
                 .as_deref(),
-            Some("env_cf_key")
+            Some("user_setting_cf_key")
+        );
+        assert_eq!(cfg.masked_cf_api_key(), Some("***"));
+
+        // 2. When user setting is None or empty, falls back to MQ_CURSEFORGE_API_KEY then MQ_CF_API_KEY
+        let empty_cfg = AppConfig {
+            curseforge_api_key: Some(SecretString::new("   ")),
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            empty_cfg
+                .effective_cf_api_key_with_envs(
+                    Some("  primary_env_cf_key  "),
+                    Some("legacy_env_cf_key")
+                )
+                .as_deref(),
+            Some("primary_env_cf_key")
         );
         assert_eq!(
-            cfg.effective_cf_api_key_with_env(Some("   ")).as_deref(),
-            Some("config_cf_key")
+            empty_cfg
+                .effective_cf_api_key_with_envs(Some("   "), Some("  legacy_env_cf_key  "))
+                .as_deref(),
+            Some("legacy_env_cf_key")
+        );
+        assert_eq!(
+            empty_cfg.effective_cf_api_key_with_envs(None, None),
+            None
+        );
+
+        // 3. Masking replaces raw key with "***"
+        let log_line = "Header x-api-key: user_setting_cf_key failed";
+        assert_eq!(
+            mask_curseforge_api_key(log_line, Some("user_setting_cf_key")),
+            "Header x-api-key: *** failed"
+        );
+        assert_eq!(
+            cfg.sanitize_cf_api_key(log_line),
+            "Header x-api-key: *** failed"
+        );
+
+        // 4. Dedicated 0600 secret fallback file roundtrip
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let paths = MqPaths::with_root(tmp.path());
+        AppConfig::save_cf_api_key_secret_file(
+            &paths,
+            Some(&SecretString::new("secret_file_cf_key")),
+        )
+        .expect("save secret file");
+        let secret_file = AppConfig::cf_secret_file_path(&paths);
+        assert!(secret_file.is_file());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&secret_file)
+                .expect("stat secret file")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        let loaded_from_secret =
+            AppConfig::load_or_default(&paths).expect("load config with secret fallback");
+        assert_eq!(
+            loaded_from_secret
+                .effective_cf_api_key_with_envs(Some("env_key"), None)
+                .as_deref(),
+            Some("secret_file_cf_key")
         );
 
         assert_eq!(
