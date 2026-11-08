@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Часто задаваемые вопросы (FAQ)
+    url: https://github.com/MrQuster/mq/blob/main/docs/FAQ.md
+    about: Ответы на частые вопросы и решения распространённых проблем перед открытием тикета
+  - name: Политика безопасности (Security Policy)
+    url: https://github.com/MrQuster/mq/security/policy
+    about: Сообщение об уязвимостях и проблемах безопасности (конфиденциально)

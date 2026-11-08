@@ -1,0 +1,46 @@
+name: Предложение функции (Feature Request)
+description: Предложить новую возможность или улучшение функциональности MQ
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за вклад в развитие MQ!
+        Опишите вашу идею как можно более подробно и аргументированно.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Компонент / Область
+      description: К какой части MQ относится предложение?
+      options:
+        - Интерфейс (UI / UX / Темы)
+        - Загрузчик и запуск Minecraft (Engine / Launch pipeline)
+        - Мод-менеджер и шейдеры (Modrinth / CurseForge)
+        - Аккаунты и авторизация (Offline / Ely.by)
+        - Java и системное окружение (Java manager / doctor)
+        - Установщик и портативность (CLI / Installer)
+        - Другое
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему решает предложение?
+      description: 'Чёткое описание проблемы или неудобства (например: "Мне неудобно делать X, когда Y...")'
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Предлагаемое решение
+      description: Как, по вашему мнению, должна работать новая функциональность?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы и контекст
+      description: Рассматривали ли вы другие варианты решения? Дополнительные скриншоты, мокапы или ссылки.
+    validations:
+      required: false

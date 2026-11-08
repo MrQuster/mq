@@ -1,0 +1,23 @@
+changelog:
+  categories:
+    - title: "✨ Новые возможности"
+      labels:
+        - "enhancement"
+        - "feature"
+    - title: "⚡ Улучшения"
+      labels:
+        - "ui"
+        - "performance"
+        - "installer"
+        - "mods"
+        - "shaders"
+    - title: "🐛 Исправления ошибок"
+      labels:
+        - "bug"
+        - "fix"
+    - title: "🔒 Безопасность"
+      labels:
+        - "security"
+    - title: "📦 Зависимости"
+      labels:
+        - "dependencies"
