@@ -1,6 +1,7 @@
 # Build & distribution artifacts
 target/
 dist/
+/.cache/
 *.log
 .env*
 *.key
@@ -26,6 +27,22 @@ instances/
 *.part
 *.tmp
 
+# Arch Linux makepkg / PKGBUILD build artifacts
+/packaging/pkg/
+/packaging/src/
+/packaging/*.pkg.tar*
+/packaging/*.log
+
+# Profiling and benchmark outputs
+*.profraw
+*.profdata
+perf.data*
+flamegraph.svg
+/snapshots/
+*.png
+!docs/assets/screenshots/*.png
+!docs/assets/social-preview.png
+
 # IDE, editor and OS artifacts
 .idea/
 .vscode/
@@ -33,22 +50,3 @@ instances/
 Thumbs.db
 *.swp
 *.swo
-*~
-/.cache/
-/.cargo/
-
-# Generated screenshots and test media
-/docs/screenshots/
-
-# Packaging build artifacts
-/packaging/pkg/
-/packaging/src/
-/packaging/*.pkg.tar*
-/packaging/*.log
-
-# Profiling and benchmarks
-*.profraw
-*.profdata
-perf.data*
-flamegraph.svg
-/snapshots/

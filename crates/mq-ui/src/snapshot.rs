@@ -36,7 +36,7 @@ pub async fn capture_app_snapshot(
         .await
         .context("Failed to create wgpu device for snapshot")?;
 
-    let target_format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let target_format = wgpu::TextureFormat::Rgba8Unorm;
     let texture_desc = wgpu::TextureDescriptor {
         label: Some("MQ Snapshot Target Texture"),
         size: wgpu::Extent3d {
@@ -68,7 +68,18 @@ pub async fn capture_app_snapshot(
         ..Default::default()
     };
 
-    // Run the UI pass
+    // Warm-up pass so egui can measure text and allocate layout geometry
+    let warm_output = egui_ctx.run(raw_input.clone(), |ctx| {
+        app.render_frame_for_snapshot(ctx);
+    });
+    for (id, delta) in &warm_output.textures_delta.set {
+        renderer.update_texture(&device, &queue, *id, delta);
+    }
+    for id in &warm_output.textures_delta.free {
+        renderer.free_texture(id);
+    }
+
+    // Run the final UI pass
     let full_output = egui_ctx.run(raw_input, |ctx| {
         app.render_frame_for_snapshot(ctx);
     });
