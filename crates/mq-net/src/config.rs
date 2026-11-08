@@ -8,7 +8,8 @@ use std::time::Duration;
 use mq_core::{Sha1Digest, Sha512Digest};
 
 /// Canonical `User-Agent` header sent on all launcher HTTP requests.
-pub const USER_AGENT: &str = "mq-launcher/0.1.0 (archlinux; rust)";
+pub const USER_AGENT: &str =
+    concat!("mq-launcher/", env!("CARGO_PKG_VERSION"), " (https://github.com/MrQuster/mq)");
 
 /// Default maximum concurrent HTTP connections (`Semaphore` bound).
 pub const DEFAULT_MAX_CONNECTIONS: usize = 32;
