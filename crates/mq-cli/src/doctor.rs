@@ -587,6 +587,7 @@ fn redact_hyphenated_uuids(s: &str) -> String {
     }
 
     let mut out = String::with_capacity(len);
+    let mut last = 0;
     let mut i = 0;
 
     while i < len {
@@ -596,14 +597,16 @@ fn redact_hyphenated_uuids(s: &str) -> String {
             let next_ok = i + 36 == len || !is_hex_char(bytes[i + 36]);
 
             if prev_ok && next_ok {
+                out.push_str(&s[last..i]);
                 out.push_str(REDACTED_MARKER);
                 i += 36;
+                last = i;
                 continue;
             }
         }
-        out.push(bytes[i] as char);
         i += 1;
     }
+    out.push_str(&s[last..]);
     out
 }
 
@@ -683,10 +686,7 @@ pub fn export_diagnostic_report_sanitized(
         StepStatus::Fail => "ОШИБКИ УСТАНОВКИ [FAIL]",
     };
 
-    let _ = writeln!(
-        out,
-        "### MQ Launcher v2.2.0 — Отчёт диагностики установки"
-    );
+    let _ = writeln!(out, "### MQ Launcher v2.2.0 — Отчёт диагностики установки");
     let _ = writeln!(out, "- **Версия игры:** {}", report.version);
     let _ = writeln!(out, "- **Модлоадер:** {}", report.loader);
     let _ = writeln!(
@@ -852,7 +852,12 @@ pub async fn run_install_doctor(
     let runtimes = discover_java_runtimes();
     let runtime_summaries: Vec<String> = runtimes
         .iter()
-        .map(|r| format!("Java {} ({}, {})", r.major_version, r.full_version, r.vendor))
+        .map(|r| {
+            format!(
+                "Java {} ({}, {})",
+                r.major_version, r.full_version, r.vendor
+            )
+        })
         .collect();
 
     let system_info = DiagnosticSystemInfo {
@@ -954,7 +959,8 @@ pub async fn run_install_doctor(
         }
         Ok(resp) => {
             let status = resp.status();
-            let err_msg = format!("Сервер манифеста Mojang вернул HTTP {status} по адресу {manifest_url}");
+            let err_msg =
+                format!("Сервер манифеста Mojang вернул HTTP {status} по адресу {manifest_url}");
             steps.push(DiagnosticStep {
                 stage: InstallStage::Manifest,
                 name: "Манифест версии Mojang".to_string(),
@@ -970,7 +976,8 @@ pub async fn run_install_doctor(
             (None, None)
         }
         Err(e) => {
-            let err_msg = format!("Не удалось связаться с сервером манифеста Mojang ({manifest_url}): {e}");
+            let err_msg =
+                format!("Не удалось связаться с сервером манифеста Mojang ({manifest_url}): {e}");
             steps.push(DiagnosticStep {
                 stage: InstallStage::Manifest,
                 name: "Манифест версии Mojang".to_string(),
@@ -1062,7 +1069,10 @@ pub async fn run_install_doctor(
                     });
                     logger.info(
                         InstallStage::VersionJson,
-                        format!("version.json успешно разобран (класс: {})", resolved.main_class),
+                        format!(
+                            "version.json успешно разобран (класс: {})",
+                            resolved.main_class
+                        ),
                     );
                     (Some(resolved), Some(body))
                 }
@@ -1239,10 +1249,7 @@ pub async fn run_install_doctor(
     let expected_client_size = resolved.client_jar.size;
 
     // Check remote reachability via HEAD or Range GET
-    let client_probe = client
-        .head(client_url)
-        .send()
-        .await;
+    let client_probe = client.head(client_url).send().await;
 
     let client_elapsed = start_client.elapsed().as_millis() as u64;
 
@@ -1310,10 +1317,15 @@ pub async fn run_install_doctor(
                         error_reason: None,
                         details: vec![format!("URL: {client_url}")],
                     });
-                    logger.info(InstallStage::ClientJar, "client.jar подтверждён через Range GET");
+                    logger.info(
+                        InstallStage::ClientJar,
+                        "client.jar подтверждён через Range GET",
+                    );
                 }
                 _ => {
-                    let err_msg = format!("Сервер вернул HTTP {status} при проверке client.jar ({client_url})");
+                    let err_msg = format!(
+                        "Сервер вернул HTTP {status} при проверке client.jar ({client_url})"
+                    );
                     steps.push(DiagnosticStep {
                         stage: InstallStage::ClientJar,
                         name: "Игровой клиент client.jar".to_string(),
@@ -1330,7 +1342,8 @@ pub async fn run_install_doctor(
             }
         }
         Err(e) => {
-            let err_msg = format!("Ошибка подключения к серверу при проверке client.jar ({client_url}): {e}");
+            let err_msg =
+                format!("Ошибка подключения к серверу при проверке client.jar ({client_url}): {e}");
             steps.push(DiagnosticStep {
                 stage: InstallStage::ClientJar,
                 name: "Игровой клиент client.jar".to_string(),
@@ -1444,7 +1457,11 @@ pub async fn run_install_doctor(
     steps.push(DiagnosticStep {
         stage: InstallStage::Natives,
         name: "Нативные библиотеки".to_string(),
-        status: if natives_count > 0 { StepStatus::Ok } else { StepStatus::Warn },
+        status: if natives_count > 0 {
+            StepStatus::Ok
+        } else {
+            StepStatus::Warn
+        },
         elapsed_ms: natives_elapsed,
         size_bytes: None,
         sha1: None,
@@ -1454,7 +1471,10 @@ pub async fn run_install_doctor(
             "Нативные библиотеки не обнаружены в спецификации версии".to_string()
         },
         error_reason: if natives_count == 0 {
-            Some("Отсутствуют нативные библиотеки (может препятствовать запуску графического окна)".to_string())
+            Some(
+                "Отсутствуют нативные библиотеки (может препятствовать запуску графического окна)"
+                    .to_string(),
+            )
         } else {
             None
         },
@@ -1505,7 +1525,10 @@ pub async fn run_install_doctor(
                     let mut asset_details = vec![
                         format!("Идентификатор индекса: {asset_index_id}"),
                         format!("Объектов в индексе: {total_objects}"),
-                        format!("Общий объём ассетов: {:.2} MiB", total_objects_size as f64 / (1024.0 * 1024.0)),
+                        format!(
+                            "Общий объём ассетов: {:.2} MiB",
+                            total_objects_size as f64 / (1024.0 * 1024.0)
+                        ),
                     ];
 
                     let mut ru_ok = false;
@@ -1532,7 +1555,10 @@ pub async fn run_install_doctor(
                             }
                         }
                     } else {
-                        asset_details.push("Локализация ru_ru отсутствует в индексе (ранняя версия MC)".to_string());
+                        asset_details.push(
+                            "Локализация ru_ru отсутствует в индексе (ранняя версия MC)"
+                                .to_string(),
+                        );
                     }
 
                     steps.push(DiagnosticStep {
@@ -1556,11 +1582,14 @@ pub async fn run_install_doctor(
                     });
                     logger.info(
                         InstallStage::Assets,
-                        format!("Индекс ассетов '{asset_index_id}' проверен ({total_objects} файлов)"),
+                        format!(
+                            "Индекс ассетов '{asset_index_id}' проверен ({total_objects} файлов)"
+                        ),
                     );
                 }
                 Err(e) => {
-                    let err_msg = format!("Ошибка разбора JSON индекса ассетов ({asset_index_url}): {e}");
+                    let err_msg =
+                        format!("Ошибка разбора JSON индекса ассетов ({asset_index_url}): {e}");
                     steps.push(DiagnosticStep {
                         stage: InstallStage::Assets,
                         name: "Игровые ресурсы и ассеты".to_string(),
@@ -1578,7 +1607,8 @@ pub async fn run_install_doctor(
         }
         Ok(resp) => {
             let status = resp.status();
-            let err_msg = format!("Сервер ассетов вернул HTTP {status} для индекса {asset_index_url}");
+            let err_msg =
+                format!("Сервер ассетов вернул HTTP {status} для индекса {asset_index_url}");
             steps.push(DiagnosticStep {
                 stage: InstallStage::Assets,
                 name: "Игровые ресурсы и ассеты".to_string(),
@@ -1593,7 +1623,8 @@ pub async fn run_install_doctor(
             logger.error(InstallStage::Assets, err_msg, None);
         }
         Err(e) => {
-            let err_msg = format!("Сетевой сбой при получении индекса ассетов ({asset_index_url}): {e}");
+            let err_msg =
+                format!("Сетевой сбой при получении индекса ассетов ({asset_index_url}): {e}");
             steps.push(DiagnosticStep {
                 stage: InstallStage::Assets,
                 name: "Игровые ресурсы и ассеты".to_string(),
@@ -1663,7 +1694,9 @@ pub async fn run_install_doctor(
                         size_bytes: Some(file_size),
                         sha1: Some(file_sha1.clone()),
                         summary: format!("Конфигурация '{file_id}' не ответила на HEAD запрос"),
-                        error_reason: Some(format!("URL конфигурации log4j2 недоступен: {file_url}")),
+                        error_reason: Some(format!(
+                            "URL конфигурации log4j2 недоступен: {file_url}"
+                        )),
                         details: vec![format!("Аргумент JVM: {argument}")],
                     });
                     logger.warn(
@@ -1685,7 +1718,10 @@ pub async fn run_install_doctor(
                 error_reason: None,
                 details: vec![],
             });
-            logger.info(InstallStage::Finalize, "Стандартная конфигурация логирования");
+            logger.info(
+                InstallStage::Finalize,
+                "Стандартная конфигурация логирования",
+            );
         }
     } else {
         steps.push(DiagnosticStep {
@@ -1700,7 +1736,10 @@ pub async fn run_install_doctor(
             error_reason: None,
             details: vec![],
         });
-        logger.info(InstallStage::Finalize, "XML-файл log4j2 не требуется версией");
+        logger.info(
+            InstallStage::Finalize,
+            "XML-файл log4j2 не требуется версией",
+        );
     }
 
     // Determine overall diagnostic status
@@ -1726,11 +1765,7 @@ pub async fn run_install_doctor(
 }
 
 /// CLI runner for `mq doctor --install <version>`.
-pub async fn cmd_doctor_install(
-    version: &str,
-    args: &DoctorArgs,
-    _paths: &MqPaths,
-) -> Result<()> {
+pub async fn cmd_doctor_install(version: &str, args: &DoctorArgs, _paths: &MqPaths) -> Result<()> {
     println!("================================================================================");
     println!("          MQ LAUNCHER v2.2.0 — ДИАГНОСТИКА УСТАНОВКИ (DOCTOR INSTALL)");
     println!("================================================================================");
@@ -1825,14 +1860,26 @@ mod tests {
     #[test]
     fn test_install_stage_localized_names_and_contracts() {
         assert_eq!(InstallStage::Manifest.localized_name(), "Манифест версии");
-        assert_eq!(InstallStage::VersionJson.localized_name(), "Конфигурация версии");
-        assert_eq!(InstallStage::JavaRuntime.localized_name(), "Среда выполнения Java");
+        assert_eq!(
+            InstallStage::VersionJson.localized_name(),
+            "Конфигурация версии"
+        );
+        assert_eq!(
+            InstallStage::JavaRuntime.localized_name(),
+            "Среда выполнения Java"
+        );
         assert_eq!(InstallStage::ClientJar.localized_name(), "Игровой клиент");
         assert_eq!(InstallStage::Libraries.localized_name(), "Библиотеки");
-        assert_eq!(InstallStage::Natives.localized_name(), "Нативные библиотеки");
+        assert_eq!(
+            InstallStage::Natives.localized_name(),
+            "Нативные библиотеки"
+        );
         assert_eq!(InstallStage::Assets.localized_name(), "Игровые ресурсы");
         assert_eq!(InstallStage::ModLoader.localized_name(), "Модлоадер");
-        assert_eq!(InstallStage::Verification.localized_name(), "Проверка файлов");
+        assert_eq!(
+            InstallStage::Verification.localized_name(),
+            "Проверка файлов"
+        );
         assert_eq!(InstallStage::Finalize.localized_name(), "Финализация");
 
         // Serde roundtrip matching snake_case contract in CONTRACTS.md
@@ -1966,7 +2013,7 @@ mod tests {
 
         let markdown = export_diagnostic_report_sanitized(&report, &[]);
         assert!(markdown.contains("### MQ Launcher v2.2.0 — Отчёт диагностики установки"));
-        assert!(markdown.contains("Версия игры: 1.21.1"));
+        assert!(markdown.contains("Версия игры:** 1.21.1"));
         assert!(markdown.contains("ГОТОВО К УСТАНОВКЕ [OK]"));
         assert!(markdown.contains("Манифест Mojang получен за 120 мс"));
 

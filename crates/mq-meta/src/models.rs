@@ -53,8 +53,16 @@ impl VersionManifest {
     /// Sorts versions chronologically by `releaseTime` descending (newest first).
     pub fn sort_by_release_time_desc(&mut self) {
         self.versions.sort_by(|a, b| {
-            let ta = a.release_time.as_deref().or(a.time.as_deref()).unwrap_or("");
-            let tb = b.release_time.as_deref().or(b.time.as_deref()).unwrap_or("");
+            let ta = a
+                .release_time
+                .as_deref()
+                .or(a.time.as_deref())
+                .unwrap_or("");
+            let tb = b
+                .release_time
+                .as_deref()
+                .or(b.time.as_deref())
+                .unwrap_or("");
             tb.cmp(ta)
         });
     }
@@ -62,8 +70,16 @@ impl VersionManifest {
     /// Sorts versions chronologically by `releaseTime` ascending (oldest first).
     pub fn sort_by_release_time_asc(&mut self) {
         self.versions.sort_by(|a, b| {
-            let ta = a.release_time.as_deref().or(a.time.as_deref()).unwrap_or("");
-            let tb = b.release_time.as_deref().or(b.time.as_deref()).unwrap_or("");
+            let ta = a
+                .release_time
+                .as_deref()
+                .or(a.time.as_deref())
+                .unwrap_or("");
+            let tb = b
+                .release_time
+                .as_deref()
+                .or(b.time.as_deref())
+                .unwrap_or("");
             ta.cmp(tb)
         });
     }

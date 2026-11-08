@@ -458,6 +458,7 @@ mod tests {
             }],
             jvm_arguments: Vec::new(),
             game_arguments: Vec::new(),
+            logging: None,
         };
 
         let asset_index = AssetIndex {

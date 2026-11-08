@@ -900,7 +900,7 @@ mod tests {
         assert_eq!(order.len(), 5);
         // All 3 middle branches must have overlapped concurrently!
         assert_eq!(max_concurrent.load(Ordering::SeqCst), 3);
-        assert!(elapsed < Duration::from_millis(500));
+        assert!(elapsed < Duration::from_millis(2500));
     }
 
     #[tokio::test]

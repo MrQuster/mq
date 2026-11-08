@@ -156,7 +156,11 @@ pub fn build_launch_command(ctx: &LaunchContext) -> MqResult<BuiltLaunchCommand>
     let log_path_str = if let Some(ref logging) = ctx.version.logging {
         if let Some(ref client) = logging.client {
             if !client.file.path.is_empty() {
-                ctx.paths.assets_dir().join(&client.file.path).to_string_lossy().into_owned()
+                ctx.paths
+                    .assets_dir()
+                    .join(&client.file.path)
+                    .to_string_lossy()
+                    .into_owned()
             } else {
                 String::new()
             }
@@ -412,9 +416,7 @@ pub fn expand_and_sanitize_arg(template: &str, substitutions: &[(&str, &str)]) -
                         "Unrecognized placeholder '${{{var_name}}}' in launch argument, replaced with empty string"
                     );
                 } else {
-                    tracing::warn!(
-                        "Malformed unclosed placeholder in launch argument, scrubbed"
-                    );
+                    tracing::warn!("Malformed unclosed placeholder in launch argument, scrubbed");
                 }
             } else {
                 clean.push(ch);
@@ -545,13 +547,13 @@ mod tests {
     #[test]
     fn expands_all_known_placeholders_and_scrubs_unknowns_without_leaving_placeholder_markers() {
         let template = "--user ${auth_player_name} --ver ${version_name} --unknown ${unknown_var} --flag=${another_bad_var}";
-        let subs = [
-            ("auth_player_name", "TestUser"),
-            ("version_name", "26.3"),
-        ];
+        let subs = [("auth_player_name", "TestUser"), ("version_name", "26.3")];
         let expanded = expand_and_sanitize_arg(template, &subs);
         assert_eq!(expanded, "--user TestUser --ver 26.3 --unknown  --flag=");
-        assert!(!expanded.contains("${"), "Result contains unexpanded placeholder marker!");
+        assert!(
+            !expanded.contains("${"),
+            "Result contains unexpanded placeholder marker!"
+        );
     }
 
     #[test]
@@ -571,12 +573,7 @@ mod tests {
         let paths = MqPaths::with_root(temp.path());
         paths.ensure_dirs().expect("dirs");
 
-        let mut instance = InstanceManifest::new(
-            "Test 26",
-            "26.3",
-            ModLoaderKind::Vanilla,
-            None,
-        );
+        let mut instance = InstanceManifest::new("Test 26", "26.3", ModLoaderKind::Vanilla, None);
         instance.memory_min_mb = 1024;
         instance.memory_max_mb = 2048;
         instance.jvm_args = vec!["-Dcustom.unknown=${user_custom_prop}".to_string()];
@@ -678,6 +675,9 @@ mod tests {
         );
 
         // Verify logging argument was added
-        assert!(cmd.args.iter().any(|arg| arg.starts_with("-Dlog4j.configurationFile=")));
+        assert!(cmd
+            .args
+            .iter()
+            .any(|arg| arg.starts_with("-Dlog4j.configurationFile=")));
     }
 }

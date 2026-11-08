@@ -201,19 +201,18 @@ fn add_mojang_mirror_if_hashed(spec: &mut DownloadSpec) {
         None => return,
     };
 
-    let mirror_url = if let Some(stripped) =
-        primary.strip_prefix("https://resources.download.minecraft.net/")
-    {
-        Some(format!("https://bmclapi2.bangbang93.com/assets/{stripped}"))
-    } else if let Some(stripped) = primary.strip_prefix("https://libraries.minecraft.net/") {
-        Some(format!("https://bmclapi2.bangbang93.com/maven/{stripped}"))
-    } else if let Some(stripped) = primary.strip_prefix("https://piston-data.mojang.com/") {
-        Some(format!("https://bmclapi2.bangbang93.com/{stripped}"))
-    } else if let Some(stripped) = primary.strip_prefix("https://launcher.mojang.com/") {
-        Some(format!("https://bmclapi2.bangbang93.com/{stripped}"))
-    } else {
-        None
-    };
+    let mirror_url =
+        if let Some(stripped) = primary.strip_prefix("https://resources.download.minecraft.net/") {
+            Some(format!("https://bmclapi2.bangbang93.com/assets/{stripped}"))
+        } else if let Some(stripped) = primary.strip_prefix("https://libraries.minecraft.net/") {
+            Some(format!("https://bmclapi2.bangbang93.com/maven/{stripped}"))
+        } else if let Some(stripped) = primary.strip_prefix("https://piston-data.mojang.com/") {
+            Some(format!("https://bmclapi2.bangbang93.com/{stripped}"))
+        } else {
+            primary
+                .strip_prefix("https://launcher.mojang.com/")
+                .map(|stripped| format!("https://bmclapi2.bangbang93.com/{stripped}"))
+        };
 
     if let Some(m) = mirror_url {
         if !spec.urls.contains(&m) {
@@ -294,6 +293,7 @@ pub async fn install_game(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn install_game_transactional(
     req: &InstallRequest,
     paths: &MqPaths,
@@ -394,8 +394,8 @@ async fn install_game_transactional(
                 )
                 .await
                 .map_err(|e| (current_stage, e))?;
-                resolved_ver = merge_inherits_from(&resolved_ver, &profile)
-                    .map_err(|e| (current_stage, e))?;
+                resolved_ver =
+                    merge_inherits_from(&resolved_ver, &profile).map_err(|e| (current_stage, e))?;
             }
             ModLoaderKind::Quilt => {
                 let loader_ver = match &req.loader_version {
@@ -427,14 +427,15 @@ async fn install_game_transactional(
                 )
                 .await
                 .map_err(|e| (current_stage, e))?;
-                resolved_ver = merge_inherits_from(&resolved_ver, &profile)
-                    .map_err(|e| (current_stage, e))?;
+                resolved_ver =
+                    merge_inherits_from(&resolved_ver, &profile).map_err(|e| (current_stage, e))?;
             }
             _ => {}
         }
     }
 
     // 3b. Ensure compatible Java runtime is present (Mojang / System / Adoptium / Zulu)
+    current_stage = InstallStage::JavaRuntime;
     if let Some(bus) = event_bus {
         bus.publish(Event::PhaseStarted {
             phase: "java_runtime".to_string(),
@@ -459,7 +460,7 @@ async fn install_game_transactional(
             if req.mock_base_url.is_some() {
                 tracing::warn!("mock installation environment; skipping Java ensure error: {e}");
             } else {
-                return Err(e);
+                return Err((current_stage, e));
             }
         }
     }
@@ -573,7 +574,7 @@ async fn install_game_transactional(
     let client_jar_in_cas = resolved_ver
         .client_jar
         .sha1
-        .map_or(false, |sha1| cas.has_blob(&sha1));
+        .is_some_and(|sha1| cas.has_blob(&sha1));
 
     if !client_jar_in_cas {
         let mut client_spec = DownloadSpec {
@@ -613,7 +614,7 @@ async fn install_game_transactional(
                 target.clone()
             };
 
-            let in_cas = art.sha1.map_or(false, |sha1| cas.has_blob(&sha1));
+            let in_cas = art.sha1.is_some_and(|sha1| cas.has_blob(&sha1));
             if !in_cas {
                 let mut spec = DownloadSpec {
                     id: format!("lib_{}", lib.name),
@@ -639,7 +640,7 @@ async fn install_game_transactional(
                 target.clone()
             };
 
-            let in_cas = nat.sha1.map_or(false, |sha1| cas.has_blob(&sha1));
+            let in_cas = nat.sha1.is_some_and(|sha1| cas.has_blob(&sha1));
             if !in_cas {
                 let mut spec = DownloadSpec {
                     id: format!("native_{}", lib.name),
@@ -798,8 +799,8 @@ async fn install_game_transactional(
     }
 
     if let Some(expected_sha1) = resolved_ver.client_jar.sha1 {
-        let actual_sha1 = compute_file_sha1_streaming(&installed_client_jar)
-            .map_err(|e| (current_stage, e))?;
+        let actual_sha1 =
+            compute_file_sha1_streaming(&installed_client_jar).map_err(|e| (current_stage, e))?;
         if actual_sha1 != expected_sha1 {
             return Err((
                 current_stage,
@@ -945,11 +946,17 @@ mod tests {
         };
 
         let res = install_game(&req, &paths, &net, &cas, &compute, &guard, None).await;
-        assert!(res.is_err(), "install must fail due to unreachable mock url");
+        assert!(
+            res.is_err(),
+            "install must fail due to unreachable mock url"
+        );
 
         // 1. .installing directory must be completely cleaned up
         let installing_dir = inst_dir.join(".installing");
-        assert!(!installing_dir.exists(), ".installing dir must be removed on failure");
+        assert!(
+            !installing_dir.exists(),
+            ".installing dir must be removed on failure"
+        );
 
         // 2. install_state.json must be persisted with Failed status and error details
         let loaded = InstallState::load(&inst_dir).expect("install_state.json must exist");
@@ -990,8 +997,11 @@ mod tests {
         assert!(cas.has_blob(&digest));
 
         // Verify that in pipeline download planning, in_cas skips download
-        let in_cas = Some(digest).map_or(false, |sha1| cas.has_blob(&sha1));
-        assert!(in_cas, "blob in CAS should be skipped from network downloads");
+        let in_cas = Some(digest).is_some_and(|sha1| cas.has_blob(&sha1));
+        assert!(
+            in_cas,
+            "blob in CAS should be skipped from network downloads"
+        );
     }
 
     #[test]
@@ -1008,9 +1018,21 @@ mod tests {
 
         // New files in .installing
         fs::create_dir_all(installing_dir.join("natives")).unwrap();
-        fs::write(installing_dir.join("client.jar"), b"new-verified-client-jar").unwrap();
-        fs::write(installing_dir.join("resolved_version.json"), b"{\"mc\": \"1.21.4\"}").unwrap();
-        fs::write(installing_dir.join("natives").join("libnew.so"), b"new-native").unwrap();
+        fs::write(
+            installing_dir.join("client.jar"),
+            b"new-verified-client-jar",
+        )
+        .unwrap();
+        fs::write(
+            installing_dir.join("resolved_version.json"),
+            b"{\"mc\": \"1.21.4\"}",
+        )
+        .unwrap();
+        fs::write(
+            installing_dir.join("natives").join("libnew.so"),
+            b"new-native",
+        )
+        .unwrap();
 
         // Perform atomic swap
         let installed_client_jar = installing_dir.join("client.jar");
@@ -1034,7 +1056,10 @@ mod tests {
         let _ = fs::remove_dir_all(&installing_dir);
 
         // Verification after swap
-        assert_eq!(fs::read(&final_client_jar).unwrap(), b"new-verified-client-jar");
+        assert_eq!(
+            fs::read(&final_client_jar).unwrap(),
+            b"new-verified-client-jar"
+        );
         assert_eq!(fs::read(&final_resolved).unwrap(), b"{\"mc\": \"1.21.4\"}");
         assert!(final_natives_dir.join("libnew.so").exists());
         assert!(!final_natives_dir.join("stale.so").exists());

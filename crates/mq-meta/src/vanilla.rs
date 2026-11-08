@@ -139,10 +139,7 @@ pub fn infer_java_version(mc_version: &str) -> JavaVersionSpec {
     }
 
     // Strip hyphens, pluses, pre, rc, snapshot suffixes safely without panic
-    let core = trimmed
-        .split(['-', '+', ' '])
-        .next()
-        .unwrap_or("");
+    let core = trimmed.split(['-', '+', ' ']).next().unwrap_or("");
     let nums: Vec<u32> = core
         .split('.')
         .map_while(|seg| seg.parse::<u32>().ok())
@@ -757,6 +754,48 @@ impl VanillaVersionSource for &VersionManifestEntry {
     }
 }
 
+fn fetch_vanilla_version_by_url<'a>(
+    client: &'a reqwest::Client,
+    url: String,
+    ctx: &'a RuleContext,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = MqResult<ResolvedVersion>> + Send + 'a>> {
+    Box::pin(async move {
+        let response = client.get(&url).send().await.map_err(|err| {
+            MqError::Network(format!("failed to fetch vanilla version '{url}': {err}"))
+        })?;
+
+        let status = response.status();
+        let body = response.text().await.map_err(|err| {
+            MqError::Network(format!("failed to read vanilla version '{url}': {err}"))
+        })?;
+
+        if !status.is_success() {
+            return Err(MqError::HttpStatus {
+                status: status.as_u16(),
+                url,
+                body,
+            });
+        }
+
+        let parsed = parse_vanilla_version(&body, ctx)?;
+        if let Some(ref parent_id) = parsed.inherits_from {
+            if parent_id != &parsed.id {
+                let parent_url =
+                    if parent_id.starts_with("http://") || parent_id.starts_with("https://") {
+                        parent_id.clone()
+                    } else {
+                        let manifest = fetch_version_manifest(client, None).await?;
+                        let entry = find_version_entry(&manifest, parent_id.as_str())?;
+                        entry.url.clone()
+                    };
+                let parent = fetch_vanilla_version_by_url(client, parent_url, ctx).await?;
+                return crate::merge::merge_resolved_versions(&parent, &parsed);
+            }
+        }
+        Ok(parsed)
+    })
+}
+
 /// Fetches and parses a Mojang `version.json` document into a [`ResolvedVersion`].
 ///
 /// `source` may be a [`VersionManifestEntry`], a direct `http(s)://...` URL to `version.json`,
@@ -775,31 +814,7 @@ pub async fn fetch_vanilla_version<S: VanillaVersionSource>(
         entry.url.clone()
     };
 
-    let response = client.get(&url).send().await.map_err(|err| {
-        MqError::Network(format!("failed to fetch vanilla version '{url}': {err}"))
-    })?;
-
-    let status = response.status();
-    let body = response.text().await.map_err(|err| {
-        MqError::Network(format!("failed to read vanilla version '{url}': {err}"))
-    })?;
-
-    if !status.is_success() {
-        return Err(MqError::HttpStatus {
-            status: status.as_u16(),
-            url,
-            body,
-        });
-    }
-
-    let parsed = parse_vanilla_version(&body, ctx)?;
-    if let Some(ref parent_id) = parsed.inherits_from {
-        if parent_id != &parsed.id {
-            let parent = Box::pin(fetch_vanilla_version(client, parent_id.as_str(), ctx)).await?;
-            return crate::merge::merge_resolved_versions(&parent, &parsed);
-        }
-    }
-    Ok(parsed)
+    fetch_vanilla_version_by_url(client, url, ctx).await
 }
 
 #[cfg(test)]
@@ -1209,7 +1224,14 @@ mod tests {
         let ids: Vec<&str> = manifest.versions.iter().map(|v| v.id.as_str()).collect();
         assert_eq!(
             ids,
-            vec!["26.3", "26.1-snapshot-1", "1.21.4", "1.7.10", "b1.7.3", "a1.0.14"]
+            vec![
+                "26.3",
+                "26.1-snapshot-1",
+                "1.21.4",
+                "1.7.10",
+                "b1.7.3",
+                "a1.0.14"
+            ]
         );
 
         // Verify type filtering
@@ -1411,10 +1433,17 @@ mod tests {
         assert_eq!(v116.id, "1.16.5");
         assert_eq!(v116.java_version.major_version, 8);
         // On Linux, -XstartOnFirstThread must NOT be present
-        assert!(!v116.jvm_arguments.iter().any(|a| a == "-XstartOnFirstThread"));
+        assert!(!v116
+            .jvm_arguments
+            .iter()
+            .any(|a| a == "-XstartOnFirstThread"));
         assert_eq!(
             v116.jvm_arguments,
-            vec!["-Djava.library.path=${natives_directory}", "-cp", "${classpath}"]
+            vec![
+                "-Djava.library.path=${natives_directory}",
+                "-cp",
+                "${classpath}"
+            ]
         );
 
         let osx_ctx = RuleContext::macos_x86_64();
@@ -1498,7 +1527,10 @@ mod tests {
         let mut win10_ctx = RuleContext::windows_x86_64();
         win10_ctx.features.insert("is_demo_user".to_string(), true);
         let v120_win = parse_vanilla_version(v120_json, &win10_ctx).expect("parse win10");
-        assert!(v120_win.jvm_arguments.iter().any(|a| a == "-Dos.name=Windows 10"));
+        assert!(v120_win
+            .jvm_arguments
+            .iter()
+            .any(|a| a == "-Dos.name=Windows 10"));
         assert!(v120_win.game_arguments.iter().any(|a| a == "--demo"));
     }
 
@@ -1663,7 +1695,8 @@ mod tests {
         let parent = parse_vanilla_version(parent_json, &ctx).expect("parse parent");
         let child = parse_vanilla_version(child_json, &ctx).expect("parse child");
 
-        let merged = crate::merge::merge_resolved_versions(&parent, &child).expect("merge versions");
+        let merged =
+            crate::merge::merge_resolved_versions(&parent, &child).expect("merge versions");
         assert_eq!(merged.id, "1.21.1-OptiFine_HD_U_J1");
         assert_eq!(merged.mc_version, "1.21.1");
         assert_eq!(merged.main_class, "net.minecraft.launchwrapper.Launch");
@@ -1676,7 +1709,14 @@ mod tests {
         // Inherited logging
         assert!(merged.logging.is_some());
         assert_eq!(
-            merged.logging.as_ref().unwrap().client.as_ref().unwrap().argument,
+            merged
+                .logging
+                .as_ref()
+                .unwrap()
+                .client
+                .as_ref()
+                .unwrap()
+                .argument,
             "-Dlog4j.configurationFile=${path}"
         );
         // Libraries: child prepended, parent follows
@@ -1684,7 +1724,10 @@ mod tests {
         assert_eq!(merged.libraries[0].name, "optifine:OptiFine:1.21.1_HD_U_J1");
         assert_eq!(merged.libraries[1].name, "com.google.code.gson:gson:2.10.1");
         // Arguments concatenated
-        assert_eq!(merged.jvm_arguments, vec!["-Dparent.prop=true", "-Dchild.prop=true"]);
+        assert_eq!(
+            merged.jvm_arguments,
+            vec!["-Dparent.prop=true", "-Dchild.prop=true"]
+        );
         assert_eq!(merged.game_arguments, vec!["--parentGame", "--childGame"]);
     }
 }

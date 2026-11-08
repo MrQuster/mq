@@ -300,13 +300,10 @@ pub fn available_disk_space(path: &Path) -> MqResult<u64> {
     }
 
     let stat = rustix::fs::statvfs(check_path).map_err(|e| {
-        MqError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "failed to query disk space for '{}': {e}",
-                check_path.display()
-            ),
-        ))
+        MqError::Io(std::io::Error::other(format!(
+            "failed to query disk space for '{}': {e}",
+            check_path.display()
+        )))
     })?;
 
     let block_size = if stat.f_frsize > 0 {
@@ -324,15 +321,12 @@ pub fn check_free_disk_space(path: &Path, required_bytes: u64) -> MqResult<()> {
     if available < required_bytes {
         let req_mib = required_bytes as f64 / (1024.0 * 1024.0);
         let avail_mib = available as f64 / (1024.0 * 1024.0);
-        return Err(MqError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "Недостаточно свободного места на диске для установки: требуется {:.1} МиБ, доступно только {:.1} МиБ (путь: {})",
-                req_mib,
-                avail_mib,
-                path.display()
-            ),
-        )));
+        return Err(MqError::Io(std::io::Error::other(format!(
+            "Недостаточно свободного места на диске для установки: требуется {:.1} МиБ, доступно только {:.1} МиБ (путь: {})",
+            req_mib,
+            avail_mib,
+            path.display()
+        ))));
     }
     Ok(())
 }
@@ -351,7 +345,8 @@ pub struct InstanceInstallLock {
 impl InstanceInstallLock {
     pub async fn acquire(instance_dir: &Path, instance_id: &str) -> MqResult<Self> {
         std::fs::create_dir_all(instance_dir)?;
-        let canonical_dir = std::fs::canonicalize(instance_dir).unwrap_or_else(|_| instance_dir.to_path_buf());
+        let canonical_dir =
+            std::fs::canonicalize(instance_dir).unwrap_or_else(|_| instance_dir.to_path_buf());
 
         // 1. In-process locking
         let mutex = IN_PROCESS_LOCKS

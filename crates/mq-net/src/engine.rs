@@ -748,6 +748,7 @@ impl NetEngine {
         }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn try_download_from_url(
         &self,
         url: &str,

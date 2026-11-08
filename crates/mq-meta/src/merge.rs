@@ -179,11 +179,10 @@ pub fn merge_resolved_versions(
         parent.asset_index.clone()
     };
 
-    let client_jar = if !child.client_jar.path.trim().is_empty()
-        && child.client_jar.path != format!("versions/{}/{}.jar", child.id, child.id)
+    let client_jar = if (!child.client_jar.path.trim().is_empty()
+        && child.client_jar.path != format!("versions/{}/{}.jar", child.id, child.id))
+        || !child.client_jar.url.trim().is_empty()
     {
-        child.client_jar.clone()
-    } else if !child.client_jar.url.trim().is_empty() {
         child.client_jar.clone()
     } else {
         parent.client_jar.clone()
