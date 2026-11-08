@@ -202,7 +202,7 @@ fn atomic_write_file(path: &Path, bytes: &[u8]) -> MqResult<()> {
     Ok(())
 }
 
-/// Unified options manager conforming to Section 4.5 and CONTRACTS.md.
+/// Unified options manager for Minecraft game options.
 pub struct MinecraftOptionsManager;
 
 impl MinecraftOptionsManager {

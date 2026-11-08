@@ -73,7 +73,7 @@ echo "World saves verification passed."
 echo "--- 6. Testing Launch Pipeline & Critical Bug #1 (Languages & Arguments) ---"
 DRY_RUN_OUT=$("${MQ_BIN}" launch 26.3-vanilla --dry-run 2>&1)
 
-echo "${DRY_RUN_OUT}" | grep -q -- "--assetsDir /home/honey/.local/share/mq/assets"
+echo "${DRY_RUN_OUT}" | grep -q -- "--assetsDir ${HOME}/.local/share/mq/assets"
 echo "${DRY_RUN_OUT}" | grep -q -- "--assetIndex 34"
 
 # Verify options.txt contains lang:ru_ru

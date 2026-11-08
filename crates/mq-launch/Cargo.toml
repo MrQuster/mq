@@ -2,10 +2,12 @@
 name = "mq-launch"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
+description = "Deterministic JVM command line generator, classpath resolver, and process lifecycle runner for MQ"
+keywords = ["minecraft", "launch", "jvm", "runner", "process"]
+categories = ["command-line-utilities", "os"]
 
 [dependencies]
 mq-core.workspace = true

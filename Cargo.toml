@@ -20,8 +20,7 @@ members = [
 [workspace.package]
 version = "2.2.0"
 edition = "2021"
-license = "MIT"
-authors = ["MrQuster <mrquster@users.noreply.github.com>"]
+authors = ["MrQuster"]
 homepage = "https://github.com/MrQuster/mq"
 repository = "https://github.com/MrQuster/mq"
 rust-version = "1.80"
@@ -102,9 +101,9 @@ opt-level = 1
 
 # Production release profile (keep unwind panic for safe worker panic catching)
 [profile.release]
+strip = true
 lto = "thin"
 codegen-units = 1
-strip = "symbols"
 panic = "unwind"
 
 [workspace.lints.clippy]

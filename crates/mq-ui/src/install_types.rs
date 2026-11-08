@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-/// Installation stages defined in CONTRACTS.md.
+/// Installation stages representing the end-to-end lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallStage {
@@ -39,7 +39,7 @@ impl InstallStage {
         Self::Verification,
     ];
 
-    /// Localized name matching CONTRACTS.md.
+    /// Localized display name of the stage.
     pub fn localized_name(&self) -> &'static str {
         match self {
             Self::Manifest => "Манифест версии",
@@ -118,7 +118,7 @@ impl InstallStage {
     }
 }
 
-/// Structured installation error conforming to CONTRACTS.md.
+/// Structured installation error for UI and telemetry reporting.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallError {
     pub stage: InstallStage,
@@ -347,7 +347,7 @@ impl InstallError {
     }
 }
 
-/// Installation state contract matching CONTRACTS.md Section 3.
+/// Installation state contract for tracking instance installation status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceInstallState {
     pub schema_version: u32,
@@ -482,12 +482,12 @@ mod tests {
         // Hash mismatch
         let err_hash = InstallError::from_error_str(
             InstallStage::Verification,
-            "SHA1 checksum mismatch for file /home/honey/.local/share/mq/libraries/test.jar",
+            "SHA1 checksum mismatch for file /home/player/.local/share/mq/libraries/test.jar",
         );
         assert!(err_hash.localized_title.contains("контрольная сумма"));
         assert_eq!(
             err_hash.file_path.as_deref(),
-            Some("/home/honey/.local/share/mq/libraries/test.jar")
+            Some("/home/player/.local/share/mq/libraries/test.jar")
         );
 
         // Java missing

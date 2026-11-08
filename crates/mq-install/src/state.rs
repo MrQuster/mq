@@ -10,7 +10,7 @@ use dashmap::DashMap;
 use mq_core::{MqError, MqResult};
 use serde::{Deserialize, Serialize};
 
-/// Installation stages defined in `CONTRACTS.md`.
+/// Installation stages representing the end-to-end installation lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallStage {
@@ -54,7 +54,7 @@ impl InstallStage {
     }
 }
 
-/// Structured installation error contract from `CONTRACTS.md`.
+/// Structured installation error contract.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstallError {
     pub stage: InstallStage,
@@ -174,7 +174,7 @@ pub struct InstallClientJarInfo {
 pub const INSTALL_STATE_SCHEMA_VERSION: u32 = 1;
 pub const INSTALL_STATE_FILENAME: &str = "install_state.json";
 
-/// Root structure of `<instance_dir>/install_state.json` adhering to `CONTRACTS.md`.
+/// Root structure of `<instance_dir>/install_state.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstallState {
     pub schema_version: u32,
@@ -414,7 +414,7 @@ mod tests {
   "verified_at": "2026-11-07T22:54:33Z",
   "java": {
     "major_version": 25,
-    "path": "/home/honey/.local/share/mq/java/mojang-java-runtime-epsilon/bin/java",
+    "path": "/home/player/.local/share/mq/java/mojang-java-runtime-epsilon/bin/java",
     "source": "mojang",
     "component": "java-runtime-epsilon"
   },
@@ -429,7 +429,7 @@ mod tests {
 }"#;
 
         let parsed: InstallState =
-            serde_json::from_str(sample_json).expect("deserialize CONTRACTS.md JSON");
+            serde_json::from_str(sample_json).expect("deserialize install state JSON");
         assert_eq!(parsed.schema_version, 1);
         assert_eq!(parsed.instance_id, "26.3-vanilla");
         assert_eq!(parsed.mc_version, "26.3");

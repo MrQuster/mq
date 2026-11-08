@@ -1,43 +1,54 @@
-# Cargo build and release outputs
-/target/
-/dist/
-/.cache/
-/.cargo/
+# Build & distribution artifacts
+target/
+dist/
+*.log
+.env*
+*.key
+*.pem
 
-# Agent, LLM transcripts and scratch files
-/.agents/
-/.claude/
-/CHAT_HISTORY.md
-/BLOCKERS.md
-/PROGRESS.md
-/docs/CHAT_HISTORY.md
-/docs/transcript.jsonl
+# Agent and internal documents
+.agent/
+.gemini/
+GEMINI.md
+AGENTS.md
 *.jsonl
+CHAT_HISTORY.md
+BLOCKERS.md
+PROGRESS.md
 
-# Partial/resumable downloads and atomic staging files
+# Game runtime data and crash dumps
+crash-reports/
+saves/
+instances/
+*.heapdump
+*.old
+*.new
 *.part
-*.part*
 *.tmp
 
-# Arch Linux makepkg / PKGBUILD build artifacts
-/packaging/pkg/
-/packaging/src/
-/packaging/*.pkg.tar*
-/packaging/*.log
-
-# Profiling and benchmark outputs
-*.profraw
-*.profdata
-perf.data*
-flamegraph.svg
-/snapshots/
-*.png
-
-# OS metadata and editor swap files
+# IDE, editor and OS artifacts
+.idea/
+.vscode/
 .DS_Store
 Thumbs.db
 *.swp
 *.swo
 *~
 /.cache/
-docs/INSTALL_REPRO.md
+/.cargo/
+
+# Generated screenshots and test media
+/docs/screenshots/
+
+# Packaging build artifacts
+/packaging/pkg/
+/packaging/src/
+/packaging/*.pkg.tar*
+/packaging/*.log
+
+# Profiling and benchmarks
+*.profraw
+*.profdata
+perf.data*
+flamegraph.svg
+/snapshots/

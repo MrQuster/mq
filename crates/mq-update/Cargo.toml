@@ -2,10 +2,12 @@
 name = "mq-update"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
+description = "Cryptographically verified self-update engine and atomic binary replacer for MQ"
+keywords = ["minecraft", "update", "self-update", "minisign"]
+categories = ["development-tools", "os"]
 
 [dependencies]
 mq-core.workspace = true

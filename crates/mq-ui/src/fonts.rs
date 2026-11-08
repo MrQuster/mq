@@ -27,7 +27,6 @@ pub const MONOSPACE_FONT_CANDIDATES: &[&str] = &[
     "C:\\Windows\\Fonts\\consola.ttf",
     "C:\\Windows\\Fonts\\cascadiamono.ttf",
     "C:\\Windows\\Fonts\\lucon.ttf",
-    "/home/honey/.local/share/fonts/JetBrainsMono-Regular.ttf",
     "/usr/share/fonts/TTF/JetBrainsMono-Regular.ttf",
     "/usr/share/fonts/Adwaita/AdwaitaMono-Regular.ttf",
     "/usr/share/fonts/IosevkaNerdFont/IosevkaNerdFontMono-Regular.ttf",

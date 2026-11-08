@@ -15,7 +15,7 @@ pub fn search_input(
     SearchField::new(query, placeholder).show(ui, tokens)
 }
 
-/// Search field component satisfying specification B6 and CONTRACTS.md.
+/// Search field component with keyboard navigation and clear button.
 pub struct SearchField<'a> {
     pub query: &'a mut String,
     pub placeholder: &'a str,

@@ -2,10 +2,12 @@
 name = "mq-mods"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
+description = "Safe Modrinth (.mrpack) and CurseForge modpack and mod resolver with zip-slip protection for MQ"
+keywords = ["minecraft", "mods", "modpack", "modrinth", "curseforge"]
+categories = ["compression", "parser-implementations"]
 
 [dependencies]
 mq-core.workspace = true
