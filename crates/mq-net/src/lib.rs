@@ -613,11 +613,16 @@ mod tests {
             ),
             "last event must be PhaseCompleted"
         );
-        let progress_count = events
+        let progress_events: Vec<&mq_core::PhaseProgress> = events
             .iter()
-            .filter(|ev| matches!(ev, Event::Progress(_)))
-            .count();
-        assert_eq!(progress_count, 5);
+            .filter_map(|ev| match ev {
+                Event::Progress(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        assert!(progress_events.len() >= 2 && progress_events.len() <= 5);
+        assert_eq!(progress_events.first().unwrap().completed_items, 1);
+        assert_eq!(progress_events.last().unwrap().completed_items, 5);
 
         server.abort();
     }

@@ -50,6 +50,7 @@ wgpu = "24"
 
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
+libc = "0.2"
 
 [dev-dependencies]
 tempfile.workspace = true
