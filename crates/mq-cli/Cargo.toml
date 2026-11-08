@@ -13,6 +13,9 @@ categories = ["command-line-utilities"]
 name = "mq"
 path = "src/main.rs"
 
+[features]
+test-hooks = ["mq-ui/test-hooks"]
+
 [dependencies]
 mq-core.workspace = true
 mq-sched.workspace = true
@@ -47,6 +50,7 @@ wgpu = "24"
 
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
+libc = "0.2"
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1099,8 +1099,16 @@ impl InstancesView {
                                     ));
                                 }
                                 crate::widgets::InstallErrorCardAction::OpenLog => {
-                                    let inst_dir = state.paths.instance_dir(inst_id.as_str());
-                                    let _ = crate::opener::open_that(inst_dir);
+                                    let logs_dir = state.paths.logs_dir();
+                                    let crash_latest = logs_dir.join("crash-latest.log");
+                                    let target = if crash_latest.is_file() {
+                                        crash_latest
+                                    } else if logs_dir.is_dir() {
+                                        logs_dir
+                                    } else {
+                                        state.paths.instance_dir(inst_id.as_str())
+                                    };
+                                    let _ = crate::opener::open_that(target);
                                 }
                                 crate::widgets::InstallErrorCardAction::Dismiss => {
                                     state.install_error = None;
@@ -1115,14 +1123,18 @@ impl InstancesView {
                     if is_downloading {
                         let (frac, speed, comp_bytes, tot_bytes, comp_items, tot_items) =
                             if let Some(prog) = &state.phase_progress {
-                                let f = if prog.total_items > 0 {
-                                    prog.completed_items as f32 / prog.total_items as f32
+                                let f = crate::state::safe_progress_ratio(
+                                    prog.completed_items,
+                                    prog.total_items,
+                                );
+                                let speed = if prog.mib_per_sec.is_finite() && prog.mib_per_sec > 0.0 {
+                                    prog.mib_per_sec * 1024.0 * 1024.0
                                 } else {
                                     0.0
                                 };
                                 (
                                     f,
-                                    prog.mib_per_sec * 1024.0 * 1024.0,
+                                    speed,
                                     prog.bytes_done,
                                     prog.bytes_total,
                                     prog.completed_items,

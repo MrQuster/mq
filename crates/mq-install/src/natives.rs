@@ -6,6 +6,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use mq_core::fs_util::rename_with_retry;
 use mq_core::{resolve_safe_path, MqError, MqResult};
 use mq_sched::{ComputePool, EpochGuard};
 
@@ -120,7 +121,7 @@ pub async fn extract_natives_archives(
                         out_file.flush()?;
                     }
 
-                    fs::rename(&temp_path, &dest_path)?;
+                    rename_with_retry(&temp_path, &dest_path)?;
                     extracted_count += 1;
 
                     // Modern nested format support (e.g. linux/x64/liblwjgl.so):

@@ -363,13 +363,8 @@ impl UiState {
                 Event::Progress(prog) => {
                     self.active_phase = Some(prog.phase.clone());
                     self.current_install_stage = InstallStage::from_phase_str(&prog.phase);
-                    if prog.mib_per_sec > 0.001 && prog.bytes_total > prog.bytes_done {
-                        let remaining = prog.bytes_total - prog.bytes_done;
-                        let speed_bytes = prog.mib_per_sec * 1024.0 * 1024.0;
-                        self.install_eta_secs = Some((remaining as f64 / speed_bytes) as u64);
-                    } else {
-                        self.install_eta_secs = None;
-                    }
+                    self.install_eta_secs =
+                        calculate_eta_secs(prog.bytes_done, prog.bytes_total, prog.mib_per_sec);
                     self.phase_progress = Some(prog);
                 }
                 Event::PhaseCompleted { phase, elapsed_ms } => {
@@ -434,5 +429,286 @@ impl UiState {
             }
         }
         inst_dir.join("resolved_version.json").exists() && inst_dir.join("client.jar").exists()
+    }
+}
+
+/// Clamps `val` between `min` and `max` without panicking under any circumstances:
+/// - Inverted bounds (`min > max`) are normalized safely without asserting.
+/// - `NaN` values for `val`, `min`, or `max` are safely replaced without panicking.
+/// - `+Inf` and `-Inf` are clamped to finite bounds when bounds are finite.
+#[inline]
+pub fn safe_clamp_f32(val: f32, min: f32, max: f32) -> f32 {
+    let min = if min.is_nan() { 0.0 } else { min };
+    let max = if max.is_nan() { min } else { max };
+    let (effective_min, effective_max) = if min > max { (max, min) } else { (min, max) };
+    if val.is_nan() {
+        return effective_min;
+    }
+    if val < effective_min {
+        effective_min
+    } else if val > effective_max {
+        effective_max
+    } else {
+        val
+    }
+}
+
+/// Clamps any floating point progress value to the safe range `[0.0, 1.0]`.
+/// Returns `0.0` for `NaN` and negative values, and `1.0` for values >= 1.0 or `+Inf`.
+#[inline]
+pub fn safe_progress_clamp(val: f32) -> f32 {
+    safe_clamp_f32(val, 0.0, 1.0)
+}
+
+/// Safely computes the completion ratio `done / total` as an `f32` in `[0.0, 1.0]`.
+///
+/// - If `total == 0`, returns `0.0`.
+/// - If `done >= total`, returns `1.0`.
+/// - Uses `u64` bounds, checked divisions, and avoids any floating-point overflow or NaN.
+#[inline]
+pub fn safe_progress_ratio(done: u64, total: u64) -> f32 {
+    if total == 0 {
+        return 0.0;
+    }
+    if done >= total {
+        return 1.0;
+    }
+    let frac = (done as f64) / (total as f64);
+    if !frac.is_finite() || frac <= 0.0 {
+        0.0
+    } else if frac >= 1.0 {
+        1.0
+    } else {
+        frac as f32
+    }
+}
+
+/// Safely calculates remaining ETA in seconds given bytes completed, total bytes, and transfer speed in MiB/s.
+/// Uses `saturating_sub` and validates against NaN/Inf/zero speeds.
+#[inline]
+pub fn calculate_eta_secs(bytes_done: u64, bytes_total: u64, mib_per_sec: f64) -> Option<u64> {
+    if !mib_per_sec.is_finite() || mib_per_sec <= 0.001 {
+        return None;
+    }
+    let remaining = bytes_total.saturating_sub(bytes_done);
+    if remaining == 0 {
+        return None;
+    }
+    let speed_bytes = mib_per_sec * 1024.0 * 1024.0;
+    if !speed_bytes.is_finite() || speed_bytes <= 0.0 {
+        return None;
+    }
+    let secs = remaining as f64 / speed_bytes;
+    if !secs.is_finite() || secs < 0.0 {
+        return None;
+    }
+    if secs > (u64::MAX as f64) {
+        Some(u64::MAX)
+    } else {
+        Some(secs as u64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_safe_clamp_f32_edges() {
+        // Normal in-bounds
+        assert_eq!(safe_clamp_f32(0.5, 0.0, 1.0), 0.5);
+        // Exceeds max
+        assert_eq!(safe_clamp_f32(1.5, 0.0, 1.0), 1.0);
+        // Below min
+        assert_eq!(safe_clamp_f32(-0.5, 0.0, 1.0), 0.0);
+        // Inverted min > max (e.g. hud.rs:99 case max_bar_h < 1.5)
+        assert_eq!(safe_clamp_f32(0.8, 1.5, 1.0), 1.0);
+        assert_eq!(safe_clamp_f32(2.0, 1.5, 1.0), 1.5);
+        assert_eq!(safe_clamp_f32(1.2, 1.5, 1.0), 1.2);
+        // NaNs
+        assert_eq!(safe_clamp_f32(f32::NAN, 0.0, 1.0), 0.0);
+        assert_eq!(safe_clamp_f32(0.5, f32::NAN, 1.0), 0.5);
+        assert_eq!(safe_clamp_f32(0.5, 0.0, f32::NAN), 0.0);
+        assert_eq!(safe_clamp_f32(f32::NAN, f32::NAN, f32::NAN), 0.0);
+        // Infinities
+        assert_eq!(safe_clamp_f32(f32::INFINITY, 0.0, 1.0), 1.0);
+        assert_eq!(safe_clamp_f32(f32::NEG_INFINITY, 0.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn test_safe_progress_ratio_edges() {
+        assert_eq!(safe_progress_ratio(0, 0), 0.0);
+        assert_eq!(safe_progress_ratio(50, 0), 0.0);
+        assert_eq!(safe_progress_ratio(0, 100), 0.0);
+        assert_eq!(safe_progress_ratio(50, 100), 0.5);
+        assert_eq!(safe_progress_ratio(100, 100), 1.0);
+        assert_eq!(safe_progress_ratio(150, 100), 1.0);
+        assert_eq!(safe_progress_ratio(u64::MAX, u64::MAX), 1.0);
+        assert_eq!(safe_progress_ratio(u64::MAX, 10), 1.0);
+        assert_eq!(safe_progress_ratio(0, u64::MAX), 0.0);
+    }
+
+    #[test]
+    fn test_calculate_eta_secs_edges() {
+        assert_eq!(calculate_eta_secs(0, 0, 10.0), None);
+        assert_eq!(calculate_eta_secs(100, 50, 10.0), None);
+        assert_eq!(calculate_eta_secs(50, 100, 0.0), None);
+        assert_eq!(calculate_eta_secs(50, 100, -5.0), None);
+        assert_eq!(calculate_eta_secs(50, 100, f64::NAN), None);
+        assert_eq!(calculate_eta_secs(50, 100, f64::INFINITY), None);
+
+        // 1 MiB remaining at 1 MiB/s = 1 second
+        let one_mib = 1024 * 1024;
+        assert_eq!(calculate_eta_secs(0, one_mib, 1.0), Some(1));
+        // Saturating subtraction when done > total
+        assert_eq!(calculate_eta_secs(u64::MAX, 100, 10.0), None);
+    }
+
+    #[test]
+    fn test_progress_ten_thousand_extreme_states_never_panic() {
+        let extreme_u64 = [
+            0,
+            1,
+            2,
+            100,
+            1000,
+            u32::MAX as u64,
+            (u32::MAX as u64) + 1,
+            u64::MAX / 2,
+            u64::MAX - 1,
+            u64::MAX,
+        ];
+
+        let extreme_f32 = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            0.5,
+            -0.5,
+            1.5,
+            100.0,
+            -100.0,
+            f32::MIN_POSITIVE,
+            f32::EPSILON,
+            f32::MAX,
+            f32::MIN,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
+
+        let extreme_f64 = [
+            0.0,
+            -0.0,
+            0.0001,
+            0.001,
+            1.0,
+            -1.0,
+            50.0,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+            f64::MIN,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ];
+
+        let string_samples = [
+            "",
+            "   ",
+            "manifest",
+            "assets",
+            "natives",
+            "libraries",
+            "java",
+            "client",
+            "verify",
+            "unknown_phase_xyz",
+            "404 Not Found",
+            "Connection reset",
+            "No space left on device",
+            "Permission denied",
+            "SHA1 checksum mismatch",
+            "паника в потоке",
+            "Установка прервана из-за внутренней ошибки",
+            "\0\r\n\t",
+            "https://piston-meta.mojang.com/v1/packages/test.json",
+        ];
+
+        let mut seed: u64 = 0xDEADBEEF_CAFE1234;
+        let mut next_rand = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            seed
+        };
+
+        for i in 0..10_000 {
+            let done = if i < extreme_u64.len() {
+                extreme_u64[i]
+            } else {
+                let r = next_rand();
+                match r % 4 {
+                    0 => extreme_u64[(r as usize) % extreme_u64.len()],
+                    1 => r,
+                    2 => r % 10_000,
+                    _ => 0,
+                }
+            };
+
+            let total = if i < extreme_u64.len() {
+                extreme_u64[extreme_u64.len() - 1 - i]
+            } else {
+                let r = next_rand();
+                match r % 4 {
+                    0 => extreme_u64[(r as usize) % extreme_u64.len()],
+                    1 => r,
+                    2 => r % 10_000,
+                    _ => 0,
+                }
+            };
+
+            let ratio = safe_progress_ratio(done, total);
+            assert!(
+                (0.0..=1.0).contains(&ratio),
+                "ratio out of bounds: {ratio} for done={done}, total={total}"
+            );
+            assert!(
+                ratio.is_finite(),
+                "ratio is not finite for done={done}, total={total}"
+            );
+
+            let val = extreme_f32[(next_rand() as usize) % extreme_f32.len()];
+            let min = extreme_f32[(next_rand() as usize) % extreme_f32.len()];
+            let max = extreme_f32[(next_rand() as usize) % extreme_f32.len()];
+            let clamped = safe_clamp_f32(val, min, max);
+            assert!(
+                !clamped.is_nan(),
+                "clamped returned NaN for val={val}, min={min}, max={max}"
+            );
+
+            let unit_clamped = safe_progress_clamp(val);
+            assert!(
+                (0.0..=1.0).contains(&unit_clamped),
+                "unit clamped out of range: {unit_clamped} for val={val}"
+            );
+
+            let speed = extreme_f64[(next_rand() as usize) % extreme_f64.len()];
+            let eta = calculate_eta_secs(done, total, speed);
+            if let Some(secs) = eta {
+                let _ = secs;
+            }
+
+            let phase_str = string_samples[(next_rand() as usize) % string_samples.len()];
+            let stage = InstallStage::from_phase_str(phase_str);
+            let _ = stage.localized_name();
+            let _ = stage.pipeline_index();
+
+            let err_str = string_samples[(next_rand() as usize) % string_samples.len()];
+            let err = InstallError::from_error_str(stage, err_str);
+            assert!(!err.localized_title.is_empty());
+            assert!(!err.localized_details.is_empty());
+            let clip = err.format_for_clipboard();
+            assert!(!clip.is_empty());
+        }
     }
 }

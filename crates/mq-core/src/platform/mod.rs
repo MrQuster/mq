@@ -200,8 +200,8 @@ pub fn atomic_write(path: &Path, content: &[u8]) -> io::Result<()> {
         let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600));
     }
 
-    if let Err(err) = fs::rename(&tmp_path, path) {
-        let _ = fs::remove_file(&tmp_path);
+    if let Err(err) = crate::fs_util::rename_with_retry(&tmp_path, path) {
+        let _ = crate::fs_util::remove_file_with_retry(&tmp_path);
         return Err(err);
     }
 

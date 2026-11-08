@@ -10,6 +10,9 @@ use std::time::Instant;
 
 use bytes::{Bytes, BytesMut};
 use dashmap::DashMap;
+use mq_core::fs_util::{
+    async_remove_file_with_retry, async_rename_with_retry, remove_file_with_retry,
+};
 use mq_core::{Event, EventBus, MqError, MqResult, PhaseProgress, Sha1Digest, Sha512Digest};
 use mq_sched::{
     wait_for_inflight, AtomicFileState, BufferPool, CancelEpoch, EpochGuard, FileState,
@@ -22,7 +25,7 @@ use sha1::{Digest as _, Sha1};
 use sha2::Sha512;
 use tokio::fs::{self, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
 
 use crate::config::{
@@ -57,8 +60,8 @@ impl PartFileCleanupGuard {
 impl Drop for PartFileCleanupGuard {
     fn drop(&mut self) {
         if self.armed {
-            let _ = std::fs::remove_file(&self.epoch_part);
-            let _ = std::fs::remove_file(&self.plain_part);
+            let _ = remove_file_with_retry(&self.epoch_part);
+            let _ = remove_file_with_retry(&self.plain_part);
         }
     }
 }
@@ -369,6 +372,15 @@ impl NetEngine {
         spec: &DownloadSpec,
         epoch_guard: &EpochGuard,
     ) -> MqResult<DownloadOutcome> {
+        self.download_file_impl(spec, epoch_guard, None).await
+    }
+
+    async fn download_file_impl(
+        &self,
+        spec: &DownloadSpec,
+        epoch_guard: &EpochGuard,
+        permit: Option<OwnedSemaphorePermit>,
+    ) -> MqResult<DownloadOutcome> {
         self.check_epoch(epoch_guard)?;
 
         if spec.urls.is_empty() {
@@ -452,7 +464,7 @@ impl NetEngine {
                     return Ok(existing_outcome);
                 }
 
-                match self.download_as_leader(spec, epoch_guard).await {
+                match self.download_as_leader(spec, epoch_guard, permit).await {
                     Ok(outcome) => {
                         {
                             self.completed_by_sha1
@@ -515,14 +527,29 @@ impl NetEngine {
         for (idx, spec) in specs.into_iter().enumerate() {
             let engine = self.clone();
             let guard = epoch_guard.clone();
+            let sem = self.semaphore.clone();
             join_set.spawn(async move {
-                let res = engine.download_file(&spec, &guard).await;
+                let permit = tokio::select! {
+                    biased;
+                    _ = guard.cancelled() => {
+                        return (idx, Err(MqError::Cancelled { epoch: guard.epoch() }));
+                    }
+                    res = sem.acquire_owned() => {
+                        match res {
+                            Ok(p) => p,
+                            Err(_) => return (idx, Err(MqError::Internal("NetEngine semaphore closed".to_owned()))),
+                        }
+                    }
+                };
+                let res = engine.download_file_impl(&spec, &guard, Some(permit)).await;
                 (idx, res)
             });
         }
 
         let mut completed_items = 0u64;
         let mut bytes_done = 0u64;
+        let mut last_progress_at: Option<Instant> = None;
+        const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(66);
 
         while let Some(join_res) = join_set.join_next().await {
             let (idx, task_res) = match join_res {
@@ -550,21 +577,31 @@ impl NetEngine {
                     ordered_outcomes[idx] = Some(outcome);
 
                     if let Some(bus) = &self.event_bus {
-                        let elapsed_secs = started_at.elapsed().as_secs_f64().max(1e-6);
-                        let files_per_sec = completed_items as f64 / elapsed_secs;
-                        let mib_per_sec = (bytes_done as f64 / (1024.0 * 1024.0)) / elapsed_secs;
-                        let active_tasks = join_set.len().min(self.config.max_connections);
+                        let is_first = completed_items == 1;
+                        let is_final = completed_items == total_items;
+                        let should_emit = is_first
+                            || is_final
+                            || last_progress_at.is_none_or(|t| t.elapsed() >= PROGRESS_INTERVAL);
 
-                        bus.publish(Event::Progress(PhaseProgress {
-                            phase: phase_name.to_owned(),
-                            completed_items,
-                            total_items,
-                            bytes_done,
-                            bytes_total: bytes_total.max(bytes_done),
-                            files_per_sec,
-                            mib_per_sec,
-                            active_tasks,
-                        }));
+                        if should_emit {
+                            last_progress_at = Some(Instant::now());
+                            let elapsed_secs = started_at.elapsed().as_secs_f64().max(1e-6);
+                            let files_per_sec = completed_items as f64 / elapsed_secs;
+                            let mib_per_sec =
+                                (bytes_done as f64 / (1024.0 * 1024.0)) / elapsed_secs;
+                            let active_tasks = join_set.len().min(self.config.max_connections);
+
+                            bus.publish(Event::Progress(PhaseProgress {
+                                phase: phase_name.to_owned(),
+                                completed_items,
+                                total_items,
+                                bytes_done,
+                                bytes_total: bytes_total.max(bytes_done),
+                                files_per_sec,
+                                mib_per_sec,
+                                active_tasks,
+                            }));
+                        }
                     }
                 }
                 Err(err) => {
@@ -607,17 +644,21 @@ impl NetEngine {
         &self,
         spec: &DownloadSpec,
         epoch_guard: &EpochGuard,
+        existing_permit: Option<OwnedSemaphorePermit>,
     ) -> MqResult<DownloadOutcome> {
         self.check_epoch(epoch_guard)?;
 
-        let _permit = tokio::select! {
-            biased;
-            _ = epoch_guard.cancelled() => {
-                return Err(MqError::Cancelled { epoch: epoch_guard.epoch() });
-            }
-            res = self.semaphore.acquire() => {
-                res.map_err(|_| MqError::Internal("NetEngine semaphore closed".to_owned()))?
-            }
+        let _permit = match existing_permit {
+            Some(p) => p,
+            None => tokio::select! {
+                biased;
+                _ = epoch_guard.cancelled() => {
+                    return Err(MqError::Cancelled { epoch: epoch_guard.epoch() });
+                }
+                res = self.semaphore.clone().acquire_owned() => {
+                    res.map_err(|_| MqError::Internal("NetEngine semaphore closed".to_owned()))?
+                }
+            },
         };
 
         if let Some(parent) = spec.dest_path.parent() {
@@ -764,7 +805,7 @@ impl NetEngine {
         // Adopt `<dest>.part` into `<dest>.e<epoch>.part` if present so HTTP Range resume works
         // seamlessly while maintaining epoch isolation.
         if !epoch_part_path.exists() && plain_part_path.exists() {
-            let _ = fs::rename(plain_part_path, epoch_part_path).await;
+            let _ = async_rename_with_retry(plain_part_path, epoch_part_path).await;
         }
 
         let mut existing_offset = match fs::metadata(epoch_part_path).await {
@@ -774,7 +815,7 @@ impl NetEngine {
 
         if let Some(expected_size) = spec.expected_size {
             if existing_offset >= expected_size {
-                let _ = fs::remove_file(epoch_part_path).await;
+                let _ = async_remove_file_with_retry(epoch_part_path).await;
                 existing_offset = 0;
             }
         }
@@ -797,7 +838,7 @@ impl NetEngine {
 
         let status = response.status();
         if status == StatusCode::RANGE_NOT_SATISFIABLE {
-            let _ = fs::remove_file(epoch_part_path).await;
+            let _ = async_remove_file_with_retry(epoch_part_path).await;
             return Err(MqError::Network(format!(
                 "HTTP 416 Range Not Satisfiable for {url}; reset partial file"
             )));
@@ -859,7 +900,7 @@ impl NetEngine {
                 drop(existing_file);
 
                 if hashed_prefix != existing_offset {
-                    let _ = fs::remove_file(epoch_part_path).await;
+                    let _ = async_remove_file_with_retry(epoch_part_path).await;
                     return Err(MqError::Network(format!(
                         "partial file size changed during resume for '{}'",
                         spec.id
@@ -1056,8 +1097,8 @@ impl NetEngine {
             });
         }
 
-        fs::rename(epoch_part_path, &spec.dest_path).await?;
-        let _ = fs::remove_file(plain_part_path).await;
+        async_rename_with_retry(epoch_part_path, &spec.dest_path).await?;
+        let _ = async_remove_file_with_retry(plain_part_path).await;
 
         if file_state
             .try_transition(
@@ -1068,7 +1109,7 @@ impl NetEngine {
             )
             .is_err()
         {
-            let _ = fs::remove_file(&spec.dest_path).await;
+            let _ = async_remove_file_with_retry(&spec.dest_path).await;
             cleanup_part_files(epoch_part_path, plain_part_path).await;
             return Err(MqError::Cancelled {
                 epoch: epoch_guard.epoch(),
@@ -1106,17 +1147,17 @@ impl NetEngine {
             return Ok(None);
         }
 
-        let mut file = match fs::File::open(&spec.dest_path).await {
-            Ok(f) => f,
-            Err(_) => return Ok(None),
-        };
-
         let mut pooled_buf = tokio::select! {
             biased;
             _ = epoch_guard.cancelled() => {
                 return Err(MqError::Cancelled { epoch: epoch_guard.epoch() });
             }
             buf = self.buffer_pool.acquire() => buf,
+        };
+
+        let mut file = match fs::File::open(&spec.dest_path).await {
+            Ok(f) => f,
+            Err(_) => return Ok(None),
         };
 
         let need_sha512 = self.compute_sha512 || spec.expected_sha512.is_some();
@@ -1186,7 +1227,7 @@ impl NetEngine {
         let tmp_path = make_part_path(dest_path, Some(epoch_guard.epoch()));
         if fs::hard_link(source_path, &tmp_path).await.is_ok() {
             self.check_epoch(epoch_guard)?;
-            fs::rename(&tmp_path, dest_path).await?;
+            async_rename_with_retry(&tmp_path, dest_path).await?;
             return Ok(());
         }
 
@@ -1202,7 +1243,7 @@ impl NetEngine {
         loop {
             if let Err(err) = self.check_epoch(epoch_guard) {
                 drop(dst);
-                let _ = fs::remove_file(&tmp_path).await;
+                let _ = async_remove_file_with_retry(&tmp_path).await;
                 return Err(err);
             }
             let n = src.read(pooled_buf.as_mut_slice()).await?;
@@ -1217,11 +1258,11 @@ impl NetEngine {
         drop(dst);
 
         if let Err(err) = self.check_epoch(epoch_guard) {
-            let _ = fs::remove_file(&tmp_path).await;
+            let _ = async_remove_file_with_retry(&tmp_path).await;
             return Err(err);
         }
 
-        fs::rename(&tmp_path, dest_path).await?;
+        async_rename_with_retry(&tmp_path, dest_path).await?;
         Ok(())
     }
 
@@ -1274,8 +1315,8 @@ fn make_part_path(dest_path: &Path, epoch: Option<u64>) -> PathBuf {
 }
 
 async fn cleanup_part_files(epoch_part_path: &Path, plain_part_path: &Path) {
-    let _ = fs::remove_file(epoch_part_path).await;
-    let _ = fs::remove_file(plain_part_path).await;
+    let _ = async_remove_file_with_retry(epoch_part_path).await;
+    let _ = async_remove_file_with_retry(plain_part_path).await;
 }
 
 async fn read_error_body_preview(
@@ -1300,4 +1341,104 @@ async fn read_error_body_preview(
         }
     }
     String::from_utf8_lossy(&preview).trim().to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn emfile_regression_1500_precreated_files_bounded_by_semaphore() {
+        let temp_dir = tempdir().expect("tempdir");
+        let base_path = temp_dir.path().to_path_buf();
+
+        let cancel = Arc::new(CancelEpoch::new());
+        let pool = Arc::new(BufferPool::with_capacity(64 * 1024, 64));
+        let config = NetConfig {
+            max_connections: 32,
+            ..Default::default()
+        };
+        let engine =
+            NetEngine::with_components(config, pool.clone(), cancel.clone(), None).expect("engine");
+
+        let file_count = 1500;
+        let mut specs = Vec::with_capacity(file_count);
+
+        // Pre-create 1500 files with known content and SHA-1 hashes
+        for i in 0..file_count {
+            let file_path = base_path.join(format!("file_{i:04}.bin"));
+            let content = format!("mq-regression-payload-content-test-{i}");
+            let bytes = content.as_bytes();
+            let mut sha1_h = Sha1::new();
+            sha1_h.update(bytes);
+            let sha1 = Sha1Digest::from_bytes(sha1_h.finalize().into());
+
+            tokio::fs::write(&file_path, bytes)
+                .await
+                .expect("write test file");
+
+            specs.push(
+                DownloadSpec::new(
+                    format!("spec-{i}"),
+                    format!("http://127.0.0.1:9999/dummy/{i}"),
+                    file_path,
+                )
+                .with_expected_size(bytes.len() as u64)
+                .with_sha1(sha1),
+            );
+        }
+
+        // Concurrency monitor to observe peak leased buffers and active semaphore permits
+        let peak_buffers = Arc::new(AtomicUsize::new(0));
+        let peak_permits = Arc::new(AtomicUsize::new(0));
+        let done = Arc::new(AtomicBool::new(false));
+
+        let monitor_pool = pool.clone();
+        let monitor_sem = engine.semaphore().clone();
+        let mon_peak_buf = peak_buffers.clone();
+        let mon_peak_perm = peak_permits.clone();
+        let mon_done = done.clone();
+        let max_conn = engine.config().max_connections;
+
+        let monitor_handle = tokio::spawn(async move {
+            while !mon_done.load(Ordering::Relaxed) {
+                let leased = monitor_pool.stats().active_leases;
+                let active_permits = max_conn.saturating_sub(monitor_sem.available_permits());
+                mon_peak_buf.fetch_max(leased, Ordering::Relaxed);
+                mon_peak_perm.fetch_max(active_permits, Ordering::Relaxed);
+                tokio::task::yield_now().await;
+            }
+        });
+
+        let epoch_guard = cancel.snapshot();
+        let outcomes = engine
+            .download_batch(specs, "regression-verify", &epoch_guard)
+            .await
+            .expect("download_batch must not fail with EMFILE or any error");
+
+        done.store(true, Ordering::Relaxed);
+        let _ = monitor_handle.await;
+
+        assert_eq!(outcomes.len(), file_count);
+        for (i, outcome) in outcomes.iter().enumerate() {
+            assert_eq!(outcome.id, format!("spec-{i}"));
+            assert_eq!(
+                outcome.bytes_written,
+                outcome.dest_path.metadata().unwrap().len()
+            );
+        }
+
+        let max_observed_buf = peak_buffers.load(Ordering::Relaxed);
+        let max_observed_perm = peak_permits.load(Ordering::Relaxed);
+        assert!(
+            max_observed_perm <= 64,
+            "Peak active semaphore permits ({max_observed_perm}) must be <= 64"
+        );
+        assert!(
+            max_observed_buf <= 64,
+            "Peak active buffer leases ({max_observed_buf}) must be <= 64"
+        );
+    }
 }

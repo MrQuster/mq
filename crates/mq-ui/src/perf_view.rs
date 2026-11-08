@@ -46,7 +46,7 @@ impl PerfView {
             for core in &state.latest_cpu.per_core {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("Ядро {:02}:", core.core_id)).color(TEXT_MUTED).monospace());
-                    let frac = (core.usage_pct / 100.0).clamp(0.0, 1.0);
+                    let frac = crate::state::safe_clamp_f32(core.usage_pct / 100.0, 0.0, 1.0);
                     ui.add(ProgressBar::new(frac).desired_width(260.0).text(format!("{:.1}%", core.usage_pct)));
                 });
                 ui.add_space(2.0);

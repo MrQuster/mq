@@ -8,6 +8,7 @@ use egui::{
 };
 use mq_core::CpuSnapshot;
 
+use crate::state::safe_clamp_f32;
 use crate::theme::{
     hud_frame, ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE, RADIUS_TAG,
     STATUS_DANGER, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY,
@@ -85,7 +86,7 @@ fn render_per_core_bars(ui: &mut Ui, snap: &CpuSnapshot) {
             let pct = snap
                 .per_core
                 .get(idx)
-                .map(|c| c.usage_pct.clamp(0.0, 100.0))
+                .map(|c| safe_clamp_f32(c.usage_pct, 0.0, 100.0))
                 .unwrap_or(0.0);
 
             let x0 = rect.left() + 3.0 + (idx as f32) * (bar_w + gap);
@@ -96,7 +97,7 @@ fn render_per_core_bars(ui: &mut Ui, snap: &CpuSnapshot) {
             painter.rect_filled(track_rect, CornerRadius::same(1), BORDER_SUBTLE);
 
             if pct > 0.5 {
-                let fill_h = (max_bar_h * (pct / 100.0)).clamp(1.5, max_bar_h);
+                let fill_h = safe_clamp_f32(max_bar_h * (pct / 100.0), 1.5, max_bar_h);
                 let fill_rect = Rect::from_min_max(
                     Pos2::new(x0, inner_bottom - fill_h),
                     Pos2::new(x0 + bar_w, inner_bottom),
@@ -131,7 +132,7 @@ fn render_per_core_bars(ui: &mut Ui, snap: &CpuSnapshot) {
 }
 
 fn render_smooth_progress_bar(ui: &mut Ui, fraction: f32) {
-    let clamped = fraction.clamp(0.0, 1.0);
+    let clamped = safe_clamp_f32(fraction, 0.0, 1.0);
     let desired = Vec2::new(130.0, 14.0);
     let (rect, _) = ui.allocate_exact_size(desired, Sense::hover());
 
@@ -275,6 +276,10 @@ mod tests {
             ("widgets.rs", include_str!("widgets.rs")),
             ("sidebar.rs", include_str!("sidebar.rs")),
             ("hud.rs", include_str!("hud.rs")),
+            ("state.rs", include_str!("state.rs")),
+            ("app.rs", include_str!("app.rs")),
+            ("install_types.rs", include_str!("install_types.rs")),
+            ("instances_view.rs", include_str!("instances_view.rs")),
         ];
 
         for (name, content) in sources {
@@ -283,6 +288,42 @@ mod tests {
                 "strict zero-emoji policy violated in {name}"
             );
         }
+    }
+
+    #[test]
+    fn hud_sub_minimum_bar_height_and_nan_never_panic() {
+        let ctx = Context::default();
+        let data = BottomHudData {
+            active_phase: Some("Загрузка".to_owned()),
+            progress_fraction: Some(f32::NAN),
+            files_per_sec: f64::NAN,
+            mib_per_sec: f64::INFINITY,
+            active_dag_tasks: 0,
+            cpu_snapshot: CpuSnapshot {
+                total_pct: f32::NAN,
+                per_core: vec![
+                    CoreCpuLoad {
+                        core_id: 0,
+                        usage_pct: f32::NAN,
+                    },
+                    CoreCpuLoad {
+                        core_id: 1,
+                        usage_pct: 100.0,
+                    },
+                ],
+                rss_mib: 0.0,
+            },
+            watchdog_violations: 0,
+        };
+
+        // Render with tiny 1.0 height to force max_bar_h < 1.5
+        let tiny_input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(200.0, 1.0))),
+            ..egui::RawInput::default()
+        };
+        let _ = ctx.run(tiny_input, |ctx| {
+            show_bottom_hud(ctx, &data);
+        });
     }
 
     #[test]
