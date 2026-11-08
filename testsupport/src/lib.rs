@@ -2,12 +2,19 @@
 //! dataset generators for offline MQ Launcher unit tests, chaos tests, and `mq bench`.
 
 pub mod catalog;
+pub mod chaos;
 pub mod ely;
+pub mod faults;
 pub mod payload;
 pub mod server;
 pub mod world;
 
+pub use chaos::{
+    assert_install_fails_on_readonly_dir, kill_installation_mid_flight, run_concurrent_installs,
+    with_read_only_dir, ReadOnlyGuard,
+};
 pub use ely::MOCK_TOTP_CODE;
+pub use faults::{FaultAction, FaultInjector, FaultRule};
 pub use payload::{
     build_authlib_injector_jar, build_client_jar, build_corrupted_hash_mrpack, build_library_jar,
     build_malicious_zip_slip_mrpack, build_named_maven_jar, build_native_linux_jar,
@@ -77,10 +84,16 @@ mod tests {
             .await
             .expect("read full HTTP response");
 
-        let header_end = raw
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .expect("HTTP header delimiter");
+        let header_end = match raw.windows(4).position(|w| w == b"\r\n\r\n") {
+            Some(pos) => pos,
+            None => {
+                panic!(
+                    "HTTP header delimiter missing. raw len={}, raw={:?}",
+                    raw.len(),
+                    String::from_utf8_lossy(&raw)
+                );
+            }
+        };
         let header_text = std::str::from_utf8(&raw[..header_end]).expect("UTF-8 HTTP headers");
         let raw_body = &raw[header_end + 4..];
 
@@ -789,6 +802,114 @@ mod tests {
             std::fs::read_to_string(inst_dir.join("options.txt")).expect("read options");
         assert!(opts_existing.contains("lang:en_us"));
         assert!(!opts_existing.contains("lang:ru_ru"));
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn failure_injection_http_errors_truncation_corrupted_sha1_and_chaos() {
+        let server = MockServer::start(MockConfig::small()).await;
+        let addr = server.addr();
+
+        // 1. Test 404 injection
+        server.inject_404(Some("/mc/game/version_manifest_v2.json"), 1);
+        let resp_404 =
+            raw_http_request(addr, "GET", "/mc/game/version_manifest_v2.json", &[], None).await;
+        assert_eq!(resp_404.status, 404);
+
+        // Next request succeeds normally (count expired)
+        let resp_ok =
+            raw_http_request(addr, "GET", "/mc/game/version_manifest_v2.json", &[], None).await;
+        assert_eq!(resp_ok.status, 200);
+
+        // 2. Test 403 Forbidden injection
+        server.inject_403(Some("/mc/meta/"), 1);
+        let resp_403 =
+            raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
+        assert_eq!(resp_403.status, 403);
+
+        // 3. Test 429 Too Many Requests with Retry-After header
+        server.inject_429(Some("/mc/meta/"), 5, 1);
+        let resp_429 =
+            raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
+        assert_eq!(resp_429.status, 429);
+        assert_eq!(
+            resp_429.headers.get("retry-after").map(String::as_str),
+            Some("5")
+        );
+
+        // 4. Test 500 Internal Server Error injection
+        server.inject_500(Some("/mc/meta/"), 1);
+        let resp_500 =
+            raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
+        assert_eq!(resp_500.status, 500);
+
+        // Fetch normal response as baseline
+        let normal_ver_resp =
+            raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
+        let normal_ver_len = normal_ver_resp.body.len();
+        let normal_sha1 = sha1_hex(&sha1_bytes(&normal_ver_resp.body));
+
+        // 5. Test Body Truncation mid-file
+        server.inject_truncation(Some("/mc/meta/1.21.1/version.json"), 16, 1);
+        let resp_trunc =
+            raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
+        assert_eq!(resp_trunc.status, 200);
+        assert_eq!(resp_trunc.body.len(), 16);
+        let cl: usize = resp_trunc
+            .headers
+            .get("content-length")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(cl, 16);
+        assert!(cl < normal_ver_len);
+
+        // 6. Test Corrupted SHA-1 payload
+        server.inject_corrupt_sha1(Some("/mc/meta/1.21.1/version.json"), 1);
+        let resp_corrupt =
+            raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
+        assert_eq!(resp_corrupt.status, 200);
+        let corrupted_sha1 = sha1_hex(&sha1_bytes(&resp_corrupt.body));
+        assert_ne!(
+            corrupted_sha1, normal_sha1,
+            "Corrupted payload SHA-1 must not match normal SHA-1"
+        );
+
+        // 7. Test Invalid Content-Length header mismatch
+        server.inject_invalid_content_length(Some("/mc/meta/1.21.1/version.json"), 42, 1);
+        let resp_bad_cl =
+            raw_http_request(addr, "GET", "/mc/meta/1.21.1/version.json", &[], None).await;
+        assert_eq!(resp_bad_cl.status, 200);
+        assert_eq!(
+            resp_bad_cl
+                .headers
+                .get("content-length")
+                .map(String::as_str),
+            Some("42")
+        );
+        assert_eq!(resp_bad_cl.body.len(), 42);
+        assert_ne!(resp_bad_cl.body.len(), normal_ver_len);
+
+        // 8. Test Read-Only directory simulation
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_dir = tmp.path().join("readonly_test");
+        std::fs::create_dir_all(&test_dir).expect("create dir");
+
+        let res = with_read_only_dir(&test_dir, |p| {
+            // Attempting to write into read-only dir must fail with PermissionDenied
+            std::fs::write(p.join("fail.txt"), "hello")
+        })
+        .expect("guard");
+        assert!(res.is_err(), "write in read-only dir must fail");
+        assert_eq!(
+            res.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+
+        // Permissions restored after closure: write now succeeds
+        std::fs::write(test_dir.join("success.txt"), "hello").expect("write after restore");
+        assert!(test_dir.join("success.txt").exists());
 
         server.shutdown().await;
     }
