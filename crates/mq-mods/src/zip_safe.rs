@@ -1,6 +1,6 @@
-//! Strict Zip-Slip, Unix symlink, and path traversal protection for ZIP/JAR/modpack archives,
-//! streaming prefix extraction (`64 KiB` chunks), CAS hardlink materialization, and
-//! streaming dual SHA-1 + SHA-512 verification.
+//! Strict Zip-Slip, Unix symlink, path traversal, and Zip-Bomb protection for ZIP/JAR/modpack
+//! archives, strict HTTPS download host allowlist validation, streaming prefix extraction
+//! (`64 KiB` chunks), CAS hardlink materialization, and streaming dual SHA-1 + SHA-512 verification.
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -9,11 +9,107 @@ use std::path::{Component, Path, PathBuf};
 use mq_core::{resolve_safe_path, MqError, MqResult, Sha1Digest, Sha512Digest};
 use sha1::{Digest as _, Sha1};
 use sha2::Sha512;
+use url::Url;
 use zip::ZipArchive;
 
 /// Streaming I/O chunk size (`64 KiB`) used for archive extraction, CAS copy fallback,
 /// and dual SHA-1/SHA-512 hashing so whole archives or `.jar` files are never buffered in RAM.
 pub const STREAM_CHUNK_SIZE: usize = 64 * 1024;
+
+/// Maximum number of entries allowed in a single ZIP/modpack archive by default (`32,768`).
+pub const DEFAULT_MAX_ZIP_ENTRIES: usize = 32_768;
+
+/// Maximum uncompressed size of a single archive entry by default (`512 MiB`).
+pub const DEFAULT_MAX_ENTRY_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Maximum cumulative uncompressed size across an entire archive by default (`4 GiB`).
+pub const DEFAULT_MAX_TOTAL_UNCOMPRESSED_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+/// Maximum allowed compression ratio (`uncompressed / compressed`) for non-trivial entries (`200:1`).
+pub const DEFAULT_MAX_COMPRESSION_RATIO: u64 = 200;
+
+/// Minimum uncompressed byte threshold before compression ratio checks are enforced (`256 KiB`).
+pub const DEFAULT_MIN_BYTES_FOR_RATIO_CHECK: u64 = 256 * 1024;
+
+/// Strict allowlist of HTTPS hosts permitted for downloading modpack, mod, resourcepack,
+/// and shader artifacts across Modrinth and CurseForge.
+pub const ALLOWED_DOWNLOAD_HOSTS: &[&str] = &[
+    "cdn.modrinth.com",
+    "github.com",
+    "raw.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "gitlab.com",
+    "edge.forgecdn.net",
+    "mediafilez.forgecdn.net",
+    "media.forgecdn.net",
+    "files.forgecdn.net",
+];
+
+/// Configurable safety limits to defend against Zip-Bomb attacks (decompression bombs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ZipBombLimits {
+    pub max_entries: usize,
+    pub max_entry_uncompressed_bytes: u64,
+    pub max_total_uncompressed_bytes: u64,
+    pub max_compression_ratio: u64,
+    pub min_bytes_for_ratio_check: u64,
+}
+
+impl Default for ZipBombLimits {
+    fn default() -> Self {
+        Self {
+            max_entries: DEFAULT_MAX_ZIP_ENTRIES,
+            max_entry_uncompressed_bytes: DEFAULT_MAX_ENTRY_UNCOMPRESSED_BYTES,
+            max_total_uncompressed_bytes: DEFAULT_MAX_TOTAL_UNCOMPRESSED_BYTES,
+            max_compression_ratio: DEFAULT_MAX_COMPRESSION_RATIO,
+            min_bytes_for_ratio_check: DEFAULT_MIN_BYTES_FOR_RATIO_CHECK,
+        }
+    }
+}
+
+/// Returns `true` if `raw_url` uses `https://` with a host in [`ALLOWED_DOWNLOAD_HOSTS`],
+/// or points to a local loopback mock server (`127.0.0.1` / `localhost`).
+pub fn is_allowed_download_url(raw_url: &str) -> bool {
+    let trimmed = raw_url.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let Ok(parsed) = Url::parse(trimmed) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host_lower = host.to_ascii_lowercase();
+    if host_lower == "127.0.0.1" || host_lower == "localhost" {
+        return parsed.scheme() == "http" || parsed.scheme() == "https";
+    }
+    if parsed.scheme() != "https" {
+        return false;
+    }
+    ALLOWED_DOWNLOAD_HOSTS
+        .iter()
+        .any(|allowed| host_lower == *allowed)
+}
+
+/// Validates that `raw_url` is a permitted HTTPS download URL (or `127.0.0.1`/`localhost` for tests),
+/// returning [`MqError::Network`] if the scheme or host is disallowed.
+pub fn validate_download_url(raw_url: &str) -> MqResult<Url> {
+    let trimmed = raw_url.trim();
+    if trimmed.is_empty() {
+        return Err(MqError::Network(
+            "download URL is empty (blocked or missing)".to_owned(),
+        ));
+    }
+    let parsed = Url::parse(trimmed)
+        .map_err(|err| MqError::Network(format!("invalid download URL '{trimmed}': {err}")))?;
+    if !is_allowed_download_url(trimmed) {
+        return Err(MqError::Network(format!(
+            "disallowed download host or non-HTTPS scheme in URL: '{trimmed}'"
+        )));
+    }
+    Ok(parsed)
+}
 
 /// Unix `S_IFMT` file type bitmask.
 const S_IFMT: u32 = 0o170000;
@@ -101,11 +197,30 @@ pub fn validate_archive_entry_path(
 }
 
 /// Pre-scans every entry in a [`ZipArchive`] to ensure no entry contains Zip-Slip path
-/// traversal or Unix symbolic links before any file is read or extracted.
+/// traversal, Unix symbolic links, or Zip-Bomb anomalies before any file is read or extracted.
 pub fn validate_zip_archive<R: Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
     base_dir: &Path,
 ) -> MqResult<()> {
+    validate_zip_archive_with_limits(archive, base_dir, &ZipBombLimits::default())
+}
+
+/// Pre-scans every entry in a [`ZipArchive`] with custom [`ZipBombLimits`].
+pub fn validate_zip_archive_with_limits<R: Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+    base_dir: &Path,
+    limits: &ZipBombLimits,
+) -> MqResult<()> {
+    if archive.len() > limits.max_entries {
+        return Err(MqError::Archive(format!(
+            "zip-bomb detected: archive contains {} entries (limit: {})",
+            archive.len(),
+            limits.max_entries
+        )));
+    }
+
+    let mut total_uncompressed = 0u64;
+
     for idx in 0..archive.len() {
         let entry = archive.by_index_raw(idx).map_err(|err| {
             MqError::Archive(format!(
@@ -118,13 +233,46 @@ pub fn validate_zip_archive<R: Read + std::io::Seek>(
             return Err(MqError::ZipSlip { entry: raw_name });
         }
         validate_archive_entry_path(base_dir, &raw_name, unix_mode)?;
+
+        let uncomp = entry.size();
+        let comp = entry.compressed_size();
+
+        if uncomp > limits.max_entry_uncompressed_bytes {
+            return Err(MqError::Archive(format!(
+                "zip-bomb detected: entry '{raw_name}' uncompressed size {uncomp} exceeds limit {}",
+                limits.max_entry_uncompressed_bytes
+            )));
+        }
+
+        total_uncompressed = total_uncompressed.saturating_add(uncomp);
+        if total_uncompressed > limits.max_total_uncompressed_bytes {
+            return Err(MqError::Archive(format!(
+                "zip-bomb detected: cumulative uncompressed size {total_uncompressed} exceeds limit {}",
+                limits.max_total_uncompressed_bytes
+            )));
+        }
+
+        if uncomp >= limits.min_bytes_for_ratio_check {
+            if comp == 0 {
+                return Err(MqError::Archive(format!(
+                    "zip-bomb detected: entry '{raw_name}' has 0 compressed bytes for {uncomp} uncompressed bytes"
+                )));
+            }
+            let ratio = uncomp / comp;
+            if ratio > limits.max_compression_ratio {
+                return Err(MqError::Archive(format!(
+                    "zip-bomb detected: entry '{raw_name}' compression ratio {ratio}:1 exceeds limit {}:1",
+                    limits.max_compression_ratio
+                )));
+            }
+        }
     }
     Ok(())
 }
 
 /// Streams all files under `prefix` (e.g. `"overrides/"` or `"client-overrides/"`) from
 /// `zip_path` into `target_dir` in `64 KiB` chunks after validating every entry in the
-/// archive via [`validate_archive_entry_path`].
+/// archive via [`validate_archive_entry_path`] and [`ZipBombLimits::default`].
 ///
 /// Never buffers whole archive entries in memory. Returns the number of extracted files.
 pub fn extract_zip_prefix_safely(
@@ -132,6 +280,43 @@ pub fn extract_zip_prefix_safely(
     prefix: &str,
     target_dir: &Path,
 ) -> MqResult<usize> {
+    extract_zip_prefix_safely_with_limits(zip_path, prefix, target_dir, &ZipBombLimits::default())
+}
+
+/// Streams all files under `prefix` from `zip_path` into `target_dir` enforcing `limits`
+/// against both ZIP headers and actual decompressed byte streams.
+pub fn extract_zip_prefix_safely_with_limits(
+    zip_path: &Path,
+    prefix: &str,
+    target_dir: &Path,
+    limits: &ZipBombLimits,
+) -> MqResult<usize> {
+    let outcome =
+        extract_zip_prefix_filtered(zip_path, prefix, target_dir, limits, |_rel_path| true)?;
+    Ok(outcome.extracted_files.len())
+}
+
+/// Detailed outcome of a filtered prefix extraction.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PrefixExtractOutcome {
+    /// Relative paths (inside `target_dir`) of files extracted during this call.
+    pub extracted_files: Vec<String>,
+    /// Relative paths (inside `target_dir`) skipped by the caller predicate.
+    pub skipped_files: Vec<String>,
+}
+
+/// Streams files under `prefix` from `zip_path` into `target_dir`, consulting `should_extract(rel_path)`
+/// before writing each file and enforcing `limits` on decompressed byte streams.
+pub fn extract_zip_prefix_filtered<F>(
+    zip_path: &Path,
+    prefix: &str,
+    target_dir: &Path,
+    limits: &ZipBombLimits,
+    mut should_extract: F,
+) -> MqResult<PrefixExtractOutcome>
+where
+    F: FnMut(&str) -> bool,
+{
     let file = File::open(zip_path)?;
     let mut archive = ZipArchive::new(file).map_err(|err| {
         MqError::Archive(format!(
@@ -141,7 +326,7 @@ pub fn extract_zip_prefix_safely(
     })?;
 
     // Validate the entire archive upfront so malicious entries anywhere in the ZIP fail fast.
-    validate_zip_archive(&mut archive, target_dir)?;
+    validate_zip_archive_with_limits(&mut archive, target_dir, limits)?;
 
     let clean_prefix = prefix.replace('\\', "/");
     let clean_prefix = clean_prefix.trim_matches('/');
@@ -154,7 +339,8 @@ pub fn extract_zip_prefix_safely(
     fs::create_dir_all(target_dir)?;
 
     let mut buf = vec![0u8; STREAM_CHUNK_SIZE];
-    let mut extracted_count = 0usize;
+    let mut outcome = PrefixExtractOutcome::default();
+    let mut total_written = 0u64;
 
     for idx in 0..archive.len() {
         let mut entry = archive.by_index(idx).map_err(|err| {
@@ -166,6 +352,7 @@ pub fn extract_zip_prefix_safely(
 
         let raw_name = entry.name().to_owned();
         let unix_mode = entry.unix_mode();
+        let compressed_size = entry.compressed_size();
         if entry.is_symlink() {
             return Err(MqError::ZipSlip { entry: raw_name });
         }
@@ -200,23 +387,61 @@ pub fn extract_zip_prefix_safely(
             continue;
         }
 
+        if !should_extract(rel_trimmed) {
+            outcome.skipped_files.push(rel_trimmed.to_owned());
+            continue;
+        }
+
         if let Some(parent) = dest_path.parent() {
             fs::create_dir_all(parent)?;
         }
 
         let mut out_file = File::create(&dest_path)?;
+        let mut entry_written = 0u64;
+
         loop {
             let n = entry.read(&mut buf)?;
             if n == 0 {
                 break;
             }
+            entry_written = entry_written.saturating_add(n as u64);
+            total_written = total_written.saturating_add(n as u64);
+
+            if entry_written > limits.max_entry_uncompressed_bytes {
+                drop(out_file);
+                let _ = fs::remove_file(&dest_path);
+                return Err(MqError::Archive(format!(
+                    "zip-bomb detected while streaming '{raw_name}': decompressed size {entry_written} exceeds limit {}",
+                    limits.max_entry_uncompressed_bytes
+                )));
+            }
+            if total_written > limits.max_total_uncompressed_bytes {
+                drop(out_file);
+                let _ = fs::remove_file(&dest_path);
+                return Err(MqError::Archive(format!(
+                    "zip-bomb detected while streaming '{raw_name}': total decompressed size {total_written} exceeds limit {}",
+                    limits.max_total_uncompressed_bytes
+                )));
+            }
+            if entry_written >= limits.min_bytes_for_ratio_check
+                && (compressed_size == 0
+                    || (entry_written / compressed_size) > limits.max_compression_ratio)
+            {
+                drop(out_file);
+                let _ = fs::remove_file(&dest_path);
+                return Err(MqError::Archive(format!(
+                    "zip-bomb detected while streaming '{raw_name}': compression ratio exceeds {}:1",
+                    limits.max_compression_ratio
+                )));
+            }
+
             out_file.write_all(&buf[..n])?;
         }
         out_file.flush()?;
-        extracted_count += 1;
+        outcome.extracted_files.push(rel_trimmed.to_owned());
     }
 
-    Ok(extracted_count)
+    Ok(outcome)
 }
 
 /// Hardlinks `cas_blob` to `target_path` (`std::fs::hard_link`), falling back to a `64 KiB`
@@ -484,5 +709,97 @@ mod tests {
         assert_eq!(size, large_payload.len() as u64);
         verify_file_sha1_and_sha512(&linked_target, "linked.jar", Some(sha1), Some(sha512))
             .expect("verify linked target");
+    }
+
+    #[test]
+    fn validate_download_url_enforces_https_allowlist() {
+        let allowed_urls = [
+            "https://cdn.modrinth.com/data/AANobbMI/versions/1/sodium.jar",
+            "https://github.com/CaffeineMC/sodium/releases/download/v1/sodium.jar",
+            "https://raw.githubusercontent.com/user/repo/main/pack.zip",
+            "https://objects.githubusercontent.com/github-production-release-asset/123",
+            "https://gitlab.com/user/project/-/releases/v1/downloads/mod.jar",
+            "https://edge.forgecdn.net/files/4567/890/jei.jar",
+            "https://mediafilez.forgecdn.net/files/4567/890/jei.jar",
+            "https://media.forgecdn.net/files/4567/890/jei.jar",
+            "https://files.forgecdn.net/files/4567/890/jei.jar",
+            "http://127.0.0.1:8080/mock.jar",
+            "http://localhost:9000/mock.jar",
+        ];
+
+        for url in allowed_urls {
+            assert!(is_allowed_download_url(url), "expected allowed: {url}");
+            validate_download_url(url).expect("validate_download_url should pass");
+        }
+
+        let forbidden_urls = [
+            "",
+            "http://cdn.modrinth.com/data/AANobbMI/versions/1/sodium.jar",
+            "http://edge.forgecdn.net/files/4567/890/jei.jar",
+            "https://evil.example.com/malware.jar",
+            "https://cdn.modrinth.com.evil.com/sodium.jar",
+            "ftp://cdn.modrinth.com/sodium.jar",
+            "file:///etc/passwd",
+        ];
+
+        for bad in forbidden_urls {
+            assert!(!is_allowed_download_url(bad), "expected forbidden: {bad}");
+            assert!(
+                validate_download_url(bad).is_err(),
+                "validate_download_url must reject {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn zip_bomb_protection_rejects_excessive_ratio_and_size() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        // Create a highly compressible 1 MiB zero-filled payload (ratio > 500:1 with Deflate).
+        let bomb_zip = tmp.path().join("bomb.zip");
+        {
+            let file = File::create(&bomb_zip).expect("create bomb zip");
+            let mut zw = ZipWriter::new(file);
+            let opts =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            zw.start_file("overrides/config/bomb.bin", opts).unwrap();
+            let zeros = vec![0u8; 1024 * 1024];
+            zw.write_all(&zeros).unwrap();
+            zw.finish().unwrap();
+        }
+
+        let target_dir = tmp.path().join("bomb_out");
+        let err = extract_zip_prefix_safely(&bomb_zip, "overrides", &target_dir)
+            .expect_err("high-ratio zip bomb must be rejected");
+        assert!(
+            matches!(err, MqError::Archive(ref msg) if msg.contains("zip-bomb")),
+            "expected zip-bomb error, got {err:?}"
+        );
+        assert!(!target_dir.join("config/bomb.bin").exists());
+
+        // Also verify entry size / total size limits with custom ZipBombLimits.
+        let limits = ZipBombLimits {
+            max_entries: 2,
+            max_entry_uncompressed_bytes: 1024,
+            max_total_uncompressed_bytes: 1500,
+            max_compression_ratio: 1000,
+            min_bytes_for_ratio_check: 64 * 1024,
+        };
+
+        let oversize_zip = tmp.path().join("oversize.zip");
+        {
+            let file = File::create(&oversize_zip).expect("create oversize zip");
+            let mut zw = ZipWriter::new(file);
+            let opts =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            zw.start_file("overrides/big.bin", opts).unwrap();
+            zw.write_all(&vec![b'A'; 2048]).unwrap();
+            zw.finish().unwrap();
+        }
+
+        let err2 =
+            extract_zip_prefix_safely_with_limits(&oversize_zip, "overrides", &target_dir, &limits)
+                .expect_err("oversize entry must be rejected");
+        assert!(matches!(err2, MqError::Archive(ref msg) if msg.contains("zip-bomb")));
     }
 }
