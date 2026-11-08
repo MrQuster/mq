@@ -8,7 +8,7 @@ use mq_meta::{find_mc_locale, search_mc_locales};
 use crate::i18n::{tr, Language};
 use crate::state::UiState;
 use crate::theme::{
-    apply_theme, rgb_to_c32, ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE,
+    apply_theme, rgb_to_c32, Tokens, ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE,
     RADIUS_CARD, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY,
 };
 use crate::widgets::{
@@ -42,6 +42,7 @@ pub struct SettingsView {
 
 impl SettingsView {
     pub fn ui(&mut self, ui: &mut Ui, state: &mut UiState) {
+        let tokens = Tokens::from_config(&state.config.theme);
         let current_section = self
             .active_section
             .unwrap_or(SettingsSection::Customization);
@@ -51,7 +52,7 @@ impl SettingsView {
             ui.spacing_mut().item_spacing = Vec2::new(12.0, 6.0);
             ui.heading(
                 RichText::new(tr("tab_settings", &lang))
-                    .color(TEXT_PRIMARY)
+                    .color(tokens.text)
                     .strong(),
             );
             ui.add_space(8.0);
@@ -141,9 +142,10 @@ impl SettingsView {
     }
 
     fn render_customization_studio(&mut self, ui: &mut Ui, state: &mut UiState) {
+        let tokens = Tokens::from_config(&state.config.theme);
         let card = egui::Frame::new()
-            .fill(CARD_SURFACE)
-            .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+            .fill(tokens.bg_surface)
+            .stroke(Stroke::new(1.0_f32, tokens.border))
             .corner_radius(RADIUS_CARD)
             .inner_margin(egui::Margin::same(14));
 
@@ -151,7 +153,7 @@ impl SettingsView {
             ui.set_width(ui.available_width());
 
             // 1. Presets Row
-            ui.label(RichText::new("1. Готовые пресеты тем").strong().size(14.0));
+            ui.label(RichText::new("1. Готовые пресеты тем").color(tokens.text).strong().size(14.0));
             ui.add_space(4.0);
 
             let mut preset_changed = false;
@@ -174,7 +176,7 @@ impl SettingsView {
             ui.add_space(10.0);
 
             // 2. Live Preview Card
-            ui.label(RichText::new("Живое превью стиля темы").strong().size(13.0));
+            ui.label(RichText::new("Живое превью стиля темы").color(tokens.text).strong().size(13.0));
             ui.add_space(4.0);
 
             let preview_card = egui::Frame::new()
@@ -217,6 +219,7 @@ impl SettingsView {
             // 3. Opacity & Glow Sliders
             ui.label(
                 RichText::new("2. Прозрачность и стеклянный блик")
+                    .color(tokens.text)
                     .strong()
                     .size(14.0),
             );
@@ -226,7 +229,7 @@ impl SettingsView {
             let mut style_dirty = false;
 
             ui.vertical(|ui| {
-                ui.label(RichText::new("Прозрачность окна (Window Opacity):").color(TEXT_PRIMARY));
+                ui.label(RichText::new("Прозрачность окна (Window Opacity):").color(tokens.text));
                 ui.add_space(2.0);
                 if ui
                     .add_sized(
@@ -246,7 +249,7 @@ impl SettingsView {
 
             ui.vertical(|ui| {
                 ui.label(
-                    RichText::new("Прозрачность карточек (Card Opacity):").color(TEXT_PRIMARY),
+                    RichText::new("Прозрачность карточек (Card Opacity):").color(tokens.text),
                 );
                 ui.add_space(2.0);
                 if ui
@@ -267,7 +270,7 @@ impl SettingsView {
             ui.vertical(|ui| {
                 ui.label(
                     RichText::new("Стеклянный блик обводки (Glass Border Glow):")
-                        .color(TEXT_PRIMARY),
+                        .color(tokens.text),
                 );
                 ui.add_space(2.0);
                 if ui
@@ -290,6 +293,7 @@ impl SettingsView {
             // 4. Geometry & Scale
             ui.label(
                 RichText::new("3. Геометрия, масштаб и плотность")
+                    .color(tokens.text)
                     .strong()
                     .size(14.0),
             );
@@ -297,7 +301,7 @@ impl SettingsView {
 
             ui.vertical(|ui| {
                 ui.label(
-                    RichText::new("Радиус скругления углов (Corner Radius):").color(TEXT_PRIMARY),
+                    RichText::new("Радиус скругления углов (Corner Radius):").color(tokens.text),
                 );
                 ui.add_space(2.0);
                 if ui
@@ -316,7 +320,7 @@ impl SettingsView {
             ui.add_space(6.0);
 
             ui.vertical(|ui| {
-                ui.label(RichText::new("Масштаб интерфейса (UI Scale):").color(TEXT_PRIMARY));
+                ui.label(RichText::new("Масштаб интерфейса (UI Scale):").color(tokens.text));
                 ui.add_space(2.0);
                 if ui
                     .add_sized(
@@ -333,7 +337,7 @@ impl SettingsView {
             ui.add_space(6.0);
 
             ui.vertical(|ui| {
-                ui.label(RichText::new("Размер шрифта:").color(TEXT_PRIMARY));
+                ui.label(RichText::new("Размер шрифта:").color(tokens.text));
                 ui.add_space(2.0);
                 if ui
                     .add_sized(

@@ -27,7 +27,8 @@ pub fn underline_tabs<T: Copy + PartialEq>(
     let mut main_resp = ui.scope(|_| {}).response;
 
     ScrollArea::horizontal()
-        .auto_shrink([false, false])
+        .auto_shrink([false, true])
+        .max_height(38.0)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(12.0, 0.0);

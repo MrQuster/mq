@@ -2,12 +2,12 @@
 //! Instances screen: instance grid, creation dialog, instance details, mods table,
 //! live game console with log filtering, and JVM settings. Zero emojis!
 
-use egui::{Color32, RichText, ScrollArea, Stroke, Ui, Vec2};
+use egui::{Color32, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
 use mq_core::{GameLogLevel, ModLoaderKind};
 use mq_instances::{
     backup_world, delete_world, export_instance_to_zip, export_world_to_zip,
     import_instance_from_zip, list_backups, list_screenshots, list_worlds, load_servers_dat,
-    ping_server, restore_world, save_servers_dat, ServerEntry,
+    ping_server, restore_world, save_servers_dat, InstanceManifest, ServerEntry,
 };
 
 use crate::components::{
@@ -17,7 +17,7 @@ use crate::components::{
 use crate::state::{UiState, UiWorkerCommand};
 use crate::theme::{
     ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE, CARD_SURFACE_HOVER, RADIUS_CARD,
-    STATUS_DANGER, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY,
+    STATUS_DANGER, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY, Tokens,
 };
 use crate::widgets::{
     danger_button, hero_action_button, loader_badge, paint_vector_icon, primary_emerald_button,
@@ -277,7 +277,7 @@ impl InstancesView {
         ui.add_space(8.0);
 
         // Row 2: SearchField + sorting dropdown Select + view mode segmented switch (B4, B6, B14)
-        let tokens = crate::theme::Tokens::matte_dark();
+        let tokens = Tokens::from_config(&state.config.theme);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
 
@@ -838,16 +838,28 @@ impl InstancesView {
             }
         }
 
+        if self.view_mode == InstanceViewMode::Grid {
+            self.render_grid_view(ui, state, &tokens);
+            return;
+        }
+
+        let avail_h = ui.available_height();
+
         // Layout: Left column (instances list) + Right column (selected instance details)
         ui.horizontal(|ui| {
+            ui.set_min_height(avail_h);
+
             // Left list of instances
             ui.vertical(|ui| {
                 ui.set_width(220.0);
-                ui.label(RichText::new("Инстансы").color(TEXT_MUTED).strong());
+                ui.set_min_height(avail_h);
+                ui.label(RichText::new("Инстансы").color(tokens.text_muted).strong());
                 ui.add_space(4.0);
 
                 ScrollArea::vertical()
                     .id_salt("instances_scroll")
+                    .auto_shrink([false, false])
+                    .max_height(avail_h - 40.0)
                     .show(ui, |ui| {
                         if state.instances.is_empty() {
                             ui.label(RichText::new("Нет инстансов").color(TEXT_MUTED));
@@ -1025,6 +1037,8 @@ impl InstancesView {
 
             // Right selected instance details
             ui.vertical(|ui| {
+                ui.set_min_height(avail_h);
+                ui.set_width(ui.available_width());
                 let selected_info = state.selected_instance().map(|i| {
                     (
                         i.id.clone(),
@@ -1483,6 +1497,157 @@ impl InstancesView {
         });
     }
 
+    fn render_grid_view(&mut self, ui: &mut Ui, state: &mut UiState, tokens: &Tokens) {
+        ScrollArea::vertical()
+            .id_salt("instances_grid_scroll")
+            .show(ui, |ui| {
+                let avail_w = ui.available_width();
+                let card_w = 300.0_f32;
+                let spacing = 16.0_f32;
+                let cols = ((avail_w + spacing) / (card_w + spacing)).floor().max(1.0) as usize;
+
+                let instances = state.instances.clone();
+                for chunk in instances.chunks(cols) {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(spacing, spacing);
+                        for inst in chunk {
+                            self.render_instance_grid_card(ui, state, inst, tokens, card_w);
+                        }
+                    });
+                    ui.add_space(spacing);
+                }
+            });
+    }
+
+    fn render_instance_grid_card(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut UiState,
+        inst: &InstanceManifest,
+        tokens: &Tokens,
+        card_w: f32,
+    ) {
+        let is_selected = state.selected_instance_id.as_ref() == Some(&inst.id);
+        let is_installed = state.is_instance_installed(&inst.id);
+        let is_downloading = state.installing_instance.as_ref() == Some(&inst.id);
+        let is_running = state.game_running && state.running_instance.as_ref() == Some(&inst.id);
+
+        let border_stroke = if is_running || is_selected {
+            Stroke::new(1.5_f32, tokens.accent)
+        } else if is_downloading {
+            Stroke::new(1.5_f32, ACCENT_COBALT)
+        } else {
+            Stroke::new(1.0_f32, tokens.border)
+        };
+
+        let bg_color = if is_selected {
+            tokens.bg_surface_hover
+        } else {
+            tokens.bg_surface
+        };
+
+        let card_frame = egui::Frame::new()
+            .fill(bg_color)
+            .stroke(border_stroke)
+            .corner_radius(RADIUS_CARD)
+            .inner_margin(egui::Margin::same(14));
+
+        let resp = card_frame.show(ui, |ui| {
+            ui.set_width(card_w);
+            ui.vertical(|ui| {
+                // Top row: Vector Icon + Name & Version/Loader Badges
+                ui.horizontal(|ui| {
+                    let (icon_rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
+                    let (icon, icon_col) = match inst.loader {
+                        ModLoaderKind::Vanilla => (VectorIcon::Cube, tokens.text),
+                        ModLoaderKind::Fabric | ModLoaderKind::Quilt => (VectorIcon::Layers, tokens.accent),
+                        ModLoaderKind::Forge | ModLoaderKind::NeoForge => (VectorIcon::Shield, ACCENT_COBALT),
+                    };
+                    paint_vector_icon(ui.painter(), icon_rect, icon, icon_col);
+
+                    ui.vertical(|ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&inst.name)
+                                    .color(tokens.text)
+                                    .size(15.0)
+                                    .strong(),
+                            )
+                            .truncate(),
+                        );
+                        ui.add_space(2.0);
+                        ui.horizontal(|ui| {
+                            version_badge(ui, &inst.mc_version, ACCENT_COBALT);
+                            loader_badge(ui, inst.loader);
+                        });
+                    });
+                });
+
+                ui.add_space(10.0);
+
+                // Status row: status dot + status label + playtime on right
+                let (status_text, status_col) = if is_running {
+                    ("Запущен", tokens.accent)
+                } else if is_downloading {
+                    ("Загрузка...", ACCENT_COBALT)
+                } else if is_installed {
+                    ("Готов", tokens.accent)
+                } else {
+                    ("Не скачан", tokens.warning)
+                };
+
+                ui.horizontal(|ui| {
+                    let (dot_rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
+                    ui.painter().circle_filled(dot_rect.center(), 3.5, status_col);
+                    ui.label(RichText::new(status_text).color(status_col).small().strong());
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let hours = (inst.playtime_secs as f32) / 3600.0;
+                        if hours >= 0.1 {
+                            ui.label(
+                                RichText::new(format!("Время: {:.1} ч", hours))
+                                    .color(tokens.text_muted)
+                                    .small(),
+                            );
+                        } else {
+                            ui.label(
+                                RichText::new("Новый")
+                                    .color(tokens.text_muted)
+                                    .small(),
+                            );
+                        }
+                    });
+                });
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                // Bottom row: Actions
+                ui.horizontal(|ui| {
+                    let play_label = if is_running { "Стоп" } else { "Играть" };
+                    if primary_emerald_button(ui, Some(VectorIcon::Play), play_label).clicked() {
+                        state.selected_instance_id = Some(inst.id.clone());
+                    }
+
+                    if secondary_glass_button(ui, Some(VectorIcon::Settings), "Детали").clicked() {
+                        state.selected_instance_id = Some(inst.id.clone());
+                        self.view_mode = InstanceViewMode::List;
+                    }
+
+                    if secondary_glass_button(ui, Some(VectorIcon::Folder), "Папка").clicked() {
+                        let inst_dir = state.paths.instance_dir(inst.id.as_str());
+                        let _ = crate::opener::open_that(inst_dir);
+                    }
+                });
+            });
+        });
+
+        if resp.response.interact(Sense::click()).clicked() {
+            state.selected_instance_id = Some(inst.id.clone());
+        }
+    }
+
     fn render_empty_onboarding_hub(&mut self, ui: &mut Ui, state: &mut UiState) {
         ui.vertical_centered(|ui| {
             ui.add_space(32.0);
@@ -1697,7 +1862,10 @@ impl InstancesView {
             ui.add_space(6.0);
         }
 
-        ScrollArea::vertical().id_salt("mods_table_scroll").show(ui, |ui| {
+        ScrollArea::vertical()
+            .id_salt("mods_table_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
             if state.installed_mods.is_empty() {
                 ui.add_space(20.0);
                 ui.label(RichText::new("В этом инстансе пока нет модов. Найдите их во вкладке 'Каталог' или положите .jar файлы в папку mods/!").color(TEXT_MUTED));
@@ -1872,7 +2040,7 @@ impl InstancesView {
         ui.add_space(4.0);
 
         // Row 2: Search input and level filter chips (B6, B7)
-        let tokens = crate::theme::Tokens::matte_dark();
+        let tokens = Tokens::from_config(&state.config.theme);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
             SearchField::new(&mut self.console_search, "Поиск в логе...")

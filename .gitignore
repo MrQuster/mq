@@ -32,6 +32,7 @@ perf.data*
 flamegraph.svg
 /snapshots/
 *.png
+!docs/assets/screenshots/*.png
 
 # OS metadata and editor swap files
 .DS_Store

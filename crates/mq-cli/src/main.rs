@@ -22,12 +22,15 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use mq_auth::{
     create_offline_account, resolve_ms_client_id, AccountKind, AccountStore, ElyByClient, MsaClient,
 };
-use mq_core::{AppConfig, Event, EventBus, GuiBackend, ModLoaderKind, MqPaths};
+use mq_core::{
+    AppConfig, CoreCpuLoad, CpuSnapshot, Event, EventBus, GameLogEntry, GameLogLevel, GuiBackend,
+    InstanceId, ModLoaderKind, MqPaths, Sha1Digest, Sha512Digest, ThemePreset,
+};
 use mq_install::{
     build_game_install_dag_plan, collect_instance_verify_targets, install_game,
     verify_files_parallel, CasStore, InstallRequest,
 };
-use mq_instances::InstanceManager;
+use mq_instances::{InstanceManifest, InstanceManager};
 use mq_launch::{
     build_launch_command, discover_java_runtimes, ensure_prelaunch_assets,
     required_java_major_for_mc, select_java_runtime, spawn_and_stream_game,
@@ -35,8 +38,8 @@ use mq_launch::{
 };
 use mq_mods::{
     delete_mod, install_curseforge_zip, install_mrpack, resolve_mod_with_dependencies,
-    scan_mods_directory, toggle_mod, CurseForgeClient, ModConflict, ModrinthClient, ProjectKind,
-    SearchQuery,
+    scan_mods_directory, toggle_mod, CatalogHit, CurseForgeClient, InstalledModEntry, ModConflict,
+    ModrinthClient, ProjectKind, SearchQuery,
 };
 use mq_net::{DownloadSpec, NetConfig, NetEngine};
 use mq_sched::{
@@ -428,12 +431,12 @@ enum WorldsSubcommand {
 
 #[derive(Args, Debug)]
 struct UiSnapshotArgs {
-    /// Screen to snapshot (instances, detail, catalog, accounts, settings, perf).
+    /// Screen to snapshot (instances, detail-mods, shaders, catalog, accounts, settings-matte, settings-light, all).
     #[arg(long, default_value = "instances")]
     screen: String,
 
-    /// Output PNG file path.
-    #[arg(long)]
+    /// Output PNG file path (or target directory if screen is "all").
+    #[arg(long, default_value = "docs/assets/screenshots/01-instances.png")]
     out: PathBuf,
 
     /// Width of the snapshot viewport in pixels.
@@ -443,6 +446,10 @@ struct UiSnapshotArgs {
     /// Height of the snapshot viewport in pixels.
     #[arg(long, default_value_t = 800)]
     height: u32,
+
+    /// Enable clean demo mode with synthetic data and no personal info.
+    #[arg(long)]
+    demo: bool,
 }
 
 #[derive(Args, Debug)]
@@ -1938,64 +1945,479 @@ async fn cmd_doctor(args: DoctorArgs, paths: MqPaths) -> Result<()> {
     Ok(())
 }
 
+async fn build_snapshot_app(
+    screen: &str,
+    is_demo: bool,
+    paths: &MqPaths,
+    threads: Option<usize>,
+) -> Result<(mq_ui::MqApp, Option<tempfile::TempDir>)> {
+    let num_t = threads.unwrap_or_else(default_cpu_threads);
+    let pool = Arc::new(ComputePool::new(num_t));
+
+    if is_demo {
+        let temp_dir = tempfile::tempdir().context("Failed to create demo temp dir")?;
+        let demo_root = temp_dir.path().to_path_buf();
+        let demo_paths = MqPaths::with_root(&demo_root);
+        std::fs::create_dir_all(demo_paths.instances_dir())?;
+        std::fs::create_dir_all(&demo_paths.data_dir)?;
+        std::fs::create_dir_all(&demo_paths.config_dir)?;
+
+        let mut config = AppConfig::default();
+        if screen == "settings-light" || screen == "07-settings-light" {
+            config.theme.apply_preset(ThemePreset::LightClean);
+        } else {
+            config.theme.apply_preset(ThemePreset::MatteDark);
+        }
+
+        let mut state = UiState::new(demo_paths.clone(), config, pool)
+            .context("Failed to initialize UI state for demo")?;
+
+        // 1. Instances: Vanilla 1.21.4, Fabric Optimization, NeoForge Adventures
+        let inst1_dir = demo_paths.instance_dir("vanilla-1-21-4");
+        std::fs::create_dir_all(&inst1_dir)?;
+        let mut m1 = InstanceManifest::new("Vanilla 1.21.4", "1.21.4", ModLoaderKind::Vanilla, None);
+        m1.id = InstanceId::new("vanilla-1-21-4")?;
+        m1.playtime_secs = 18_420;
+        m1.last_played = Some(chrono::Utc::now() - chrono::Duration::hours(2));
+        m1.save_to_dir(&inst1_dir)?;
+        let st1 = serde_json::json!({
+            "schema_version": 1,
+            "instance_id": "vanilla-1-21-4",
+            "mc_version": "1.21.4",
+            "loader": "vanilla",
+            "status": "ready",
+            "installed_at": "2026-11-01T12:00:00Z",
+            "libraries_count": 64,
+            "assets_count": 1280,
+            "natives_count": 8
+        });
+        std::fs::write(inst1_dir.join("install_state.json"), serde_json::to_string_pretty(&st1)?)?;
+
+        let inst2_dir = demo_paths.instance_dir("fabric-optimization");
+        std::fs::create_dir_all(&inst2_dir)?;
+        let mut m2 = InstanceManifest::new(
+            "Fabric Optimization",
+            "1.21.1",
+            ModLoaderKind::Fabric,
+            Some("0.16.9".to_string()),
+        );
+        m2.id = InstanceId::new("fabric-optimization")?;
+        m2.playtime_secs = 84_150;
+        m2.last_played = Some(chrono::Utc::now() - chrono::Duration::hours(1));
+        m2.save_to_dir(&inst2_dir)?;
+        let st2 = serde_json::json!({
+            "schema_version": 1,
+            "instance_id": "fabric-optimization",
+            "mc_version": "1.21.1",
+            "loader": "fabric",
+            "loader_version": "0.16.9",
+            "status": "ready",
+            "installed_at": "2026-11-02T15:30:00Z",
+            "libraries_count": 82,
+            "assets_count": 1340,
+            "natives_count": 8
+        });
+        std::fs::write(inst2_dir.join("install_state.json"), serde_json::to_string_pretty(&st2)?)?;
+
+        let shaders_dir = inst2_dir.join("shaderpacks");
+        std::fs::create_dir_all(&shaders_dir)?;
+        std::fs::write(shaders_dir.join("ComplementaryReimagined_r5.2.2.zip"), vec![0u8; 3_452_190])?;
+        std::fs::write(shaders_dir.join("BSL_v8.2.09.zip"), vec![0u8; 2_150_840])?;
+        std::fs::write(shaders_dir.join("Solas_Shader_V2.1.zip"), vec![0u8; 1_842_300])?;
+        std::fs::write(shaders_dir.join("Make_Up_Ultra_Fast_v8.8.zip.disabled"), vec![0u8; 1_280_450])?;
+
+        let inst3_dir = demo_paths.instance_dir("neoforge-adventures");
+        std::fs::create_dir_all(&inst3_dir)?;
+        let mut m3 = InstanceManifest::new(
+            "NeoForge Adventures",
+            "1.21.1",
+            ModLoaderKind::NeoForge,
+            Some("21.1.65".to_string()),
+        );
+        m3.id = InstanceId::new("neoforge-adventures")?;
+        m3.playtime_secs = 42_600;
+        m3.last_played = Some(chrono::Utc::now() - chrono::Duration::days(1));
+        m3.save_to_dir(&inst3_dir)?;
+        let st3 = serde_json::json!({
+            "schema_version": 1,
+            "instance_id": "neoforge-adventures",
+            "mc_version": "1.21.1",
+            "loader": "neoforge",
+            "loader_version": "21.1.65",
+            "status": "ready",
+            "installed_at": "2026-11-03T18:00:00Z",
+            "libraries_count": 115,
+            "assets_count": 1340,
+            "natives_count": 8
+        });
+        std::fs::write(inst3_dir.join("install_state.json"), serde_json::to_string_pretty(&st3)?)?;
+
+        state.instances = vec![m1, m2, m3];
+        state.selected_instance_id = Some(InstanceId::new("fabric-optimization")?);
+
+        // 2. Offline account "Player"
+        let offline_profile = mq_auth::create_offline_account("Player")?;
+        state.accounts.upsert_account(offline_profile, true);
+
+        // 3. Mods installed for fabric-optimization
+        state.installed_mods = vec![
+            InstalledModEntry {
+                file_name: "sodium-fabric-0.5.11+mc1.21.1.jar".into(),
+                path: PathBuf::from("mods/sodium-fabric-0.5.11+mc1.21.1.jar"),
+                enabled: true,
+                mod_id: "sodium".into(),
+                name: "Sodium".into(),
+                version: "0.5.11+mc1.21.1".into(),
+                authors: vec!["JellySquid".into(), "IMS".into()],
+                description: Some("Современный движок рендеринга для Minecraft, кардинально повышающий FPS и плавность кадров.".into()),
+                loader: Some(ModLoaderKind::Fabric),
+                dependencies: vec!["fabricloader".into()],
+                sha1: Sha1Digest::from_bytes([0u8; 20]),
+                sha512: Sha512Digest::from_bytes([0u8; 64]),
+                size: 1_420_180,
+            },
+            InstalledModEntry {
+                file_name: "lithium-fabric-0.12.7+mc1.21.1.jar".into(),
+                path: PathBuf::from("mods/lithium-fabric-0.12.7+mc1.21.1.jar"),
+                enabled: true,
+                mod_id: "lithium".into(),
+                name: "Lithium".into(),
+                version: "0.12.7+mc1.21.1".into(),
+                authors: vec!["JellySquid".into()],
+                description: Some("Оптимизация физики, искусственного интеллекта мобов и загрузки чанков без изменения механик игры.".into()),
+                loader: Some(ModLoaderKind::Fabric),
+                dependencies: vec!["fabricloader".into()],
+                sha1: Sha1Digest::from_bytes([0u8; 20]),
+                sha512: Sha512Digest::from_bytes([0u8; 64]),
+                size: 680_400,
+            },
+            InstalledModEntry {
+                file_name: "iris-fabric-1.7.3+mc1.21.1.jar".into(),
+                path: PathBuf::from("mods/iris-fabric-1.7.3+mc1.21.1.jar"),
+                enabled: true,
+                mod_id: "iris".into(),
+                name: "Iris Shaders".into(),
+                version: "1.7.3+mc1.21.1".into(),
+                authors: vec!["coderbot".into(), "Iris Team".into()],
+                description: Some("Современный высокопроизводительный движок шейдеров с полной поддержкой ShadersMod/OptiFine наборов.".into()),
+                loader: Some(ModLoaderKind::Fabric),
+                dependencies: vec!["sodium".into(), "fabricloader".into()],
+                sha1: Sha1Digest::from_bytes([0u8; 20]),
+                sha512: Sha512Digest::from_bytes([0u8; 64]),
+                size: 2_890_120,
+            },
+            InstalledModEntry {
+                file_name: "fabric-api-0.102.0+1.21.1.jar".into(),
+                path: PathBuf::from("mods/fabric-api-0.102.0+1.21.1.jar"),
+                enabled: true,
+                mod_id: "fabric-api".into(),
+                name: "Fabric API".into(),
+                version: "0.102.0+1.21.1".into(),
+                authors: vec!["FabricMC".into()],
+                description: Some("Базовые хуки и системные библиотеки для экосистемы модов Fabric.".into()),
+                loader: Some(ModLoaderKind::Fabric),
+                dependencies: vec!["fabricloader".into()],
+                sha1: Sha1Digest::from_bytes([0u8; 20]),
+                sha512: Sha512Digest::from_bytes([0u8; 64]),
+                size: 2_150_000,
+            },
+            InstalledModEntry {
+                file_name: "ferritecore-7.0.0-fabric.jar".into(),
+                path: PathBuf::from("mods/ferritecore-7.0.0-fabric.jar"),
+                enabled: true,
+                mod_id: "ferritecore".into(),
+                name: "FerriteCore".into(),
+                version: "7.0.0".into(),
+                authors: vec!["malte0811".into()],
+                description: Some("Оптимизация потребления оперативной памяти Minecraft структурами данных.".into()),
+                loader: Some(ModLoaderKind::Fabric),
+                dependencies: vec!["fabricloader".into()],
+                sha1: Sha1Digest::from_bytes([0u8; 20]),
+                sha512: Sha512Digest::from_bytes([0u8; 64]),
+                size: 340_200,
+            },
+        ];
+
+        // 4. Modrinth catalog hits
+        state.catalog_source = mq_mods::CatalogSource::Modrinth;
+        state.catalog_query_text = "optimization".to_string();
+        state.catalog_hits = vec![
+            CatalogHit {
+                source: mq_mods::CatalogSource::Modrinth,
+                project_id: "AANobbMI".into(),
+                slug: "sodium".into(),
+                title: "Sodium".into(),
+                description: "Современный движок рендеринга для Minecraft, кардинально повышающий FPS.".into(),
+                author: "JellySquid".into(),
+                downloads: 34_820_000,
+                icon_url: None,
+                project_kind: mq_mods::ProjectKind::Mod,
+                loaders: vec!["fabric".into(), "quilt".into()],
+                game_versions: vec!["1.21.1".into(), "1.21".into(), "1.20.6".into()],
+                latest_version: Some("0.5.11+mc1.21.1".into()),
+            },
+            CatalogHit {
+                source: mq_mods::CatalogSource::Modrinth,
+                project_id: "YL57xq9U".into(),
+                slug: "iris".into(),
+                title: "Iris Shaders".into(),
+                description: "Современный движок шейдеров для Minecraft с высокой производительностью и совместимостью.".into(),
+                author: "Iris Team".into(),
+                downloads: 27_450_000,
+                icon_url: None,
+                project_kind: mq_mods::ProjectKind::Mod,
+                loaders: vec!["fabric".into(), "quilt".into()],
+                game_versions: vec!["1.21.1".into(), "1.21".into()],
+                latest_version: Some("1.7.3+mc1.21.1".into()),
+            },
+            CatalogHit {
+                source: mq_mods::CatalogSource::Modrinth,
+                project_id: "gvQqBUqZ".into(),
+                slug: "lithium".into(),
+                title: "Lithium".into(),
+                description: "Оптимизация серверной и клиентской физики, тиков и загрузки чанков.".into(),
+                author: "JellySquid".into(),
+                downloads: 22_100_000,
+                icon_url: None,
+                project_kind: mq_mods::ProjectKind::Mod,
+                loaders: vec!["fabric".into(), "quilt".into(), "neoforge".into()],
+                game_versions: vec!["1.21.1".into(), "1.21".into()],
+                latest_version: Some("0.12.7+mc1.21.1".into()),
+            },
+            CatalogHit {
+                source: mq_mods::CatalogSource::Modrinth,
+                project_id: "uXXizFIs".into(),
+                slug: "ferrite-core".into(),
+                title: "FerriteCore".into(),
+                description: "Снижение потребления оперативной памяти (RAM) Minecraft структурами данных.".into(),
+                author: "malte0811".into(),
+                downloads: 18_900_000,
+                icon_url: None,
+                project_kind: mq_mods::ProjectKind::Mod,
+                loaders: vec!["fabric".into(), "forge".into(), "neoforge".into()],
+                game_versions: vec!["1.21.1".into(), "1.21".into()],
+                latest_version: Some("7.0.0".into()),
+            },
+            CatalogHit {
+                source: mq_mods::CatalogSource::Modrinth,
+                project_id: "1KVo5zza".into(),
+                slug: "fabulously-optimized".into(),
+                title: "Fabulously Optimized".into(),
+                description: "Простая сборка, ориентированная на максимальную производительность и графику.".into(),
+                author: "RobotPantheon".into(),
+                downloads: 8_700_000,
+                icon_url: None,
+                project_kind: mq_mods::ProjectKind::Modpack,
+                loaders: vec!["fabric".into()],
+                game_versions: vec!["1.21.1".into()],
+                latest_version: Some("5.9.1".into()),
+            },
+            CatalogHit {
+                source: mq_mods::CatalogSource::Modrinth,
+                project_id: "R2OftAxM".into(),
+                slug: "complementary-reimagined".into(),
+                title: "Complementary Reimagined".into(),
+                description: "Исключительное визуальное качество, детализированное освещение и производительность.".into(),
+                author: "EminGT".into(),
+                downloads: 12_400_000,
+                icon_url: None,
+                project_kind: mq_mods::ProjectKind::Shader,
+                loaders: vec!["iris".into(), "optifine".into()],
+                game_versions: vec!["1.21.1".into(), "1.20.6".into()],
+                latest_version: Some("r5.2.2".into()),
+            },
+        ];
+
+        // 5. Clean neutral game logs
+        let log_lines = [
+            (GameLogLevel::Info, "Loading Minecraft 1.21.1 with Fabric Loader 0.16.9"),
+            (GameLogLevel::Info, "Loading 5 mods: fabric-api 0.102.0+1.21.1, ferritecore 7.0.0, iris 1.7.3+mc1.21.1, lithium 0.12.7+mc1.21.1, sodium 0.5.11+mc1.21.1"),
+            (GameLogLevel::Info, "SpongePowered MIXIN Subsystem Version 0.8.7"),
+            (GameLogLevel::Info, "Setting user: Player"),
+            (GameLogLevel::Info, "[Sodium] Hardware information: AMD Radeon Graphics (RADV) / Vulkan 1.3"),
+            (GameLogLevel::Info, "[Iris] Found and initialized shaderpack: ComplementaryReimagined_r5.2.2.zip"),
+            (GameLogLevel::Info, "Created: 2048x1024x4 minecraft:textures/atlas/blocks.png-atlas"),
+            (GameLogLevel::Info, "Loaded 1420 block state definitions"),
+            (GameLogLevel::Info, "Reloading ResourceManager: vanilla, fabric"),
+            (GameLogLevel::Info, "OpenAL initialized: OpenAL Soft"),
+            (GameLogLevel::Info, "Sound engine started"),
+            (GameLogLevel::Info, "Minecraft client initialized successfully (Render FPS: 144)"),
+        ];
+        for (level, line) in log_lines {
+            state.game_logs.push_back(GameLogEntry {
+                instance: "fabric-optimization".into(),
+                timestamp_ms: chrono::Utc::now().timestamp_millis(),
+                level,
+                line: line.into(),
+            });
+        }
+
+        // 6. Neutral CPU telemetry
+        state.latest_cpu = CpuSnapshot {
+            total_pct: 4.2,
+            per_core: vec![
+                CoreCpuLoad { core_id: 0, usage_pct: 4.5 },
+                CoreCpuLoad { core_id: 1, usage_pct: 3.8 },
+                CoreCpuLoad { core_id: 2, usage_pct: 4.4 },
+                CoreCpuLoad { core_id: 3, usage_pct: 4.1 },
+            ],
+            rss_mib: 142.0,
+        };
+
+        let tab = match screen {
+            "instances" | "01-instances" | "grid" => mq_ui::NavTab::Instances,
+            "detail-mods" | "02-detail-mods" | "mods" | "detail" => mq_ui::NavTab::Instances,
+            "shaders" | "03-shaders" | "detail-shaders" => mq_ui::NavTab::Instances,
+            "catalog" | "04-catalog" => mq_ui::NavTab::Catalog,
+            "accounts" | "05-accounts" => mq_ui::NavTab::Accounts,
+            "settings-matte" | "06-settings-matte" | "settings" => mq_ui::NavTab::Settings,
+            "settings-light" | "07-settings-light" => mq_ui::NavTab::Settings,
+            "perf" | "performance" => mq_ui::NavTab::Performance,
+            _ => mq_ui::NavTab::Instances,
+        };
+
+        let mut instances_view = mq_ui::InstancesView::default();
+        let mut accounts_view = mq_ui::AccountsView::default();
+        let mut settings_view = mq_ui::SettingsView::default();
+
+        match screen {
+            "instances" | "01-instances" | "grid" => {
+                instances_view.view_mode = mq_ui::InstanceViewMode::Grid;
+            }
+            "detail-mods" | "02-detail-mods" | "mods" | "detail" => {
+                instances_view.view_mode = mq_ui::InstanceViewMode::List;
+                instances_view.current_tab = mq_ui::InstanceDetailTab::Mods;
+            }
+            "shaders" | "03-shaders" | "detail-shaders" => {
+                instances_view.view_mode = mq_ui::InstanceViewMode::List;
+                instances_view.current_tab = mq_ui::InstanceDetailTab::ShaderPacks;
+            }
+            "accounts" | "05-accounts" => {
+                accounts_view.offline_username = "Player".to_string();
+            }
+            "settings-matte" | "06-settings-matte" | "settings" => {
+                settings_view.active_section = Some(mq_ui::SettingsSection::Customization);
+            }
+            "settings-light" | "07-settings-light" => {
+                settings_view.active_section = Some(mq_ui::SettingsSection::Customization);
+            }
+            _ => {}
+        }
+
+        let app = mq_ui::MqApp {
+            state,
+            current_tab: tab,
+            instances_view,
+            catalog_view: mq_ui::CatalogView::default(),
+            accounts_view,
+            perf_view: mq_ui::PerfView,
+            settings_view,
+        };
+
+        Ok((app, Some(temp_dir)))
+    } else {
+        // Normal non-demo mode
+        let config = AppConfig::load_or_default(paths)?;
+        let mut state =
+            UiState::new(paths.clone(), config, pool).context("Failed to initialize UI state")?;
+
+        let mgr = InstanceManager::new(paths.clone());
+        if state.instances.is_empty() {
+            let _ = mgr.create_instance("1.21.1 Vanilla", "1.21.1", ModLoaderKind::Vanilla, None);
+            let _ = mgr.create_instance(
+                "Fabulously Optimized",
+                "1.21.1",
+                ModLoaderKind::Fabric,
+                Some("0.16.9".into()),
+            );
+            let _ = mgr.create_instance("NeoForge 1.21.1", "1.21.1", ModLoaderKind::NeoForge, None);
+            if let Ok(insts) = mgr.list_instances() {
+                state.instances = insts;
+            }
+        }
+
+        let tab = match screen {
+            "instances" => mq_ui::NavTab::Instances,
+            "detail" => mq_ui::NavTab::Instances,
+            "catalog" => mq_ui::NavTab::Catalog,
+            "accounts" => mq_ui::NavTab::Accounts,
+            "perf" | "performance" => mq_ui::NavTab::Performance,
+            "settings" => mq_ui::NavTab::Settings,
+            _ => mq_ui::NavTab::Instances,
+        };
+
+        let mut app = mq_ui::MqApp {
+            state,
+            current_tab: tab,
+            instances_view: mq_ui::InstancesView::default(),
+            catalog_view: mq_ui::CatalogView::default(),
+            accounts_view: mq_ui::AccountsView::default(),
+            perf_view: mq_ui::PerfView,
+            settings_view: mq_ui::SettingsView::default(),
+        };
+
+        if screen == "detail" {
+            if let Some(first) = app.state.instances.first() {
+                app.state.selected_instance_id = Some(first.id.clone());
+            }
+        }
+
+        Ok((app, None))
+    }
+}
+
 async fn cmd_ui_snapshot(
     args: UiSnapshotArgs,
     paths: MqPaths,
     threads: Option<usize>,
 ) -> Result<()> {
-    let config = AppConfig::load_or_default(&paths)?;
-    let num_t = threads.unwrap_or_else(default_cpu_threads);
-    let pool = Arc::new(ComputePool::new(num_t));
-    let mut state =
-        UiState::new(paths.clone(), config, pool).context("Failed to initialize UI state")?;
+    let is_demo = args.demo
+        || std::env::var("MQ_DEMO")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
 
-    let mgr = InstanceManager::new(paths.clone());
-    if state.instances.is_empty() {
-        let _ = mgr.create_instance("1.21.1 Vanilla", "1.21.1", ModLoaderKind::Vanilla, None);
-        let _ = mgr.create_instance(
-            "Fabulously Optimized",
-            "1.21.1",
-            ModLoaderKind::Fabric,
-            Some("0.16.9".into()),
+    let screen_str = args.screen.to_lowercase();
+    if screen_str == "all" {
+        let screens = [
+            ("01-instances", "01-instances.png"),
+            ("02-detail-mods", "02-detail-mods.png"),
+            ("03-shaders", "03-shaders.png"),
+            ("04-catalog", "04-catalog.png"),
+            ("05-accounts", "05-accounts.png"),
+            ("06-settings-matte", "06-settings-matte.png"),
+            ("07-settings-light", "07-settings-light.png"),
+        ];
+
+        let out_dir = if args.out.extension().is_some() {
+            args.out.parent().unwrap_or_else(|| std::path::Path::new("docs/assets/screenshots"))
+        } else {
+            args.out.as_path()
+        };
+        std::fs::create_dir_all(out_dir)?;
+
+        for (scr, filename) in screens {
+            let out_file = out_dir.join(filename);
+            println!(
+                "[MQ] Генерация снимка экрана '{}' -> {} ({}x{}, demo: {})...",
+                scr,
+                out_file.display(),
+                args.width,
+                args.height,
+                is_demo
+            );
+            let (mut app, _guard) = build_snapshot_app(scr, is_demo, &paths, threads).await?;
+            mq_ui::capture_app_snapshot(&mut app, args.width, args.height, &out_file).await?;
+        }
+        println!("[MQ] Все 7 снимков успешно сгенерированы в {}", out_dir.display());
+    } else {
+        println!(
+            "[MQ] Генерация снимка экрана '{}' ({}x{}, demo: {})...",
+            args.screen, args.width, args.height, is_demo
         );
-        let _ = mgr.create_instance("NeoForge 1.21.1", "1.21.1", ModLoaderKind::NeoForge, None);
-        if let Ok(insts) = mgr.list_instances() {
-            state.instances = insts;
-        }
+        let (mut app, _guard) = build_snapshot_app(&screen_str, is_demo, &paths, threads).await?;
+        mq_ui::capture_app_snapshot(&mut app, args.width, args.height, &args.out).await?;
+        println!("[MQ] Снимок сохранён: {}", args.out.display());
     }
-
-    let tab = match args.screen.to_lowercase().as_str() {
-        "instances" => mq_ui::NavTab::Instances,
-        "detail" => mq_ui::NavTab::Instances,
-        "catalog" => mq_ui::NavTab::Catalog,
-        "accounts" => mq_ui::NavTab::Accounts,
-        "perf" | "performance" => mq_ui::NavTab::Performance,
-        "settings" => mq_ui::NavTab::Settings,
-        _ => mq_ui::NavTab::Instances,
-    };
-
-    let mut app = mq_ui::MqApp {
-        state,
-        current_tab: tab,
-        instances_view: mq_ui::InstancesView::default(),
-        catalog_view: mq_ui::CatalogView::default(),
-        accounts_view: mq_ui::AccountsView::default(),
-        perf_view: mq_ui::PerfView,
-        settings_view: mq_ui::SettingsView::default(),
-    };
-
-    if args.screen.to_lowercase() == "detail" {
-        if let Some(first) = app.state.instances.first() {
-            app.state.selected_instance_id = Some(first.id.clone());
-        }
-    }
-
-    println!(
-        "[MQ] Генерация снимка экрана '{}' ({}x{})...",
-        args.screen, args.width, args.height
-    );
-    mq_ui::capture_app_snapshot(&mut app, args.width, args.height, &args.out).await?;
-    println!("[MQ] Снимок сохранён: {}", args.out.display());
     Ok(())
 }
 
