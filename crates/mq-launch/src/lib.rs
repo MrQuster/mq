@@ -7,6 +7,7 @@
 pub mod command;
 pub mod crash_analyzer;
 pub mod java;
+pub mod mojang_java;
 pub mod options;
 pub mod prelaunch;
 pub mod runner;
@@ -17,8 +18,15 @@ pub use command::{
 pub use crash_analyzer::{analyze_crash, upload_to_mclogs, CrashAnalysis};
 pub use java::{
     discover_java_runtimes, discover_java_runtimes_from_sources, download_adoptium_java,
-    parse_java_release_file, parse_java_version_output, parse_java_version_str, probe_java_binary,
-    required_java_major_for_mc, select_java_runtime, JavaRuntime, SYSTEM_JVM_DIRS,
+    download_zulu_java, ensure_java_runtime, parse_java_release_file, parse_java_version_output,
+    parse_java_version_str, probe_java_binary, required_java_major_for_mc, select_java_runtime,
+    verify_java_executable, JavaRuntime, JavaSource, SelectedJava, SYSTEM_JVM_DIRS,
+};
+pub use mojang_java::{
+    component_for_major_version, current_mojang_platform, ensure_mojang_java_runtime,
+    find_mojang_runtime_entry, major_version_for_component, parse_mojang_catalog,
+    parse_mojang_package_manifest, MojangCatalogEntry, MojangDownloadFile, MojangDownloadVariants,
+    MojangFileNode, MojangPackageManifest, MojangProductCatalog, MOJANG_JAVA_RUNTIME_ALL_URL,
 };
 pub use options::{
     default_mc_locale_for_version, is_legacy_mc_version, patch_minecraft_options_lang,

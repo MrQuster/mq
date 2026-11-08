@@ -434,6 +434,36 @@ async fn install_game_transactional(
         }
     }
 
+    // 3b. Ensure compatible Java runtime is present (Mojang / System / Adoptium / Zulu)
+    if let Some(bus) = event_bus {
+        bus.publish(Event::PhaseStarted {
+            phase: "java_runtime".to_string(),
+            total_items: 1,
+        });
+    }
+
+    let java_dir = paths.data_dir.join("java");
+    let req_major = resolved_ver.java_version.major_version;
+    let comp_hint = Some(resolved_ver.java_version.component.as_str());
+
+    match mq_launch::ensure_java_runtime(&client, &java_dir, req_major, comp_hint, None).await {
+        Ok(selected) => {
+            tracing::info!(
+                major = selected.runtime.major_version,
+                source = ?selected.source,
+                path = %selected.runtime.path.display(),
+                "ensured Java runtime for installation"
+            );
+        }
+        Err(e) => {
+            if req.mock_base_url.is_some() {
+                tracing::warn!("mock installation environment; skipping Java ensure error: {e}");
+            } else {
+                return Err(e);
+            }
+        }
+    }
+
     // 4. Fetch Asset Index
     current_stage = InstallStage::Assets;
     if epoch_guard.is_cancelled() {
