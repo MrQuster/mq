@@ -25,10 +25,15 @@ pub struct MqPaths {
 
 impl MqPaths {
     /// Resolves canonical paths for the active platform:
+    /// - Checks `MQ_DATA_DIR` environment variable; if set and non-empty, returns `Self::with_root(val)`.
     /// - Checks for `portable.flag` adjacent to `current_exe()`; if found, runs in portable mode rooted at the executable's directory.
     /// - On Windows: `%LOCALAPPDATA%\MQ` (data), `%APPDATA%\MQ` (config), `%LOCALAPPDATA%\MQ\cache` (cache).
     /// - On Linux: strictly follows XDG Base Directory specification (`~/.local/share/mq`, `~/.config/mq`, `~/.cache/mq`).
     pub fn platform_default() -> MqResult<Self> {
+        if let Some(val) = env::var_os("MQ_DATA_DIR").filter(|v| !v.is_empty()) {
+            return Ok(Self::with_root(PathBuf::from(val)));
+        }
+
         if let Ok(exe) = env::current_exe() {
             if let Some(exe_dir) = exe.parent() {
                 if exe_dir.join("portable.flag").is_file() {
@@ -128,6 +133,7 @@ impl MqPaths {
             self.data_dir.join("cache"),
             self.java_dir(),
             self.backups_dir(),
+            self.logs_dir(),
         ];
 
         for dir in dirs {
@@ -222,6 +228,66 @@ impl MqPaths {
     #[inline]
     pub fn temp_dir(&self) -> PathBuf {
         self.data_dir.join("tmp")
+    }
+
+    /// Directory for crash reports and diagnostic logs:
+    /// - When `MQ_DATA_DIR` is set or paths were created via `with_root`: `<data_dir>/logs`
+    /// - On Windows: `<data_dir>/logs` (`%LOCALAPPDATA%\MQ\logs`)
+    /// - On Linux: `$XDG_STATE_HOME/mq/logs` or `$HOME/.local/state/mq/logs` (fallback: `<data_dir>/logs`)
+    pub fn logs_dir(&self) -> PathBuf {
+        let mq_data_dir = env::var_os("MQ_DATA_DIR");
+        let xdg_state = env::var_os("XDG_STATE_HOME");
+        let home = env::var_os("HOME")
+            .filter(|h| !h.is_empty())
+            .or_else(|| BaseDirs::new().map(|base| base.home_dir().as_os_str().to_os_string()));
+
+        self.resolve_logs_dir_from_vars(
+            mq_data_dir.as_deref(),
+            xdg_state.as_deref(),
+            home.as_deref(),
+        )
+    }
+
+    /// Pure helper for resolving `logs_dir` from explicit environment values.
+    pub fn resolve_logs_dir_from_vars(
+        &self,
+        mq_data_dir: Option<&OsStr>,
+        xdg_state: Option<&OsStr>,
+        home: Option<&OsStr>,
+    ) -> PathBuf {
+        if mq_data_dir.filter(|v| !v.is_empty()).is_some()
+            || self.config_dir == self.data_dir.join("config")
+        {
+            return self.data_dir.join("logs");
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let _ = (xdg_state, home);
+            self.data_dir.join("logs")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Some(raw) = xdg_state.filter(|v| !v.is_empty()) {
+                let candidate = Path::new(raw);
+                if candidate.is_absolute() {
+                    return candidate.join(APP_DIR_NAME).join("logs");
+                }
+            }
+            if let Some(home_os) = home.filter(|v| !v.is_empty()) {
+                return Path::new(home_os)
+                    .join(".local/state")
+                    .join(APP_DIR_NAME)
+                    .join("logs");
+            }
+            self.data_dir.join("logs")
+        }
+    }
+
+    /// Path to the persistent installation crash/interruption journal (`<data_dir>/install.journal`).
+    #[inline]
+    pub fn install_journal_path(&self) -> PathBuf {
+        self.data_dir.join("install.journal")
     }
 }
 
@@ -393,7 +459,52 @@ mod tests {
         assert!(paths.temp_dir().is_dir());
         assert!(paths.config_dir.is_dir());
         assert!(paths.cache_dir.is_dir());
+        assert!(paths.logs_dir().is_dir());
+        assert_eq!(paths.logs_dir(), tmp.path().join("logs"));
+        assert_eq!(
+            paths.install_journal_path(),
+            tmp.path().join("install.journal")
+        );
         assert!(paths.authlib_injector_jar().parent().unwrap().is_dir());
+    }
+
+    #[test]
+    fn logs_dir_resolution_rules() {
+        let paths = MqPaths::from_xdg_vars(None, None, None, Some(OsStr::new("/home/player")))
+            .expect("resolve from HOME");
+
+        // When MQ_DATA_DIR is set, logs_dir is inside data_dir/logs
+        assert_eq!(
+            paths.resolve_logs_dir_from_vars(
+                Some(OsStr::new("/tmp/mq-test")),
+                Some(OsStr::new("/var/state")),
+                Some(OsStr::new("/home/player")),
+            ),
+            paths.data_dir.join("logs")
+        );
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Explicit absolute XDG_STATE_HOME
+            assert_eq!(
+                paths.resolve_logs_dir_from_vars(
+                    None,
+                    Some(OsStr::new("/custom/state")),
+                    Some(OsStr::new("/home/player")),
+                ),
+                PathBuf::from("/custom/state/mq/logs")
+            );
+
+            // Relative XDG_STATE_HOME is ignored per XDG spec, falls back to $HOME/.local/state/mq/logs
+            assert_eq!(
+                paths.resolve_logs_dir_from_vars(
+                    None,
+                    Some(OsStr::new("relative/state")),
+                    Some(OsStr::new("/home/player")),
+                ),
+                PathBuf::from("/home/player/.local/state/mq/logs")
+            );
+        }
     }
 
     #[test]

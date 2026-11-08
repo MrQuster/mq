@@ -514,6 +514,7 @@ async fn main() -> Result<()> {
     paths
         .ensure_dirs()
         .context("Failed to create platform directories")?;
+    mq_core::install_panic_hook(&paths);
 
     match cli.command {
         None => run_desktop_gui(cli.backend, cli.threads, paths),
@@ -600,36 +601,42 @@ fn default_cpu_threads() -> usize {
 
 /// Fallback-aware GUI launcher with headless environment detection.
 fn run_desktop_gui(backend: BackendChoice, threads: Option<usize>, paths: MqPaths) -> Result<()> {
-    let has_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
-    let has_x11 = std::env::var("DISPLAY").is_ok();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let has_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+        let has_x11 = std::env::var("DISPLAY").is_ok();
 
-    if !has_wayland && !has_x11 {
-        eprintln!(
-            "--------------------------------------------------------------------------------"
-        );
-        eprintln!("Ошибка: Графический интерфейс MQ требует активного дисплея (Wayland или X11).");
-        eprintln!(
-            "Переменные WAYLAND_DISPLAY и DISPLAY не установлены (работа по SSH / Headless)."
-        );
-        eprintln!();
-        eprintln!("Для работы в терминале используйте подкоманды CLI:");
-        eprintln!("  mq --help");
-        eprintln!("  mq install <version> [--loader <fabric|quilt|forge|neoforge>]");
-        eprintln!("  mq launch <instance> [--dry-run]");
-        eprintln!("  mq verify <instance>");
-        eprintln!("  mq mods scan <instance>");
-        eprintln!("  mq bench");
-        eprintln!(
-            "--------------------------------------------------------------------------------"
-        );
-        std::process::exit(1);
+        if !has_wayland && !has_x11 {
+            eprintln!(
+                "--------------------------------------------------------------------------------"
+            );
+            eprintln!(
+                "Ошибка: Графический интерфейс MQ требует активного дисплея (Wayland или X11)."
+            );
+            eprintln!(
+                "Переменные WAYLAND_DISPLAY и DISPLAY не установлены (работа по SSH / Headless)."
+            );
+            eprintln!();
+            eprintln!("Для работы в терминале используйте подкоманды CLI:");
+            eprintln!("  mq --help");
+            eprintln!("  mq install <version> [--loader <fabric|quilt|forge|neoforge>]");
+            eprintln!("  mq launch <instance> [--dry-run]");
+            eprintln!("  mq verify <instance>");
+            eprintln!("  mq mods scan <instance>");
+            eprintln!("  mq bench");
+            eprintln!(
+                "--------------------------------------------------------------------------------"
+            );
+            std::process::exit(1);
+        }
     }
 
     let config = AppConfig::load_or_default(&paths)?;
     let num_t = threads.unwrap_or_else(default_cpu_threads);
     let pool = Arc::new(ComputePool::new(num_t));
 
-    let state = UiState::new(paths, config, pool).context("Failed to initialize UI state")?;
+    let state = UiState::new(paths.clone(), config.clone(), pool.clone())
+        .context("Failed to initialize UI state")?;
     let gui_backend = match backend {
         BackendChoice::Auto => GuiBackend::Auto,
         BackendChoice::Vulkan => GuiBackend::Vulkan,
@@ -640,7 +647,20 @@ fn run_desktop_gui(backend: BackendChoice, threads: Option<usize>, paths: MqPath
         "[MQ] Запуск графического интерфейса MQ Launcher (Backend: {:?})...",
         gui_backend
     );
-    run_gui(state, gui_backend).map_err(|e| anyhow::anyhow!("eframe error: {e}"))
+    match run_gui(state, gui_backend) {
+        Ok(()) => Ok(()),
+        Err(e) if gui_backend != GuiBackend::Gl => {
+            eprintln!(
+                "Не удалось инициализировать графический бэкенд {:?} ({e}). Переключение на запасной рендерер OpenGL (Glow)...",
+                gui_backend
+            );
+            let fallback_state = UiState::new(paths, config, pool)
+                .context("Failed to initialize UI state for OpenGL fallback")?;
+            run_gui(fallback_state, GuiBackend::Gl)
+                .map_err(|err| anyhow::anyhow!("eframe error: {err}"))
+        }
+        Err(e) => Err(anyhow::anyhow!("eframe error: {e}")),
+    }
 }
 
 async fn cmd_launch(args: LaunchArgs, paths: MqPaths) -> Result<()> {

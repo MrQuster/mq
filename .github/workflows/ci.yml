@@ -115,10 +115,18 @@ jobs:
             ${{ runner.os }}-cargo-test-win-
 
       - name: Windows Unit Tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: Build Release mq.exe
-        run: cargo build --release -p mq-cli
+        run: cargo build --release --locked -p mq-cli
 
-      - name: Verify Windows binary
-        run: .\target\release\mq.exe --version
+      - name: Verify Windows binary & CLI smoke checks
+        shell: pwsh
+        run: |
+          $env:MQ_DATA_DIR = Join-Path $env:RUNNER_TEMP "mq-win-ci-data"
+          New-Item -ItemType Directory -Force -Path $env:MQ_DATA_DIR | Out-Null
+          .\target\release\mq.exe --version
+          .\target\release\mq.exe instances list
+          .\target\release\mq.exe instances create "WinTest 1.20.1" --version 1.20.1 --loader vanilla
+          .\target\release\mq.exe instances list
+          .\target\release\mq.exe doctor --install 1.21.1 --json || $true
