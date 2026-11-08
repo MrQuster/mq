@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 use dashmap::DashMap;
+use mq_core::fs_util::{remove_file_with_retry, rename_with_retry};
 use mq_core::{MqError, MqResult};
 use serde::{Deserialize, Serialize};
 
@@ -240,7 +241,7 @@ impl InstallState {
 
         std::fs::create_dir_all(instance_dir)?;
         std::fs::write(&tmp_path, json.as_bytes())?;
-        std::fs::rename(&tmp_path, &path)?;
+        rename_with_retry(&tmp_path, &path)?;
         Ok(())
     }
 
@@ -393,7 +394,7 @@ impl InstanceInstallLock {
 impl Drop for InstanceInstallLock {
     fn drop(&mut self) {
         let _ = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::Unlock);
-        let _ = std::fs::remove_file(&self.lock_file_path);
+        let _ = remove_file_with_retry(&self.lock_file_path);
     }
 }
 

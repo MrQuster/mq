@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
+use mq_core::fs_util::{remove_file_with_retry, rename_with_retry};
 use mq_core::{MqError, MqPaths, MqResult, Sha1Digest};
 use sha1::{Digest as _, Sha1};
 
@@ -100,7 +101,7 @@ impl CasStore {
                 true
             }
             _ => {
-                let _ = fs::remove_file(&path);
+                let _ = remove_file_with_retry(&path);
                 false
             }
         }
@@ -171,7 +172,7 @@ impl CasStore {
                     return Ok(cas_path);
                 }
             }
-            let _ = fs::remove_file(&cas_path);
+            let _ = remove_file_with_retry(&cas_path);
         }
 
         copy_chunked_atomic(src_path, &cas_path)?;
@@ -212,7 +213,7 @@ impl CasStore {
         }
 
         if target_path.exists() || target_path.symlink_metadata().is_ok() {
-            fs::remove_file(target_path)?;
+            remove_file_with_retry(target_path)?;
         }
 
         match fs::hard_link(&cas_blob, target_path) {
@@ -269,14 +270,14 @@ pub fn copy_chunked_atomic(src: &Path, target_path: &Path) -> MqResult<u64> {
         drop(writer);
 
         if target_path.exists() || target_path.symlink_metadata().is_ok() {
-            let _ = fs::remove_file(target_path);
+            let _ = remove_file_with_retry(target_path);
         }
-        fs::rename(&tmp_path, target_path)?;
+        rename_with_retry(&tmp_path, target_path)?;
         Ok(total_written)
     })();
 
     if let Err(err) = write_res {
-        let _ = fs::remove_file(&tmp_path);
+        let _ = remove_file_with_retry(&tmp_path);
         return Err(MqError::Io(err));
     }
 
