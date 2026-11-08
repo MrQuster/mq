@@ -24,7 +24,7 @@ use mq_auth::{
 };
 use mq_core::{
     AppConfig, CoreCpuLoad, CpuSnapshot, Event, EventBus, GameLogEntry, GameLogLevel, GuiBackend,
-    InstanceId, ModLoaderKind, MqPaths, Sha1Digest, Sha512Digest, ThemePreset,
+    InstallJournal, InstanceId, ModLoaderKind, MqPaths, Sha1Digest, Sha512Digest, ThemePreset,
 };
 use mq_install::{
     build_game_install_dag_plan, collect_instance_verify_targets, install_game,
@@ -94,6 +94,10 @@ enum Commands {
 
     /// Install Minecraft version and loader into an instance.
     Install(InstallArgs),
+
+    /// Worker process for isolated instance installation with JSON progress output.
+    #[command(name = "install-worker")]
+    InstallWorker(InstallWorkerArgs),
 
     /// Verify SHA-1 / SHA-512 hashes of all files in an instance using all CPU cores.
     Verify(VerifyArgs),
@@ -184,6 +188,13 @@ struct InstallArgs {
     /// Custom instance name (defaults to "<version> <loader>").
     #[arg(long)]
     name: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct InstallWorkerArgs {
+    /// Instance ID to install.
+    #[arg(long, short = 'i')]
+    instance: String,
 }
 
 #[derive(Args, Debug)]
@@ -486,8 +497,40 @@ struct BenchArgs {
     quick: bool,
 }
 
+#[cfg(target_os = "linux")]
+fn bump_nofile_limit() {
+    unsafe {
+        let mut rlim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) == 0 {
+            let target = (rlim.rlim_max as u64).min(65536) as libc::rlim_t;
+            if rlim.rlim_cur < target {
+                rlim.rlim_cur = target;
+                let res = libc::setrlimit(libc::RLIMIT_NOFILE, &rlim);
+                if res != 0 {
+                    tracing::debug!(
+                        "Failed to raise RLIMIT_NOFILE: {}",
+                        std::io::Error::last_os_error()
+                    );
+                } else {
+                    tracing::debug!(
+                        soft = rlim.rlim_cur as u64,
+                        hard = rlim.rlim_max as u64,
+                        "Raised RLIMIT_NOFILE soft limit"
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    bump_nofile_limit();
+
     #[cfg(target_os = "windows")]
     {
         // If invoked from a console window with arguments, attach to parent console so CLI output is visible
@@ -520,6 +563,7 @@ async fn main() -> Result<()> {
         None => run_desktop_gui(cli.backend, cli.threads, paths),
         Some(Commands::Launch(args)) => cmd_launch(args, paths).await,
         Some(Commands::Install(args)) => cmd_install(args, paths, cli.threads).await,
+        Some(Commands::InstallWorker(args)) => cmd_install_worker(args, paths, cli.threads).await,
         Some(Commands::Verify(args)) => cmd_verify(args, paths, cli.threads).await,
         Some(Commands::Plan(args)) => cmd_plan(args, paths).await,
         Some(Commands::Auth(args)) => cmd_auth(args, paths).await,
@@ -844,6 +888,125 @@ async fn cmd_install(args: InstallArgs, paths: MqPaths, threads: Option<usize>) 
     );
     println!("--------------------------------------------------------------------------------");
     Ok(())
+}
+
+async fn cmd_install_worker(
+    args: InstallWorkerArgs,
+    paths: MqPaths,
+    threads: Option<usize>,
+) -> Result<()> {
+    use std::io::Write;
+
+    let mgr = InstanceManager::new(paths.clone());
+    let inst = mgr
+        .load_instance(&args.instance)
+        .with_context(|| format!("Failed to find instance with ID '{}'", args.instance))?;
+
+    let mut journal = InstallJournal::start(
+        &paths,
+        inst.id.as_str(),
+        &inst.mc_version,
+        &inst.loader.to_string(),
+        "Инициализация",
+    )?;
+
+    let inst_dir = paths.instance_dir(inst.id.as_str());
+    let num_t = threads.unwrap_or_else(default_cpu_threads);
+    let pool = Arc::new(ComputePool::new(num_t));
+    let cancel = Arc::new(CancelEpoch::new());
+    let bus = EventBus::new();
+    let net = Arc::new(NetEngine::with_components(
+        NetConfig::default(),
+        Arc::new(BufferPool::new()),
+        cancel.clone(),
+        Some(bus.clone()),
+    )?);
+    let cas = CasStore::new(paths.clone());
+
+    let req = InstallRequest {
+        mc_version: inst.mc_version.clone(),
+        loader: inst.loader,
+        loader_version: inst.loader_version.clone(),
+        instance_dir: inst_dir,
+        mock_base_url: None,
+    };
+
+    let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let bus_rx = bus.receiver().clone();
+    let journal_update_handle = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                biased;
+                _ = &mut stop_rx => {
+                    while let Ok(event) = bus_rx.try_recv() {
+                        if let Ok(json) = serde_json::to_string(&event) {
+                            println!("{json}");
+                            let _ = std::io::stdout().flush();
+                        }
+                    }
+                    break;
+                }
+                res = bus_rx.recv_async() => {
+                    match res {
+                        Ok(event) => {
+                            if let Ok(json) = serde_json::to_string(&event) {
+                                println!("{json}");
+                                let _ = std::io::stdout().flush();
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+    });
+
+    let started = Instant::now();
+    let install_res = install_game(
+        &req,
+        &paths,
+        &net,
+        &cas,
+        &pool,
+        &cancel.snapshot(),
+        Some(&bus),
+    )
+    .await;
+
+    let _ = stop_tx.send(());
+    let _ = journal_update_handle.await;
+
+    match install_res {
+        Ok(summary) => {
+            journal.mark_closed(&paths)?;
+            let success_json = serde_json::json!({
+                "type": "completed",
+                "instance_id": inst.id.as_str(),
+                "elapsed_secs": started.elapsed().as_secs_f64(),
+                "libraries_installed": summary.libraries_installed,
+                "assets_installed": summary.assets_installed,
+                "natives_extracted": summary.natives_extracted,
+                "hardlinks_created": summary.hardlinks_created,
+                "bytes_downloaded": summary.bytes_downloaded,
+                "elapsed_ms": summary.elapsed_ms,
+            });
+            println!("{success_json}");
+            let _ = std::io::stdout().flush();
+            Ok(())
+        }
+        Err(err) => {
+            let err_msg = err.to_string();
+            let _ = journal.record_error(&paths, &err_msg);
+            let error_json = serde_json::json!({
+                "type": "error",
+                "instance_id": inst.id.as_str(),
+                "message": err_msg,
+            });
+            println!("{error_json}");
+            let _ = std::io::stdout().flush();
+            Err(err.into())
+        }
+    }
 }
 
 async fn cmd_verify(args: VerifyArgs, paths: MqPaths, threads: Option<usize>) -> Result<()> {
