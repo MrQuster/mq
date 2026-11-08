@@ -58,10 +58,10 @@ pub struct DoctorArgs {
 }
 
 // -----------------------------------------------------------------------------
-// 1. Installation Stages & Error Contracts (CONTRACTS.md)
+// 1. Installation Stages & Error Contracts
 // -----------------------------------------------------------------------------
 
-/// Installation lifecycle stages as defined in CONTRACTS.md.
+/// Installation lifecycle stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallStage {
@@ -111,7 +111,7 @@ impl std::fmt::Display for InstallStage {
     }
 }
 
-/// Structured installation error matching CONTRACTS.md.
+/// Structured installation error contract.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallError {
     pub stage: InstallStage,
@@ -1882,7 +1882,7 @@ mod tests {
         );
         assert_eq!(InstallStage::Finalize.localized_name(), "Финализация");
 
-        // Serde roundtrip matching snake_case contract in CONTRACTS.md
+        // Serde roundtrip matching snake_case serialization
         let json = serde_json::to_string(&InstallStage::JavaRuntime).unwrap();
         assert_eq!(json, "\"java_runtime\"");
         let parsed: InstallStage = serde_json::from_str(&json).unwrap();
