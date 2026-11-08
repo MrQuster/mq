@@ -184,7 +184,7 @@ cargo test --workspace
 
 ## Автор
 
-* **MrQuster** — [https://github.com/MrQuster](https://github.com/MrQuster)
+* **MrQuster** — [MrQuster](https://github.com/MrQuster)
 
 ---
 

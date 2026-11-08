@@ -184,7 +184,7 @@ Complete third-party crate and library licenses are listed in [THIRD_PARTY_LICEN
 
 ## Author
 
-* **MrQuster** — [https://github.com/MrQuster](https://github.com/MrQuster)
+* **MrQuster** — [MrQuster](https://github.com/MrQuster)
 
 ---
 
