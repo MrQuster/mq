@@ -2,8 +2,10 @@
 //! XDG directory layout, TOML configuration, and the bounded lock-free `EventBus`.
 
 pub mod config;
+pub mod crash;
 pub mod error;
 pub mod events;
+pub mod fs_util;
 pub mod ids;
 pub mod paths;
 pub mod platform;
@@ -13,10 +15,19 @@ pub use config::{
     AppConfig, GuiBackend, LaunchAction, ThemeConfig, ThemePreset, UiDensity, ENV_CF_API_KEY,
     ENV_MS_CLIENT_ID,
 };
+pub use crash::{
+    extract_panic_message, install_panic_hook, sanitize_crash_text, write_crash_report_for_panic,
+    InstallJournal,
+};
 pub use error::{MqError, MqResult};
 pub use events::{
     CoreCpuLoad, CoreLoad, CpuSnapshot, Event, EventBus, GameLogEntry, GameLogLevel, PhaseMetrics,
     PhaseProgress, ProgressSnapshot, DEFAULT_EVENT_BUS_CAPACITY,
+};
+pub use fs_util::{
+    async_remove_file_with_retry, async_rename_with_retry, is_cross_device_error,
+    is_transient_windows_lock_error, remove_dir_all_with_retry, remove_file_with_retry,
+    rename_with_retry, strip_windows_verbatim_prefix, validate_windows_safe_filename,
 };
 pub use ids::{
     AccountId, InstanceId, ModLoaderKind, Sha1Digest, Sha1Hash, Sha512Digest, Sha512Hash,
