@@ -60,7 +60,7 @@ fn rel_pos(rect: Rect, nx: f32, ny: f32) -> Pos2 {
 /// Paints a geometric [`VectorIcon`] inside `rect` using `color` without any emoji glyphs.
 pub fn paint_vector_icon(painter: &Painter, rect: Rect, icon: VectorIcon, color: Color32) {
     let r = rect.shrink((rect.width().min(rect.height()) * 0.10).max(1.0));
-    let stroke_w = (r.width().min(r.height()) * 0.11).clamp(1.3, 2.2);
+    let stroke_w = crate::state::safe_clamp_f32(r.width().min(r.height()) * 0.11, 1.3, 2.2);
     let stroke = Stroke::new(stroke_w, color);
 
     match icon {
@@ -831,7 +831,7 @@ pub fn render_download_progress_card(
         ui.add_space(8.0);
 
         // Smooth animated progress bar
-        let clamped = progress_frac.clamp(0.0, 1.0);
+        let clamped = crate::state::safe_progress_clamp(progress_frac);
         let smooth_prog =
             ui.ctx()
                 .animate_value_with_time(ui.id().with("inst_dl_bar"), clamped, 0.15);
@@ -1013,7 +1013,7 @@ pub fn render_detailed_install_progress_card(
         ui.add_space(10.0);
 
         // 3. Smooth animated progress bar
-        let clamped = progress_frac.clamp(0.0, 1.0);
+        let clamped = crate::state::safe_progress_clamp(progress_frac);
         let smooth_prog =
             ui.ctx()
                 .animate_value_with_time(ui.id().with("inst_detailed_dl_bar"), clamped, 0.15);

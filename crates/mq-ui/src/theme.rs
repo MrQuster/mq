@@ -343,7 +343,7 @@ pub fn apply_theme(ctx: &Context, cfg: &ThemeConfig) {
     let style = build_style_from_config(cfg);
     ctx.set_visuals(style.visuals.clone());
     ctx.set_style(style);
-    ctx.set_zoom_factor(cfg.ui_scale.clamp(0.8, 1.5));
+    ctx.set_zoom_factor(crate::state::safe_clamp_f32(cfg.ui_scale, 0.8, 1.5));
 }
 
 /// Solid opaque card frame (8px radius, 1px border, surface background).
