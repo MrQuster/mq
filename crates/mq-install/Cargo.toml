@@ -12,6 +12,7 @@ mq-core.workspace = true
 mq-sched.workspace = true
 mq-net.workspace = true
 mq-meta.workspace = true
+mq-launch.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 rayon.workspace = true

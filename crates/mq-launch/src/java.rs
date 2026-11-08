@@ -347,13 +347,25 @@ pub fn parse_java_version_str(raw: &str) -> Option<(u32, String)> {
     Some((major, cleaned.to_owned()))
 }
 
-/// Returns the required Java major version for a given Minecraft version:
-/// - `21` for Minecraft `>= 1.20.5` (including `1.21+`)
+/// Returns the required Java major version for a given Minecraft version.
+///
+/// Priority 1 rule: If `spec_hint` is provided (from `version.json`'s `javaVersion.majorVersion`),
+/// it is returned strictly without modification.
+/// If `spec_hint` is `None`, falls back to inferring the Java version based on the Minecraft version:
+/// - `25` for Minecraft `>= 26.x`
+/// - `21` for Minecraft `>= 1.20.5`
 /// - `17` for Minecraft `1.18..=1.20.4`
 /// - `8` for Minecraft `<= 1.17.x`
-///
-/// Respects `spec_hint` (from `version.json`'s `javaVersion.majorVersion`) if it is higher.
 pub fn required_java_major_for_mc(mc_version: &str, spec_hint: Option<u32>) -> u32 {
+    if let Some(hint) = spec_hint {
+        return hint;
+    }
+    infer_java_major_from_mc_version(mc_version)
+}
+
+/// Infers the expected Java major version from a Minecraft version string when `version.json` lacks
+/// explicit `javaVersion` metadata.
+pub fn infer_java_major_from_mc_version(mc_version: &str) -> u32 {
     let core = mc_version
         .trim()
         .split(['-', '+', ' '])
@@ -364,7 +376,8 @@ pub fn required_java_major_for_mc(mc_version: &str, spec_hint: Option<u32>) -> u
         .map_while(|seg| seg.parse::<u32>().ok())
         .collect();
 
-    let inferred = match parts.as_slice() {
+    match parts.as_slice() {
+        [major, ..] if *major >= 26 => 25,
         [1, minor, patch, ..] => {
             if *minor > 20 || (*minor == 20 && *patch >= 5) {
                 21
@@ -383,13 +396,7 @@ pub fn required_java_major_for_mc(mc_version: &str, spec_hint: Option<u32>) -> u
                 8
             }
         }
-        [major, ..] if *major > 1 => 21,
-        _ => spec_hint.unwrap_or(21),
-    };
-
-    match spec_hint {
-        Some(hint) => inferred.max(hint),
-        None => inferred,
+        _ => 21,
     }
 }
 
@@ -529,8 +536,229 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
+/// Verifies that `<java_bin> -version` runs successfully and parses its output into a [`JavaRuntime`].
+pub fn verify_java_executable(java_bin: &Path) -> MqResult<JavaRuntime> {
+    if !java_bin.is_file() {
+        return Err(MqError::JavaNotFound {
+            required_major: 0,
+            hint: format!("Java binary '{}' does not exist", java_bin.display()),
+        });
+    }
+
+    let canon_bin = fs::canonicalize(java_bin).unwrap_or_else(|_| java_bin.to_path_buf());
+    let output = Command::new(&canon_bin)
+        .arg("-version")
+        .output()
+        .map_err(|e| {
+            MqError::Internal(format!(
+                "failed to execute '{} -version': {e}",
+                canon_bin.display()
+            ))
+        })?;
+
+    if !output.status.success() {
+        return Err(MqError::Internal(format!(
+            "executing '{} -version' exited with code {:?}",
+            canon_bin.display(),
+            output.status.code()
+        )));
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let combined = if stderr.trim().is_empty() {
+        stdout.into_owned()
+    } else if stdout.trim().is_empty() {
+        stderr.into_owned()
+    } else {
+        format!("{stderr}\n{stdout}")
+    };
+
+    if let Some((major_version, full_version, vendor)) = parse_java_version_output(&combined) {
+        let home_dir = infer_jvm_home(&canon_bin);
+        Ok(JavaRuntime {
+            path: canon_bin,
+            home_dir,
+            major_version,
+            full_version,
+            vendor,
+        })
+    } else {
+        Err(MqError::Internal(format!(
+            "could not parse java -version output from '{}':\n{combined}",
+            canon_bin.display()
+        )))
+    }
+}
+
+/// Origin of a resolved or installed Java runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JavaSource {
+    /// System-installed runtime from `/usr/lib/jvm`, `$JAVA_HOME`, or `$PATH`.
+    System,
+    /// Official Mojang JRE package (`mojang-<component>`).
+    Mojang,
+    /// Eclipse Adoptium Temurin JRE.
+    Adoptium,
+    /// Azul Zulu JRE.
+    Zulu,
+    /// Custom path explicitly provided by user.
+    Custom,
+}
+
+/// Java runtime selected and verified through the cascading priority engine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectedJava {
+    pub runtime: JavaRuntime,
+    pub source: JavaSource,
+    pub component: Option<String>,
+}
+
+/// Cascading Java runtime resolver with automatic download:
+/// 1. Priority 1: Suitable system Java (`/usr/lib/jvm`, `$JAVA_HOME`, `$PATH`)
+///    matching or compatible with `required_major`.
+/// 2. Priority 2: Official Mojang runtime (`mojang-<component>`) for the specified
+///    `component_hint` or `required_major`.
+/// 3. Priority 3: Adoptium Temurin or Azul Zulu JRE (8, 17, 21, 25).
+pub async fn ensure_java_runtime(
+    client: &reqwest::Client,
+    java_dir: &Path,
+    required_major: u32,
+    component_hint: Option<&str>,
+    override_path: Option<&Path>,
+) -> MqResult<SelectedJava> {
+    // 0. Explicit override path
+    if let Some(custom) = override_path.filter(|p| !p.as_os_str().is_empty()) {
+        if let Ok(verified) = verify_java_executable(custom) {
+            return Ok(SelectedJava {
+                runtime: verified,
+                source: JavaSource::Custom,
+                component: None,
+            });
+        }
+        if let Some(probed) = probe_java_binary(custom) {
+            return Ok(SelectedJava {
+                runtime: probed,
+                source: JavaSource::Custom,
+                component: None,
+            });
+        }
+        return Err(MqError::JavaNotFound {
+            required_major,
+            hint: format!(
+                "override java_path '{}' does not exist or failed verification",
+                custom.display()
+            ),
+        });
+    }
+
+    // 1. Priority (1): System Java matching or compatible with required_major
+    let system_runtimes = discover_java_runtimes();
+
+    // Check exact match first
+    if let Some(exact) = system_runtimes
+        .iter()
+        .find(|r| r.major_version == required_major)
+    {
+        if let Ok(verified) = verify_java_executable(&exact.path) {
+            return Ok(SelectedJava {
+                runtime: verified,
+                source: JavaSource::System,
+                component: None,
+            });
+        }
+    }
+
+    // Check compatible higher system Java (e.g. required 17, system has 21)
+    if required_major >= 17 {
+        if let Some(compatible) = system_runtimes
+            .iter()
+            .filter(|r| r.major_version > required_major)
+            .min_by_key(|r| r.major_version)
+        {
+            if let Ok(verified) = verify_java_executable(&compatible.path) {
+                tracing::info!(
+                    required_major,
+                    system_major = verified.major_version,
+                    path = %verified.path.display(),
+                    "using compatible newer system Java"
+                );
+                return Ok(SelectedJava {
+                    runtime: verified,
+                    source: JavaSource::System,
+                    component: None,
+                });
+            }
+        }
+    }
+
+    // 2. Priority (2): Official Mojang Java Runtime
+    let comp = component_hint
+        .unwrap_or_else(|| crate::mojang_java::component_for_major_version(required_major));
+
+    match crate::mojang_java::ensure_mojang_java_runtime(client, java_dir, comp, None, None).await {
+        Ok(mojang_rt) => {
+            return Ok(SelectedJava {
+                runtime: mojang_rt,
+                source: JavaSource::Mojang,
+                component: Some(comp.to_string()),
+            });
+        }
+        Err(e) => {
+            tracing::warn!(
+                component = comp,
+                error = %e,
+                "Mojang java-runtime download failed; attempting Adoptium fallback"
+            );
+        }
+    }
+
+    // 3. Priority (3): Adoptium Temurin or Zulu JRE (8, 17, 21, 25)
+    match download_adoptium_java(client, required_major, java_dir).await {
+        Ok(adoptium_rt) => {
+            return Ok(SelectedJava {
+                runtime: adoptium_rt,
+                source: JavaSource::Adoptium,
+                component: None,
+            });
+        }
+        Err(e) => {
+            tracing::warn!(
+                feature_version = required_major,
+                error = %e,
+                "Adoptium JRE download failed; attempting Azul Zulu fallback"
+            );
+        }
+    }
+
+    match download_zulu_java(client, required_major, java_dir).await {
+        Ok(zulu_rt) => {
+            return Ok(SelectedJava {
+                runtime: zulu_rt,
+                source: JavaSource::Zulu,
+                component: None,
+            });
+        }
+        Err(e) => {
+            tracing::error!(
+                feature_version = required_major,
+                error = %e,
+                "Azul Zulu JRE download failed"
+            );
+        }
+    }
+
+    Err(MqError::JavaNotFound {
+        required_major,
+        hint: format!(
+            "failed to find or download Java {required_major} runtime from all sources (System, Mojang, Adoptium, Zulu)"
+        ),
+    })
+}
+
 /// Downloads and installs an Eclipse Temurin JRE binary from the Adoptium API v3.
-/// Supported feature versions: 8, 17, 21.
+/// Supported feature versions: 8, 11, 16, 17, 21, 25.
 /// Target directory: `<target_parent_dir>/temurin-<version>-<arch>`
 pub async fn download_adoptium_java(
     client: &reqwest::Client,
@@ -539,7 +767,7 @@ pub async fn download_adoptium_java(
 ) -> MqResult<JavaRuntime> {
     if !matches!(feature_version, 8 | 11 | 16 | 17 | 21 | 25) {
         return Err(MqError::Internal(format!(
-            "unsupported Java feature version: {feature_version} (supported: 8, 17, 21)"
+            "unsupported Java feature version: {feature_version} (supported: 8, 11, 16, 17, 21, 25)"
         )));
     }
 
@@ -569,6 +797,9 @@ pub async fn download_adoptium_java(
 
     // If already installed and probeable, return existing
     if bin_java.is_file() {
+        if let Ok(rt) = verify_java_executable(&bin_java) {
+            return Ok(rt);
+        }
         if let Some(rt) = probe_java_binary(&bin_java) {
             return Ok(rt);
         }
@@ -679,24 +910,179 @@ pub async fn download_adoptium_java(
     let _ = fs::remove_dir_all(&temp_extract);
 
     // Ensure permissions
-    let final_bin = dest_dir.join("bin").join("java");
-    if final_bin.exists() {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = fs::metadata(&final_bin) {
-                let mut perms = meta.permissions();
-                perms.set_mode(0o755);
-                let _ = fs::set_permissions(&final_bin, perms);
-            }
+    let final_bin = dest_dir.join("bin").join(bin_name);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if final_bin.exists() {
+            let _ = fs::set_permissions(&final_bin, fs::Permissions::from_mode(0o755));
         }
     }
 
-    // Probe the runtime
-    probe_java_binary(&final_bin).ok_or_else(|| {
-        MqError::Internal(format!(
-            "installed Adoptium Java {feature_version} could not be probed at {}",
-            final_bin.display()
-        ))
+    // Verify or probe the runtime
+    verify_java_executable(&final_bin).or_else(|_| {
+        probe_java_binary(&final_bin).ok_or_else(|| {
+            MqError::Internal(format!(
+                "installed Adoptium Java {feature_version} could not be probed at {}",
+                final_bin.display()
+            ))
+        })
+    })
+}
+
+/// Downloads and installs an Azul Zulu JRE binary.
+/// Supported feature versions: 8, 11, 17, 21, 25.
+/// Target directory: `<target_parent_dir>/zulu-<version>-<arch>`
+pub async fn download_zulu_java(
+    client: &reqwest::Client,
+    feature_version: u32,
+    target_parent_dir: &Path,
+) -> MqResult<JavaRuntime> {
+    if !matches!(feature_version, 8 | 11 | 17 | 21 | 25) {
+        return Err(MqError::Internal(format!(
+            "unsupported Java feature version for Zulu: {feature_version}"
+        )));
+    }
+
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "aarch64",
+        other => {
+            return Err(MqError::Internal(format!(
+                "unsupported CPU architecture for Zulu JRE: {other}"
+            )))
+        }
+    };
+
+    let (target_os, ext, bin_name) = if cfg!(target_os = "windows") {
+        ("windows", "zip", "java.exe")
+    } else {
+        ("linux", "tar.gz", "java")
+    };
+
+    let dest_dir = target_parent_dir.join(format!("zulu-{feature_version}-{arch}"));
+    let bin_java = dest_dir.join("bin").join(bin_name);
+
+    if bin_java.is_file() {
+        if let Ok(rt) = verify_java_executable(&bin_java) {
+            return Ok(rt);
+        }
+        if let Some(rt) = probe_java_binary(&bin_java) {
+            return Ok(rt);
+        }
+    }
+
+    // Query Azul Zulu packages metadata API
+    let api_url = format!(
+        "https://api.azul.com/metadata/v1/zulu/packages/?java_version={feature_version}&os={target_os}&arch={arch}&archive_type={ext}&java_package_type=jre"
+    );
+
+    let resp = client
+        .get(&api_url)
+        .send()
+        .await
+        .map_err(|e| MqError::Network(format!("failed to query Zulu API: {e}")))?;
+
+    if !resp.status().is_success() {
+        return Err(MqError::Network(format!(
+            "Zulu API returned HTTP status {}",
+            resp.status()
+        )));
+    }
+
+    let val = resp
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| MqError::Network(format!("failed to parse Zulu JSON response: {e}")))?;
+
+    let download_url = val
+        .as_array()
+        .and_then(|arr| arr.first())
+        .and_then(|item| item.get("download_url"))
+        .and_then(|u| u.as_str())
+        .ok_or_else(|| {
+            MqError::Network(format!(
+                "no download URL found in Zulu API response for Java {feature_version}"
+            ))
+        })?;
+
+    let dl_resp = client
+        .get(download_url)
+        .send()
+        .await
+        .map_err(|e| MqError::Network(format!("failed to download Zulu archive: {e}")))?;
+
+    if !dl_resp.status().is_success() {
+        return Err(MqError::Network(format!(
+            "Zulu download returned HTTP status {}",
+            dl_resp.status()
+        )));
+    }
+
+    let archive_bytes = dl_resp
+        .bytes()
+        .await
+        .map_err(|e| MqError::Network(format!("failed to read Zulu archive bytes: {e}")))?;
+
+    fs::create_dir_all(target_parent_dir)?;
+    let temp_extract = target_parent_dir.join(format!(
+        ".tmp_extract_zulu_{feature_version}_{}",
+        std::process::id()
+    ));
+    if temp_extract.exists() {
+        let _ = fs::remove_dir_all(&temp_extract);
+    }
+    fs::create_dir_all(&temp_extract)?;
+
+    if target_os == "windows" {
+        let cursor = std::io::Cursor::new(&archive_bytes[..]);
+        let mut zip_archive = zip::ZipArchive::new(cursor).map_err(|e| {
+            let _ = fs::remove_dir_all(&temp_extract);
+            MqError::Internal(format!("failed to parse Zulu zip: {e}"))
+        })?;
+        zip_archive.extract(&temp_extract).map_err(|e| {
+            let _ = fs::remove_dir_all(&temp_extract);
+            MqError::Internal(format!("failed to unpack Zulu zip archive: {e}"))
+        })?;
+    } else {
+        let gz_decoder = flate2::read::GzDecoder::new(&archive_bytes[..]);
+        let mut archive = tar::Archive::new(gz_decoder);
+        archive.unpack(&temp_extract).map_err(|e| {
+            let _ = fs::remove_dir_all(&temp_extract);
+            MqError::Internal(format!("failed to unpack Zulu archive: {e}"))
+        })?;
+    }
+
+    let mut root_extracted = temp_extract.clone();
+    if let Ok(entries) = fs::read_dir(&temp_extract) {
+        let valid_entries: Vec<PathBuf> =
+            entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        if valid_entries.len() == 1 && valid_entries[0].is_dir() {
+            root_extracted = valid_entries[0].clone();
+        }
+    }
+
+    if dest_dir.exists() {
+        let _ = fs::remove_dir_all(&dest_dir);
+    }
+    fs::rename(&root_extracted, &dest_dir)?;
+    let _ = fs::remove_dir_all(&temp_extract);
+
+    let final_bin = dest_dir.join("bin").join(bin_name);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if final_bin.exists() {
+            let _ = fs::set_permissions(&final_bin, fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    verify_java_executable(&final_bin).or_else(|_| {
+        probe_java_binary(&final_bin).ok_or_else(|| {
+            MqError::Internal(format!(
+                "installed Zulu Java {feature_version} could not be probed at {}",
+                final_bin.display()
+            ))
+        })
     })
 }
