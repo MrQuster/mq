@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use mq_core::{ModLoaderKind, MqError, MqResult, Sha1Digest, Sha512Digest};
@@ -19,7 +19,14 @@ use sha1::{Digest as _, Sha1};
 use sha2::Sha512;
 use zip::ZipArchive;
 
-use crate::models::{InstalledModEntry, ModConflict, ModScanReport};
+use crate::curseforge::{compute_curseforge_fingerprint_file, CurseForgeClient};
+use crate::lockfile::{ModLockEntry, ModLockFile};
+use crate::models::{
+    Hashes, InstalledModEntry, LockSource, ModConflict, ModScanReport, ProjectKind,
+};
+use crate::modrinth::ModrinthClient;
+use crate::resolver::ContentProvider;
+use crate::zip_safe::stream_hash_file_sha1_sha512;
 
 const SCAN_STREAM_CHUNK_SIZE: usize = 64 * 1024;
 const MAX_DESCRIPTOR_SIZE: usize = 2 * 1024 * 1024; // 2 MiB descriptor cap
@@ -418,11 +425,215 @@ fn scan_single_jar(path: &Path) -> MqResult<InstalledModEntry> {
     })
 }
 
+/// Computes SHA-1, SHA-512, and CurseForge MurmurHash2 (seed 1, whitespace-stripped) fingerprint for a file.
+pub fn hash_and_fingerprint_file(path: &Path) -> MqResult<Hashes> {
+    let (sha1, sha512, _) = stream_hash_file_sha1_sha512(path)?;
+    let fp = compute_curseforge_fingerprint_file(path)?;
+    Ok(Hashes {
+        sha1: Some(sha1),
+        sha512: Some(sha512),
+        md5: None,
+        murmur2_fingerprint: Some(fp),
+    })
+}
+
+/// Scans `dir` for `.jar`, `.jar.disabled`, `.zip`, `.zip.disabled` files, registering any
+/// untracked files in `lockfile` with `source = LockSource::Manual` and returning all
+/// `LockSource::Manual` entries with their computed [`Hashes`].
+pub fn sync_directory_manual_entries(
+    dir: &Path,
+    kind: ProjectKind,
+    lockfile: &mut ModLockFile,
+) -> MqResult<Vec<(String, PathBuf, Hashes)>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut manual_candidates = Vec::new();
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if fname.ends_with(".jar")
+            || fname.ends_with(".jar.disabled")
+            || fname.ends_with(".zip")
+            || fname.ends_with(".zip.disabled")
+        {
+            paths.push((fname, p));
+        }
+    }
+    paths.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (fname, path) in paths {
+        let hashes = hash_and_fingerprint_file(&path)?;
+        let sha1_hex = hashes.sha1.map(|h| h.to_hex());
+        let sha512_hex = hashes.sha512.map(|h| h.to_hex()).unwrap_or_default();
+
+        let existing_key = lockfile
+            .find_by_filename(&fname)
+            .map(|(k, _)| k.clone())
+            .or_else(|| {
+                lockfile
+                    .find_by_hash(sha1_hex.as_deref(), Some(&sha512_hex))
+                    .map(|(k, _)| k.clone())
+            });
+
+        let key = if let Some(k) = existing_key {
+            if let Some(entry) = lockfile.entries.get_mut(&k) {
+                if entry.sha1.is_none() {
+                    entry.sha1 = sha1_hex.clone();
+                }
+                if entry.sha512.is_empty() {
+                    entry.sha512.clone_from(&sha512_hex);
+                }
+            }
+            k
+        } else {
+            let stem = fname
+                .trim_end_matches(".disabled")
+                .trim_end_matches(".jar")
+                .trim_end_matches(".zip")
+                .to_owned();
+            let key = if lockfile.entries.contains_key(&stem) {
+                fname.clone()
+            } else {
+                stem.clone()
+            };
+            lockfile.record_install(
+                key.clone(),
+                ModLockEntry {
+                    source: LockSource::Manual,
+                    project_id: stem,
+                    version_id: String::new(),
+                    file_id: None,
+                    filename: fname,
+                    sha1: sha1_hex,
+                    sha512: sha512_hex,
+                    installed_as_dependency: false,
+                    required_by: Vec::new(),
+                    kind,
+                },
+            );
+            key
+        };
+
+        if lockfile
+            .entries
+            .get(&key)
+            .is_some_and(|e| e.source == LockSource::Manual)
+        {
+            manual_candidates.push((key, path, hashes));
+        }
+    }
+
+    Ok(manual_candidates)
+}
+
+/// Identifies manually added files in `dir` against a single [`ContentProvider`]
+/// (by SHA-512/SHA-1 on Modrinth or Murmur2 fingerprint on CurseForge) and upgrades
+/// matching `.mq-lock.json` entries from `LockSource::Manual` to `LockSource::Modrinth` / `LockSource::CurseForge`.
+pub async fn identify_manual_files_with_provider<P>(
+    dir: &Path,
+    kind: ProjectKind,
+    lockfile: &mut ModLockFile,
+    provider: &P,
+) -> MqResult<usize>
+where
+    P: ContentProvider + ?Sized,
+{
+    let candidates = sync_directory_manual_entries(dir, kind, lockfile)?;
+    if candidates.is_empty() {
+        return Ok(0);
+    }
+
+    let mut hash_queries = Vec::new();
+    let mut fp_queries = Vec::new();
+
+    for (_, _, hashes) in &candidates {
+        if let Some(s512) = hashes.sha512 {
+            hash_queries.push(s512.to_hex());
+        } else if let Some(s1) = hashes.sha1 {
+            hash_queries.push(s1.to_hex());
+        }
+        if let Some(fp) = hashes.murmur2_fingerprint {
+            fp_queries.push(fp);
+        }
+    }
+
+    let resolved_map = provider
+        .identify_by_hashes(&hash_queries, &fp_queries)
+        .await?;
+    let target_source = LockSource::from(provider.source());
+    let mut upgraded = 0usize;
+
+    for (key, _, hashes) in candidates {
+        let sha512_hex = hashes.sha512.map(|h| h.to_hex());
+        let sha1_hex = hashes.sha1.map(|h| h.to_hex());
+        let fp_str = hashes.murmur2_fingerprint.map(|fp| fp.to_string());
+
+        let matched_ver = sha512_hex
+            .as_deref()
+            .and_then(|h| resolved_map.get(h))
+            .or_else(|| sha1_hex.as_deref().and_then(|h| resolved_map.get(h)))
+            .or_else(|| fp_str.as_deref().and_then(|f| resolved_map.get(f)));
+
+        if let Some(ver) = matched_ver {
+            if let Some(entry) = lockfile.entries.get_mut(&key) {
+                entry.source = target_source;
+                entry.project_id.clone_from(&ver.project_id);
+                entry.version_id.clone_from(&ver.id);
+                entry.file_id = Some(ver.id.clone());
+                entry.kind = kind;
+                upgraded += 1;
+            }
+        }
+    }
+
+    if dir.exists() {
+        let _ = lockfile.save(dir);
+    }
+
+    Ok(upgraded)
+}
+
+/// Identifies manually added files in `dir` across Modrinth (SHA-512/SHA-1) and CurseForge (Murmur2 fingerprint),
+/// upgrading `LockSource::Manual` entries in `lockfile` to `LockSource::Modrinth` or `LockSource::CurseForge`.
+pub async fn identify_manual_files(
+    dir: &Path,
+    kind: ProjectKind,
+    lockfile: &mut ModLockFile,
+    modrinth: Option<&ModrinthClient>,
+    curseforge: Option<&CurseForgeClient>,
+) -> MqResult<usize> {
+    let _ = sync_directory_manual_entries(dir, kind, lockfile)?;
+    let mut total = 0usize;
+
+    if let Some(mr) = modrinth {
+        total += identify_manual_files_with_provider(dir, kind, lockfile, mr).await?;
+    }
+    if let Some(cf) = curseforge {
+        total += identify_manual_files_with_provider(dir, kind, lockfile, cf).await?;
+    }
+
+    if dir.exists() {
+        let _ = lockfile.save(dir);
+    }
+
+    Ok(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::io::Write;
     use tempfile::tempdir;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
     use zip::write::SimpleFileOptions;
 
     #[tokio::test]
@@ -490,5 +701,129 @@ mod tests {
             has_missing_dep,
             "Should detect missing fabric-api dependency"
         );
+    }
+
+    #[tokio::test]
+    async fn manual_files_identified_by_sha512_or_murmur2_and_bound_to_lockfile() {
+        let dir = tempdir().unwrap();
+        let mr_jar = dir.path().join("manual-sodium.jar");
+        let cf_jar = dir.path().join("manual-jei.jar");
+        fs::write(&mr_jar, b"modrinth-sodium-payload").unwrap();
+        fs::write(&cf_jar, b"curseforge-jei-payload").unwrap();
+
+        let mr_hashes = hash_and_fingerprint_file(&mr_jar).unwrap();
+        let cf_hashes = hash_and_fingerprint_file(&cf_jar).unwrap();
+        let mr_sha512 = mr_hashes.sha512.unwrap().to_hex();
+        let cf_fp = cf_hashes.murmur2_fingerprint.unwrap();
+
+        let mut lock = ModLockFile::default();
+        let candidates = sync_directory_manual_entries(dir.path(), ProjectKind::Mod, &mut lock)
+            .expect("sync manual entries");
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(
+            lock.entries.get("manual-sodium").unwrap().source,
+            LockSource::Manual
+        );
+        assert_eq!(
+            lock.entries.get("manual-jei").unwrap().source,
+            LockSource::Manual
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mr_sha512_clone = mr_sha512.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let sha512_key = mr_sha512_clone.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 8192];
+                    let n = stream.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 {
+                        return;
+                    }
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let first_line = req.lines().next().unwrap_or("");
+                    let body = if first_line.contains("/modrinth/v2/version_files") {
+                        json!({
+                            sha512_key.clone(): {
+                                "id": "ver-mr-sodium",
+                                "project_id": "AANobbMI",
+                                "name": "Sodium 0.6.0",
+                                "version_number": "0.6.0",
+                                "game_versions": ["26.1"],
+                                "loaders": ["fabric"],
+                                "files": [{
+                                    "hashes": { "sha512": sha512_key },
+                                    "url": "https://cdn.modrinth.com/sodium.jar",
+                                    "filename": "manual-sodium.jar",
+                                    "primary": true,
+                                    "size": 23
+                                }],
+                                "dependencies": []
+                            }
+                        })
+                        .to_string()
+                    } else if first_line.contains("/curseforge/v1/fingerprints/432") {
+                        json!({
+                            "data": {
+                                "exactMatches": [{
+                                    "id": 238222,
+                                    "file": {
+                                        "id": 9001,
+                                        "modId": 238222,
+                                        "fileName": "manual-jei.jar",
+                                        "fileLength": 22,
+                                        "downloadUrl": "https://edge.forgecdn.net/files/9/1/manual-jei.jar",
+                                        "fileFingerprint": cf_fp,
+                                        "hashes": [],
+                                        "gameVersions": ["26.1", "Fabric"],
+                                        "dependencies": []
+                                    },
+                                    "latestFiles": []
+                                }],
+                                "exactFingerprints": [cf_fp]
+                            }
+                        })
+                        .to_string()
+                    } else {
+                        "{}".to_owned()
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+
+        let mr_client =
+            ModrinthClient::with_base_url(format!("http://{addr}/modrinth/v2")).unwrap();
+        let cf_client = CurseForgeClient::with_base_url(
+            format!("http://{addr}/curseforge/v1"),
+            Some("test-key".into()),
+        )
+        .unwrap();
+
+        let upgraded = identify_manual_files(
+            dir.path(),
+            ProjectKind::Mod,
+            &mut lock,
+            Some(&mr_client),
+            Some(&cf_client),
+        )
+        .await
+        .expect("identify manual files");
+        assert_eq!(upgraded, 2);
+
+        let sodium_entry = lock.entries.get("manual-sodium").unwrap();
+        assert_eq!(sodium_entry.source, LockSource::Modrinth);
+        assert_eq!(sodium_entry.project_id, "AANobbMI");
+        assert_eq!(sodium_entry.version_id, "ver-mr-sodium");
+
+        let jei_entry = lock.entries.get("manual-jei").unwrap();
+        assert_eq!(jei_entry.source, LockSource::CurseForge);
+        assert_eq!(jei_entry.project_id, "238222");
+        assert_eq!(jei_entry.version_id, "9001");
     }
 }

@@ -98,9 +98,18 @@ impl GpuDiagnostics {
 pub struct ShaderManager;
 
 impl ShaderManager {
+    /// Lists all `.zip` or directory resourcepacks inside `<instance_dir>/resourcepacks/`.
+    pub fn list_resourcepacks(instance_dir: &Path) -> Vec<String> {
+        Self::list_packs_in_subfolder(instance_dir, "resourcepacks")
+    }
+
     /// Lists all `.zip` shaderpacks inside `<instance_dir>/shaderpacks/`.
     pub fn list_shaderpacks(instance_dir: &Path) -> Vec<String> {
-        let packs_dir = instance_dir.join("shaderpacks");
+        Self::list_packs_in_subfolder(instance_dir, "shaderpacks")
+    }
+
+    fn list_packs_in_subfolder(instance_dir: &Path, subfolder: &str) -> Vec<String> {
+        let packs_dir = instance_dir.join(subfolder);
         if !packs_dir.exists() {
             return Vec::new();
         }
@@ -111,7 +120,7 @@ impl ShaderManager {
                 let path = entry.path();
                 if path.is_file() {
                     if let Some(ext) = path.extension() {
-                        if ext.eq_ignore_ascii_case("zip") {
+                        if ext.eq_ignore_ascii_case("zip") || ext.eq_ignore_ascii_case("disabled") {
                             if let Some(name) = path.file_name() {
                                 packs.push(name.to_string_lossy().to_string());
                             }
