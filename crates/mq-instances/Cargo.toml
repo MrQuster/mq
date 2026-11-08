@@ -2,10 +2,12 @@
 name = "mq-instances"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
+description = "Isolated Minecraft instance directory, configuration, world, and server manager for MQ"
+keywords = ["minecraft", "instances", "profiles", "manager"]
+categories = ["filesystem", "config"]
 
 [dependencies]
 mq-core.workspace = true

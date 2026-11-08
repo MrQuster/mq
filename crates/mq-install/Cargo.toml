@@ -2,10 +2,12 @@
 name = "mq-install"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
+description = "High-speed content-addressable storage (CAS), deduplication, and atomic verification engine for MQ"
+keywords = ["minecraft", "installer", "cas", "deduplication", "hashing"]
+categories = ["filesystem", "caching"]
 
 [dependencies]
 mq-core.workspace = true

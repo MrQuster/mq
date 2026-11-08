@@ -2,10 +2,12 @@
 name = "mq-core"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
+description = "Core types, configuration, error handling, XDG path resolution, and event bus for MQ"
+keywords = ["minecraft", "launcher", "core", "mq"]
+categories = ["game-development", "config"]
 
 [dependencies]
 serde.workspace = true

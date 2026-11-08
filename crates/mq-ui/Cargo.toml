@@ -2,10 +2,12 @@
 name = "mq-ui"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
+description = "Immediate-mode desktop user interface built with egui and eframe for MQ"
+keywords = ["minecraft", "launcher", "gui", "egui", "eframe"]
+categories = ["gui"]
 
 [dependencies]
 mq-core.workspace = true

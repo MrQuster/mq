@@ -2,10 +2,12 @@
 name = "mq-meta"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 authors.workspace = true
 homepage.workspace = true
 repository.workspace = true
+description = "Minecraft version metadata manifest parsers, rules evaluator, and mod loader cascading merge engine for MQ"
+keywords = ["minecraft", "metadata", "forge", "fabric", "quilt"]
+categories = ["parser-implementations", "data-structures"]
 
 [dependencies]
 mq-core.workspace = true
