@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <clipPath id="squircle-light">
+      <rect x="8" y="8" width="240" height="240" rx="56" />
+    </clipPath>
+  </defs>
+
+  <!-- Base background plate (Light #F9FAFB) -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#F9FAFB" stroke="#E5E7EB" stroke-width="4"/>
+
+  <!-- Subtle structural grid lines (#EDF2F7) -->
+  <g clip-path="url(#squircle-light)" stroke="#EDF2F7" stroke-width="1.5">
+    <line x1="8" y1="64" x2="248" y2="64"/>
+    <line x1="8" y1="128" x2="248" y2="128"/>
+    <line x1="8" y1="192" x2="248" y2="192"/>
+    <line x1="64" y1="8" x2="64" y2="248"/>
+    <line x1="128" y1="8" x2="128" y2="248"/>
+    <line x1="192" y1="8" x2="192" y2="248"/>
+  </g>
+
+  <!-- Letter M (Clean solid dark glyph #111827) -->
+  <path d="M 46 182 L 46 74 L 68 74 L 95 126 L 122 74 L 144 74 L 144 182 L 124 182 L 124 114 L 103 154 L 87 154 L 66 114 L 66 182 Z" fill="#111827"/>
+
+  <!-- Letter Q (Emerald Accent #059669) -->
+  <path d="M 168 84 C 146 84 132 101 132 128 C 132 155 146 172 168 172 C 177 172 185 168 191 161 L 202 176 L 216 166 L 204 150 C 208 143 210 136 210 128 C 210 101 194 84 168 84 Z M 168 104 C 180 104 188 114 188 128 C 188 142 180 152 168 152 C 156 152 152 142 152 128 C 152 114 156 104 168 104 Z" fill="#059669"/>
+
+  <!-- Minecraft block accent spark (top-right corner) -->
+  <rect x="194" y="46" width="16" height="16" rx="3" fill="#059669"/>
+</svg>

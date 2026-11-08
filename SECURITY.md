@@ -2,11 +2,11 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 2.2.x   | :white_check_mark: |
-| 2.1.x   | :x:                |
-| < 2.1.0 | :x:                |
+| Version | Supported |
+| ------- | --------- |
+| 2.2.x   | Yes       |
+| 2.1.x   | No        |
+| < 2.1.0 | No        |
 
 ---
 
@@ -39,7 +39,7 @@ RWRlxrUOJgeLq7AIndJRG9ZhsdT5QiHy9usykXvxt1C49a1h/km3h9lt
 
 ### Verifying a Release Signature
 ```bash
-# On Linux / macOS using minisign:
+# On Linux using minisign:
 minisign -Vm SHA256SUMS -P RWRlxrUOJgeLq7AIndJRG9ZhsdT5QiHy9usykXvxt1C49a1h/km3h9lt
 sha256sum -c SHA256SUMS
 ```
@@ -54,6 +54,6 @@ gh attestation verify mq-linux-x86_64 --repo MrQuster/mq
 ## Security Guarantees & Architecture
 
 1. **Zero Telemetry:** No user analytics, metrics, or telemetry are collected or transmitted.
-2. **Credential Safety:** Secrets (Minecraft tokens, OAuth tokens, verification codes) are strictly isolated, stored with mode `0600` (or Windows Credential Manager / DPAPI), and filtered out from log outputs, stack traces, and `--dry-run` displays.
+2. **Credential Safety:** Secrets (Minecraft tokens, OAuth tokens, verification codes) are strictly isolated, stored with mode `0600` on Unix (or Windows Credential Manager / DPAPI on Windows), and filtered out from log outputs, stack traces, and `--dry-run` displays.
 3. **Execution Guardrails:** Process spawning strictly uses argument arrays (`Command::new(...).args(...)`) rather than shell interpolation (`sh -c`). Pre- and post-launch commands from imported third-party packs (MultiMC/Prism/Modrinth/CurseForge) are disabled by default with prominent warnings.
 4. **Archive Safety:** Strict Zip-Slip and path traversal verification prevents files from writing outside target instance roots. Archive extraction enforces limits on decompression ratio and maximum total size to prevent zip-bomb attacks.

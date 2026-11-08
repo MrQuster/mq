@@ -1,5 +1,5 @@
 #![deny(clippy::await_holding_lock)]
-//! Accounts manager screen: Offline (Pirate UUID v3), Ely.by (Browser-only OAuth2 + authlib-injector),
+//! Accounts manager screen: Offline (UUID v3), Ely.by (Browser-only OAuth2 + authlib-injector),
 //! and Microsoft Device Code Flow with 1-click switching. Zero emojis!
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -494,7 +494,7 @@ impl AccountsView {
         ui.add_space(6.0);
 
         if state.config.effective_ms_client_id().is_none() {
-            ui.label(RichText::new("Для входа по лицензии Microsoft укажите Client ID в MQ_MS_CLIENT_ID или настройках (Пиратка и Ely.by работают сразу из коробки).").color(STATUS_WARN).small());
+            ui.label(RichText::new("Для входа по лицензии Microsoft укажите Client ID в MQ_MS_CLIENT_ID или настройках (Офлайн-режим и Ely.by работают сразу из коробки).").color(STATUS_WARN).small());
             ui.add_space(6.0);
         }
 
