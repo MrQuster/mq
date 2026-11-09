@@ -1837,6 +1837,23 @@ impl InstancesView {
         });
     }
 
+    /// Lock file of an instance, re-read at most every 2 seconds.
+    fn cached_lock(
+        ctx: &egui::Context,
+        dir: &std::path::Path,
+    ) -> std::sync::Arc<mq_mods::ModLockFile> {
+        type Cache = (std::time::Instant, std::sync::Arc<mq_mods::ModLockFile>);
+        let id = egui::Id::new(("mq_lock_cache", dir));
+        if let Some((at, lock)) = ctx.data(|d| d.get_temp::<Cache>(id)) {
+            if at.elapsed() < std::time::Duration::from_secs(2) {
+                return lock;
+            }
+        }
+        let lock = std::sync::Arc::new(mq_mods::ModLockFile::load_for_instance(dir));
+        ctx.data_mut(|d| d.insert_temp::<Cache>(id, (std::time::Instant::now(), lock.clone())));
+        lock
+    }
+
     fn render_mods_tab(&mut self, ui: &mut Ui, state: &mut UiState, inst_id: &mq_core::InstanceId) {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
@@ -1886,6 +1903,7 @@ impl InstancesView {
             ui.add_space(6.0);
         }
 
+        let lock = Self::cached_lock(ui.ctx(), &state.paths.instance_dir(inst_id.as_str()));
         ScrollArea::vertical()
             .id_salt("mods_table_scroll")
             .auto_shrink([false, false])
@@ -1930,6 +1948,17 @@ impl InstancesView {
                                         version_badge(ui, &m.version, ACCENT_COBALT);
                                         if let Some(ld) = m.loader {
                                             version_badge(ui, ld.as_str(), ACCENT_EMERALD);
+                                        }
+                                        match lock.find_by_filename(&m.file_name) {
+                                            Some((_, e)) => {
+                                                let (txt, col) = match e.source {
+                                                    mq_mods::LockSource::Modrinth => ("Modrinth", ACCENT_EMERALD),
+                                                    mq_mods::LockSource::Manual => ("Вручную", TEXT_MUTED),
+                                                    mq_mods::LockSource::CurseForge => ("CurseForge", Color32::from_rgb(0xF1, 0x64, 0x36)),
+                                                };
+                                                version_badge(ui, txt, col);
+                                            }
+                                            None => version_badge(ui, "Локальный", TEXT_MUTED),
                                         }
                                     });
                                     let file_w = (ui.available_width() - 8.0).max(40.0);
