@@ -20,6 +20,7 @@ fn window(title: &str) -> egui::Window<'_> {
     egui::Window::new(title)
         .collapsible(false)
         .resizable(true)
+        .fade_in(false)
         .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
         .default_width(560.0)
         .max_width(760.0)

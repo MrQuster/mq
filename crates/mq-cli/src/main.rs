@@ -2485,6 +2485,8 @@ async fn build_snapshot_app(
             "detail-mods" | "02-detail-mods" | "mods" | "detail" => mq_ui::NavTab::Instances,
             "shaders" | "03-shaders" | "detail-shaders" => mq_ui::NavTab::Instances,
             "catalog" | "04-catalog" => mq_ui::NavTab::Catalog,
+            s if s.starts_with("catalog-") => mq_ui::NavTab::Catalog,
+            "settings-catalog" => mq_ui::NavTab::Settings,
             "accounts" | "05-accounts" => mq_ui::NavTab::Accounts,
             "settings-matte" | "06-settings-matte" | "settings" => mq_ui::NavTab::Settings,
             "settings-light" | "07-settings-light" => mq_ui::NavTab::Settings,
@@ -2517,8 +2519,12 @@ async fn build_snapshot_app(
             "settings-light" | "07-settings-light" => {
                 settings_view.active_section = Some(mq_ui::SettingsSection::Customization);
             }
+            "settings-catalog" => {
+                settings_view.active_section = Some(mq_ui::SettingsSection::Catalog);
+            }
             _ => {}
         }
+        mq_ui::catalog_demo::apply_demo_scene(&mut state, screen);
 
         let app = mq_ui::MqApp {
             state,

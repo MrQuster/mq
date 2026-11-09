@@ -172,9 +172,9 @@ impl CatalogView {
             self.inline_notice(ui, &text);
         }
 
+        crate::catalog_dialogs::jobs_panel(ui, state);
         ui.separator();
         self.results(ui, state);
-        crate::catalog_dialogs::jobs_panel(ui, state);
         crate::catalog_dialogs::show_overlays(ui.ctx(), state);
     }
 
@@ -430,6 +430,7 @@ impl CatalogView {
     }
 
     fn results(&mut self, ui: &mut Ui, state: &mut UiState) {
+        let has_key = state.config.effective_cf_api_key().is_some();
         let mut go_prev = false;
         let mut go_next = false;
 
@@ -445,7 +446,10 @@ impl CatalogView {
                     }
                     return;
                 }
-                if cat.hits.is_empty() {
+                let key_missing = cat.source == CatalogSourceFilter::CurseForge && !has_key;
+                if cat.hits.is_empty() && key_missing {
+                    // The key panel above already explains what to do.
+                } else if cat.hits.is_empty() {
                     if cat.searched {
                         if cat.all_sources_failed() {
                             empty_state(

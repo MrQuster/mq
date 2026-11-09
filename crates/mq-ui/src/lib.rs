@@ -7,6 +7,7 @@
 pub mod accounts_view;
 pub mod app;
 pub mod catalog_actions;
+pub mod catalog_demo;
 pub mod catalog_dialogs;
 pub mod catalog_flow;
 pub mod catalog_ops;
