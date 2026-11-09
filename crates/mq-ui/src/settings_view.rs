@@ -22,6 +22,7 @@ pub enum SettingsSection {
     Launch,
     Localization,
     NetworkAndApi,
+    Catalog,
     Updates,
     About,
 }
@@ -30,6 +31,7 @@ pub enum SettingsSection {
 pub struct SettingsView {
     pub active_section: Option<SettingsSection>,
     pub theme_export_path: String,
+    pub catalog_key_input: String,
     pub theme_import_path: String,
     pub mc_locale_search: String,
     pub mc_locale_dropdown_open: bool,
@@ -95,6 +97,12 @@ impl SettingsView {
                 self.active_section = Some(SettingsSection::NetworkAndApi);
             }
             if ui
+                .selectable_label(current_section == SettingsSection::Catalog, "Каталог")
+                .clicked()
+            {
+                self.active_section = Some(SettingsSection::Catalog);
+            }
+            if ui
                 .selectable_label(current_section == SettingsSection::Updates, "Обновления")
                 .clicked()
             {
@@ -120,6 +128,7 @@ impl SettingsView {
                     SettingsSection::Launch => self.render_launch_settings(ui, state),
                     SettingsSection::Localization => self.render_localization_settings(ui, state),
                     SettingsSection::NetworkAndApi => self.render_network_api_settings(ui, state),
+                    SettingsSection::Catalog => self.render_catalog_settings(ui, state),
                     SettingsSection::Updates => self.render_updates_settings(ui, state),
                     SettingsSection::About => self.render_about_settings(ui, state),
                 }
@@ -936,6 +945,62 @@ impl SettingsView {
                         }
                     }
                 });
+        });
+    }
+
+    fn render_catalog_settings(&mut self, ui: &mut Ui, state: &mut UiState) {
+        ui.label(RichText::new("Ключ CurseForge").strong());
+        ui.add_space(4.0);
+        let from_env = std::env::var("MQ_CURSEFORGE_API_KEY").is_ok_and(|v| !v.trim().is_empty());
+        let saved = state.config.curseforge_api_key.is_some();
+        let status = if saved {
+            "Ключ сохранён (файл с правами 0600)."
+        } else if from_env {
+            "Используется ключ из переменной MQ_CURSEFORGE_API_KEY."
+        } else {
+            "Ключ не задан: CurseForge отключён, Modrinth работает полностью."
+        };
+        ui.label(RichText::new(status).color(crate::theme::TEXT_MUTED));
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(
+                "Получите бесплатный личный ключ в консоли CurseForge и вставьте его ниже. \
+                 Общий ключ в лаунчер не вшит.",
+            )
+            .color(crate::theme::TEXT_MUTED),
+        );
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            if secondary_glass_button(ui, None, "Открыть страницу ключей").clicked()
+            {
+                let _ = crate::opener::open_that(crate::catalog_view::CURSEFORGE_KEYS_URL);
+            }
+        });
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.catalog_key_input)
+                    .password(true)
+                    .hint_text("API-ключ CurseForge")
+                    .desired_width(320.0),
+            );
+            let can_save = !self.catalog_key_input.trim().is_empty();
+            if primary_emerald_button(ui, Some(VectorIcon::Check), "Сохранить ключ").clicked()
+                && can_save
+            {
+                let key = mq_core::SecretString::new(self.catalog_key_input.trim());
+                state.config.curseforge_api_key = Some(key);
+                let _ = state.config.save(&state.paths);
+                self.catalog_key_input.clear();
+                state
+                    .catalog
+                    .mark_page_changed(std::time::Instant::now(), false);
+            }
+            if saved && secondary_glass_button(ui, None, "Удалить ключ").clicked() {
+                state.config.curseforge_api_key = None;
+                let _ = state.config.save(&state.paths);
+                let _ = mq_core::AppConfig::save_cf_api_key_secret_file(&state.paths, None);
+            }
         });
     }
 
