@@ -115,6 +115,7 @@ pub fn format_downloads(n: u64) -> String {
 #[derive(Default)]
 pub struct CatalogView {
     pub curseforge_api_key_input: String,
+    import_path: String,
     textures: std::collections::HashMap<String, egui::TextureHandle>,
 }
 
@@ -129,6 +130,8 @@ impl CatalogView {
         changed |= self.tabs_row(ui, &mut state.catalog);
         ui.add_space(8.0);
         changed |= self.source_row(ui, &mut state.catalog);
+        ui.add_space(8.0);
+        self.import_row(ui, state);
 
         let has_key = state.config.effective_cf_api_key().is_some();
         let cf_selected = state.catalog.source == CatalogSourceFilter::CurseForge;
@@ -210,6 +213,35 @@ impl CatalogView {
             }
         });
         changed
+    }
+
+    /// Local import: path field plus drag-and-drop of `.mrpack` / `.zip` onto the window.
+    fn import_row(&mut self, ui: &mut Ui, state: &mut UiState) {
+        let dropped: Vec<std::path::PathBuf> = ui.ctx().input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        if let Some(p) = dropped.into_iter().next() {
+            state.import_local_pack(p);
+        }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
+            ui.label(RichText::new("Импорт").color(TEXT_MUTED));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.import_path)
+                    .hint_text("Путь к .mrpack / .zip или перетащите файл в окно")
+                    .desired_width(360.0),
+            );
+            let can = !self.import_path.trim().is_empty();
+            if secondary_glass_button(ui, None, "Импортировать").clicked() && can {
+                let p = std::path::PathBuf::from(self.import_path.trim());
+                self.import_path.clear();
+                state.import_local_pack(p);
+            }
+        });
     }
 
     fn source_row(&self, ui: &mut Ui, cat: &mut CatalogState) -> bool {

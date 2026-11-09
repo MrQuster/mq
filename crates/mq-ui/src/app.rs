@@ -927,6 +927,19 @@ impl MqApp {
                             resp_tx.send(UiWorkerResponse::ModpackPrepared { request_id, result });
                     });
                 }
+                UiWorkerCommand::PreviewLocalPack { request_id, path } => {
+                    let resp_tx = self.state.resp_sender.clone();
+                    tokio::spawn(async move {
+                        let result = tokio::task::spawn_blocking(move || {
+                            crate::catalog_ops::preview_archive(&path)
+                        })
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r);
+                        let _ =
+                            resp_tx.send(UiWorkerResponse::ModpackPrepared { request_id, result });
+                    });
+                }
                 UiWorkerCommand::StartContentJob {
                     job_id,
                     cancel,

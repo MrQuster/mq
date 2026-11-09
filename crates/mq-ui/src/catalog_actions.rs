@@ -53,6 +53,51 @@ impl UiState {
         self.replan_install();
     }
 
+    /// Starts importing a local `.mrpack` / CurseForge `.zip`: shows the confirmation dialog.
+    pub fn import_local_pack(&mut self, path: std::path::PathBuf) {
+        let lower = path.to_string_lossy().to_ascii_lowercase();
+        if !(lower.ends_with(".mrpack") || lower.ends_with(".zip")) {
+            self.status_message = Some((
+                "Поддерживаются файлы .mrpack и .zip (CurseForge)".to_string(),
+                true,
+            ));
+            return;
+        }
+        let title = path
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Сборка")
+            .to_string();
+        let hit = CatalogHit {
+            source: mq_mods::CatalogSource::Modrinth,
+            project_id: String::new(),
+            slug: title.clone(),
+            title: title.clone(),
+            description: String::new(),
+            author: "Локальный файл".to_string(),
+            downloads: 0,
+            icon_url: None,
+            project_kind: ProjectKind::Modpack,
+            loaders: Vec::new(),
+            game_versions: Vec::new(),
+            latest_version: None,
+        };
+        self.install = Some(InstallDialog::new(
+            hit,
+            None,
+            InstallTarget::NewInstance { name: title },
+        ));
+        self.install_seq += 1;
+        let request_id = self.install_seq;
+        if let Some(d) = self.install.as_mut() {
+            d.request_id = request_id;
+            d.loading = true;
+        }
+        let _ = self
+            .cmd_sender
+            .send(UiWorkerCommand::PreviewLocalPack { request_id, path });
+    }
+
     /// Changes the target instance of the open dialog and recomputes the plan.
     pub fn set_install_target(&mut self, id: InstanceId) {
         if let Some(d) = self.install.as_mut() {
@@ -254,6 +299,23 @@ mod tests {
         )
         .unwrap();
         (st, tmp)
+    }
+
+    #[test]
+    fn import_rejects_unknown_extension_and_opens_dialog_for_packs() {
+        let (mut st, _t) = state();
+        st.import_local_pack("/tmp/evil.exe".into());
+        assert!(st.install.is_none());
+        assert!(st.status_message.as_ref().is_some_and(|m| m.1));
+        st.import_local_pack("/tmp/Pack.mrpack".into());
+        let d = st.install.as_ref().expect("dialog");
+        assert!(d.loading && d.is_modpack());
+        assert_eq!(
+            d.target,
+            InstallTarget::NewInstance {
+                name: "Pack".into()
+            }
+        );
     }
 
     fn hit(kind: ProjectKind) -> CatalogHit {

@@ -112,6 +112,10 @@ pub enum UiWorkerCommand {
         request_id: u64,
         version: mq_mods::ProjectVersion,
     },
+    PreviewLocalPack {
+        request_id: u64,
+        path: std::path::PathBuf,
+    },
     StartContentJob {
         job_id: u64,
         cancel: Arc<std::sync::atomic::AtomicBool>,
