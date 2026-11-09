@@ -17,7 +17,9 @@ use crate::catalog_state::{
 
 /// Max accepted icon payload (2 MiB) and decoded edge length.
 const MAX_ICON_BYTES: usize = 2 * 1024 * 1024;
-const ICON_EDGE: u32 = 96;
+pub const ICON_EDGE: u32 = 96;
+/// Decoded edge length for gallery images.
+pub const GALLERY_EDGE: u32 = 512;
 /// Hosts icons may be fetched from.
 const ICON_HOSTS: &[&str] = &[
     "cdn.modrinth.com",
@@ -138,11 +140,11 @@ fn icon_url_allowed(url: &str) -> bool {
 }
 
 /// Decodes raw image bytes into a thumbnail `ColorImage`.
-pub fn decode_icon(bytes: &[u8]) -> Option<egui::ColorImage> {
+pub fn decode_icon(bytes: &[u8], edge: u32) -> Option<egui::ColorImage> {
     let img = image::load_from_memory(bytes).ok()?;
     // `thumbnail` also upscales, so only shrink oversized images.
-    let thumb = if img.width() > ICON_EDGE || img.height() > ICON_EDGE {
-        img.thumbnail(ICON_EDGE, ICON_EDGE).to_rgba8()
+    let thumb = if img.width() > edge || img.height() > edge {
+        img.thumbnail(edge, edge).to_rgba8()
     } else {
         img.to_rgba8()
     };
@@ -155,13 +157,13 @@ pub fn decode_icon(bytes: &[u8]) -> Option<egui::ColorImage> {
 
 /// Loads an icon from the disk cache or downloads it (HTTPS, allow-listed hosts, size-capped)
 /// and stores the original bytes in `cache_dir`.
-pub async fn load_icon(cache_dir: &Path, url: &str) -> Option<egui::ColorImage> {
+pub async fn load_icon(cache_dir: &Path, url: &str, edge: u32) -> Option<egui::ColorImage> {
     if !icon_url_allowed(url) {
         return None;
     }
     let path = cache_dir.join(icon_cache_name(url));
     if let Ok(bytes) = tokio::fs::read(&path).await {
-        if let Some(img) = decode_icon(&bytes) {
+        if let Some(img) = decode_icon(&bytes, edge) {
             return Some(img);
         }
     }
@@ -181,7 +183,7 @@ pub async fn load_icon(cache_dir: &Path, url: &str) -> Option<egui::ColorImage> 
     if bytes.len() > MAX_ICON_BYTES {
         return None;
     }
-    let img = decode_icon(&bytes)?;
+    let img = decode_icon(&bytes, edge)?;
     if tokio::fs::create_dir_all(cache_dir).await.is_ok() {
         let tmp = path.with_extension("part");
         if tokio::fs::write(&tmp, &bytes).await.is_ok() {
@@ -259,13 +261,13 @@ mod tests {
 
     #[test]
     fn decode_icon_rejects_garbage_and_accepts_png() {
-        assert!(decode_icon(b"not an image").is_none());
+        assert!(decode_icon(b"not an image", ICON_EDGE).is_none());
         let mut buf = Vec::new();
         let img = image::RgbaImage::from_pixel(8, 8, image::Rgba([10, 200, 90, 255]));
         image::DynamicImage::ImageRgba8(img)
             .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
             .unwrap();
-        let out = decode_icon(&buf).unwrap();
+        let out = decode_icon(&buf, ICON_EDGE).unwrap();
         assert_eq!(out.size, [8, 8]);
     }
 

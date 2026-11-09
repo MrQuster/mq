@@ -881,16 +881,142 @@ impl MqApp {
                         });
                     });
                 }
-                UiWorkerCommand::FetchIcon { url } => {
+                UiWorkerCommand::FetchIcon { url, edge } => {
                     let resp_tx = self.state.resp_sender.clone();
                     let cache_dir = self.state.paths.cache_dir.join("catalog-icons");
                     tokio::spawn(async move {
-                        let image = crate::catalog_worker::load_icon(&cache_dir, &url).await;
+                        let image = crate::catalog_worker::load_icon(&cache_dir, &url, edge).await;
                         let _ = resp_tx.send(UiWorkerResponse::IconLoaded { url, image });
                     });
                 }
+                UiWorkerCommand::LoadProject {
+                    request_id,
+                    source,
+                    project_id,
+                    kind,
+                } => {
+                    let config = self.state.config.clone();
+                    let resp_tx = self.state.resp_sender.clone();
+                    tokio::spawn(async move {
+                        let result =
+                            crate::catalog_ops::load_project(&config, source, &project_id, kind)
+                                .await;
+                        let _ = resp_tx.send(UiWorkerResponse::ProjectLoaded {
+                            request_id,
+                            result: result.map(Box::new),
+                        });
+                    });
+                }
+                UiWorkerCommand::PlanInstall { request_id, req } => {
+                    let config = self.state.config.clone();
+                    let resp_tx = self.state.resp_sender.clone();
+                    tokio::spawn(async move {
+                        let result = crate::catalog_ops::plan_content(&config, &req).await;
+                        let _ = resp_tx.send(UiWorkerResponse::PlanReady { request_id, result });
+                    });
+                }
+                UiWorkerCommand::PrepareModpack {
+                    request_id,
+                    version,
+                } => {
+                    let ctx = self.ops_ctx();
+                    let resp_tx = self.state.resp_sender.clone();
+                    tokio::spawn(async move {
+                        let result = crate::catalog_ops::prepare_modpack(&ctx, &version).await;
+                        let _ =
+                            resp_tx.send(UiWorkerResponse::ModpackPrepared { request_id, result });
+                    });
+                }
+                UiWorkerCommand::StartContentJob {
+                    job_id,
+                    cancel,
+                    instance_id,
+                    kind,
+                    source,
+                    downloads,
+                    blocked,
+                } => {
+                    let ctx = self.ops_ctx();
+                    let resp_tx = self.state.resp_sender.clone();
+                    tokio::spawn(async move {
+                        let tx = resp_tx.clone();
+                        let result = crate::catalog_ops::run_content_job(
+                            &ctx,
+                            &cancel,
+                            &instance_id,
+                            kind,
+                            source,
+                            &downloads,
+                            move |done, total| {
+                                let _ = tx.send(UiWorkerResponse::JobProgress {
+                                    job_id,
+                                    done,
+                                    total,
+                                });
+                            },
+                        )
+                        .await
+                        .map(|()| crate::state::JobOutput {
+                            instance_id: Some(instance_id.clone()),
+                            blocked,
+                        });
+                        let _ = resp_tx.send(UiWorkerResponse::JobFinished { job_id, result });
+                    });
+                }
+                UiWorkerCommand::StartModpackJob {
+                    job_id,
+                    cancel,
+                    instance_name,
+                    preview,
+                } => {
+                    let ctx = self.ops_ctx();
+                    let resp_tx = self.state.resp_sender.clone();
+                    tokio::spawn(async move {
+                        let result = crate::catalog_ops::run_modpack_job(
+                            &ctx,
+                            &cancel,
+                            &instance_name,
+                            &preview,
+                        )
+                        .await
+                        .map(|(id, blocked)| crate::state::JobOutput {
+                            instance_id: Some(id),
+                            blocked,
+                        });
+                        let _ = resp_tx.send(UiWorkerResponse::JobFinished { job_id, result });
+                    });
+                }
+                UiWorkerCommand::PollManual { dropped } => {
+                    if let Some(watcher) = self.state.manual_watcher.clone() {
+                        let resp_tx = self.state.resp_sender.clone();
+                        tokio::spawn(async move {
+                            let joined = tokio::task::spawn_blocking(move || {
+                                crate::catalog_ops::poll_watcher(&watcher, &dropped)
+                            })
+                            .await;
+                            if let Ok((pending, newly_done)) = joined {
+                                let _ = resp_tx.send(UiWorkerResponse::ManualProgress {
+                                    pending,
+                                    newly_done,
+                                });
+                            }
+                        });
+                    }
+                }
                 _ => {}
             }
+        }
+    }
+
+    /// Handles shared with background catalog operations.
+    fn ops_ctx(&self) -> crate::catalog_ops::OpsCtx {
+        crate::catalog_ops::OpsCtx {
+            config: self.state.config.clone(),
+            paths: self.state.paths.clone(),
+            net: self.state.net.clone(),
+            epoch: self.state.cancel_epoch.clone(),
+            pool: self.state.compute_pool.clone(),
+            bus: self.state.event_bus.clone(),
         }
     }
 

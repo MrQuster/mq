@@ -32,6 +32,31 @@ pub enum UiWorkerResponse {
         url: String,
         image: Option<egui::ColorImage>,
     },
+    ProjectLoaded {
+        request_id: u64,
+        result: Result<Box<crate::catalog_flow::ProjectPage>, String>,
+    },
+    PlanReady {
+        request_id: u64,
+        result: Result<crate::catalog_ops::PlanOutcome, String>,
+    },
+    ModpackPrepared {
+        request_id: u64,
+        result: Result<crate::catalog_flow::ModpackPreview, String>,
+    },
+    JobProgress {
+        job_id: u64,
+        done: usize,
+        total: usize,
+    },
+    JobFinished {
+        job_id: u64,
+        result: Result<JobOutput, String>,
+    },
+    ManualProgress {
+        pending: Vec<mq_mods::BlockedDownload>,
+        newly_done: Vec<String>,
+    },
     ScanModsResults {
         mods: Vec<InstalledModEntry>,
         conflicts: Vec<ModConflict>,
@@ -50,6 +75,14 @@ pub enum UiWorkerResponse {
     },
 }
 
+/// Successful result of an install job.
+pub struct JobOutput {
+    /// Instance the content ended up in (new instance for modpacks).
+    pub instance_id: Option<InstanceId>,
+    /// Files the user still has to download by hand.
+    pub blocked: Vec<mq_mods::BlockedDownload>,
+}
+
 /// Background task messages sent from UI to worker threads.
 pub enum UiWorkerCommand {
     FetchVersionManifest,
@@ -63,6 +96,39 @@ pub enum UiWorkerCommand {
     },
     FetchIcon {
         url: String,
+        edge: u32,
+    },
+    LoadProject {
+        request_id: u64,
+        source: mq_mods::CatalogSource,
+        project_id: String,
+        kind: mq_mods::ProjectKind,
+    },
+    PlanInstall {
+        request_id: u64,
+        req: crate::catalog_ops::PlanRequest,
+    },
+    PrepareModpack {
+        request_id: u64,
+        version: mq_mods::ProjectVersion,
+    },
+    StartContentJob {
+        job_id: u64,
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+        instance_id: InstanceId,
+        kind: mq_mods::ProjectKind,
+        source: mq_mods::CatalogSource,
+        downloads: Vec<mq_mods::ResolvedModDownload>,
+        blocked: Vec<mq_mods::BlockedDownload>,
+    },
+    StartModpackJob {
+        job_id: u64,
+        cancel: Arc<std::sync::atomic::AtomicBool>,
+        instance_name: String,
+        preview: crate::catalog_flow::ModpackPreview,
+    },
+    PollManual {
+        dropped: Vec<std::path::PathBuf>,
     },
     InstallMod {
         instance_id: InstanceId,
@@ -154,6 +220,12 @@ pub struct UiState {
 
     // Catalog Screen
     pub catalog: crate::catalog_state::CatalogState,
+    pub project: crate::catalog_flow::ProjectViewState,
+    pub install: Option<crate::catalog_flow::InstallDialog>,
+    pub jobs: crate::catalog_flow::JobQueue,
+    pub manual: crate::catalog_flow::ManualDownloadState,
+    pub manual_watcher: Option<crate::catalog_ops::SharedWatcher>,
+    pub install_seq: u64,
 
     // Dialogs & Versions
     pub show_create_instance_dialog: bool,
@@ -256,6 +328,12 @@ impl UiState {
             mod_conflicts: Vec::new(),
             is_scanning_mods: false,
             catalog: crate::catalog_state::CatalogState::default(),
+            project: crate::catalog_flow::ProjectViewState::default(),
+            install: None,
+            jobs: crate::catalog_flow::JobQueue::default(),
+            manual: crate::catalog_flow::ManualDownloadState::default(),
+            manual_watcher: None,
+            install_seq: 0,
             show_create_instance_dialog: false,
             create_inst_name: "1.21.1 Fabric".to_string(),
             create_inst_mc_ver: "1.21.1".to_string(),
@@ -279,12 +357,95 @@ impl UiState {
         })
     }
 
+    /// Completes a queue job and, if needed, opens the manual-download dialog.
+    pub fn finish_job(&mut self, job_id: u64, result: Result<JobOutput, String>) {
+        match result {
+            Ok(out) => {
+                self.jobs.finish(job_id, Ok(()));
+                let _ = self.cmd_sender.send(UiWorkerCommand::RefreshInstances);
+                if let Some(id) = out.instance_id {
+                    if !out.blocked.is_empty() {
+                        self.open_manual_dialog(&id, out.blocked);
+                    }
+                }
+            }
+            Err(e) => self.jobs.finish(job_id, Err(e)),
+        }
+    }
+
+    /// Opens the manual-download dialog for `blocked` files of `instance_id`.
+    pub fn open_manual_dialog(
+        &mut self,
+        instance_id: &InstanceId,
+        blocked: Vec<mq_mods::BlockedDownload>,
+    ) {
+        let instance_dir = self.paths.instance_dir(instance_id.as_str());
+        let watch_dir =
+            crate::catalog_flow::default_downloads_dir().unwrap_or_else(|| self.paths.temp_dir());
+        self.manual = crate::catalog_flow::ManualDownloadState {
+            open: true,
+            instance_label: instance_id.to_string(),
+            pending: blocked.clone(),
+            watch_dir_label: watch_dir.display().to_string(),
+            ..Default::default()
+        };
+        self.manual_watcher = Some(Arc::new(parking_lot::Mutex::new(
+            mq_mods::BlockedDownloadsWatcher::new(instance_dir, watch_dir, blocked),
+        )));
+    }
+
     /// Non-blocking drain of background worker events (up to 256 events per frame).
     pub fn drain_events(&mut self) {
         while let Ok(resp) = self.resp_receiver.try_recv() {
             match resp {
                 UiWorkerResponse::CatalogResults(page) => {
                     self.catalog.apply_page(page);
+                }
+                UiWorkerResponse::ProjectLoaded { request_id, result } => {
+                    self.project.apply(request_id, result.map(|p| *p));
+                }
+                UiWorkerResponse::PlanReady { request_id, result } => {
+                    if let Some(d) = self.install.as_mut() {
+                        if d.request_id == request_id {
+                            d.loading = false;
+                            match result {
+                                Ok(o) => {
+                                    d.error = None;
+                                    d.titles.extend(o.titles);
+                                    d.plan = Some(o.plan);
+                                }
+                                Err(e) => {
+                                    d.plan = None;
+                                    d.error = Some(e);
+                                }
+                            }
+                        }
+                    }
+                }
+                UiWorkerResponse::ModpackPrepared { request_id, result } => {
+                    if let Some(d) = self.install.as_mut() {
+                        if d.request_id == request_id {
+                            d.loading = false;
+                            match result {
+                                Ok(p) => d.preview = Some(p),
+                                Err(e) => d.error = Some(e),
+                            }
+                        }
+                    }
+                }
+                UiWorkerResponse::JobProgress {
+                    job_id,
+                    done,
+                    total,
+                } => self.jobs.progress(job_id, done, total),
+                UiWorkerResponse::JobFinished { job_id, result } => {
+                    self.finish_job(job_id, result);
+                }
+                UiWorkerResponse::ManualProgress {
+                    pending,
+                    newly_done,
+                } => {
+                    self.manual.apply_progress(pending, newly_done);
                 }
                 UiWorkerResponse::IconLoaded { url, image } => {
                     self.catalog.icons.insert(

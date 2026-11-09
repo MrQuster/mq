@@ -171,6 +171,8 @@ impl CatalogView {
 
         ui.separator();
         self.results(ui, state);
+        crate::catalog_dialogs::jobs_panel(ui, state);
+        crate::catalog_dialogs::show_overlays(ui.ctx(), state);
     }
 
     fn tabs_row(&self, ui: &mut Ui, cat: &mut CatalogState) -> bool {
@@ -433,7 +435,10 @@ impl CatalogView {
                 let hits = cat.hits.clone();
                 let urls = state.catalog.icons_to_fetch(hits.iter());
                 for url in urls {
-                    let _ = state.cmd_sender.send(UiWorkerCommand::FetchIcon { url });
+                    let _ = state.cmd_sender.send(UiWorkerCommand::FetchIcon {
+                        url,
+                        edge: crate::catalog_worker::ICON_EDGE,
+                    });
                 }
                 for hit in &hits {
                     self.hit_card(ui, state, hit);
@@ -598,29 +603,20 @@ impl CatalogView {
     }
 
     fn card_actions(&self, ui: &mut Ui, state: &mut UiState, hit: &CatalogHit, installed: bool) {
+        if secondary_glass_button(ui, None, "Подробнее").clicked() {
+            state.open_project(hit.clone());
+        }
         if hit.project_kind == ProjectKind::Modpack {
             if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать сборку").clicked()
             {
-                let _ = state.cmd_sender.send(UiWorkerCommand::InstallModpack {
-                    path_or_slug: hit.slug.clone(),
-                    instance_name: Some(hit.title.clone()),
-                });
+                state.open_project(hit.clone());
             }
         } else if installed {
             version_badge(ui, "Уже добавлен", ACCENT_EMERALD);
-        } else if let Some(inst) = state.selected_instance() {
-            let tooltip = format!("Установить в '{}'", inst.name);
-            let (id, mc, loader) = (inst.id.clone(), inst.mc_version.clone(), inst.loader);
-            if primary_emerald_button(ui, Some(VectorIcon::Plus), "Установить")
-                .on_hover_text(tooltip)
-                .clicked()
+        } else if state.selected_instance().is_some() {
+            if primary_emerald_button(ui, Some(VectorIcon::Plus), "Установить").clicked()
             {
-                let _ = state.cmd_sender.send(UiWorkerCommand::InstallMod {
-                    instance_id: id,
-                    project_id_or_slug: hit.slug.clone(),
-                    mc_version: mc,
-                    loader,
-                });
+                state.open_install_content(hit.clone());
             }
         } else {
             ui.label(RichText::new("Выберите инстанс").color(TEXT_MUTED).small());

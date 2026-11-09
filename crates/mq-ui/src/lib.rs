@@ -6,6 +6,10 @@
 
 pub mod accounts_view;
 pub mod app;
+pub mod catalog_actions;
+pub mod catalog_dialogs;
+pub mod catalog_flow;
+pub mod catalog_ops;
 pub mod catalog_state;
 pub mod catalog_view;
 pub mod catalog_worker;
@@ -29,6 +33,7 @@ pub use accounts_view::*;
 #[allow(unused_imports)]
 pub use app::*;
 #[allow(unused_imports)]
+pub use catalog_flow::*;
 pub use catalog_state::*;
 pub use catalog_view::*;
 #[allow(unused_imports)]
