@@ -2342,9 +2342,10 @@ async fn build_snapshot_app(
         ];
 
         // 4. Modrinth catalog hits
-        state.catalog_source = mq_mods::CatalogSource::Modrinth;
-        state.catalog_query_text = "optimization".to_string();
-        state.catalog_hits = vec![
+        state.catalog.source = mq_mods::CatalogSourceFilter::Modrinth;
+        state.catalog.query = "optimization".to_string();
+        state.catalog.searched = true;
+        state.catalog.hits = vec![
             CatalogHit {
                 source: mq_mods::CatalogSource::Modrinth,
                 project_id: "AANobbMI".into(),

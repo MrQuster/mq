@@ -6,7 +6,9 @@
 
 pub mod accounts_view;
 pub mod app;
+pub mod catalog_state;
 pub mod catalog_view;
+pub mod catalog_worker;
 pub mod components;
 pub mod fonts;
 pub mod hud;
@@ -27,6 +29,7 @@ pub use accounts_view::*;
 #[allow(unused_imports)]
 pub use app::*;
 #[allow(unused_imports)]
+pub use catalog_state::*;
 pub use catalog_view::*;
 #[allow(unused_imports)]
 pub use components::*;

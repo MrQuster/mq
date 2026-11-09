@@ -16,7 +16,7 @@ use mq_core::{
 };
 use mq_install::CasStore;
 use mq_instances::{InstanceManager, InstanceManifest};
-use mq_mods::{CatalogHit, InstalledModEntry, ModConflict, ProjectKind, SearchQuery};
+use mq_mods::{InstalledModEntry, ModConflict, SearchQuery};
 use mq_net::NetEngine;
 use mq_sched::{CancelEpoch, ComputePool, UiWatchdog};
 
@@ -27,7 +27,11 @@ pub const MAX_GAME_LOG_LINES: usize = 10000;
 
 /// Background responses delivered back to UI thread without blocking.
 pub enum UiWorkerResponse {
-    CatalogResults(Vec<CatalogHit>),
+    CatalogResults(crate::catalog_state::CatalogPage),
+    IconLoaded {
+        url: String,
+        image: Option<egui::ColorImage>,
+    },
     ScanModsResults {
         mods: Vec<InstalledModEntry>,
         conflicts: Vec<ModConflict>,
@@ -52,8 +56,13 @@ pub enum UiWorkerCommand {
     RefreshInstances,
     RefreshAccounts,
     SearchCatalog {
-        source: mq_mods::CatalogSource,
+        request_id: u64,
+        latest: Arc<std::sync::atomic::AtomicU64>,
+        source: mq_mods::CatalogSourceFilter,
         query: SearchQuery,
+    },
+    FetchIcon {
+        url: String,
     },
     InstallMod {
         instance_id: InstanceId,
@@ -144,12 +153,7 @@ pub struct UiState {
     pub is_scanning_mods: bool,
 
     // Catalog Screen
-    pub catalog_hits: Vec<CatalogHit>,
-    pub catalog_searching: bool,
-    pub catalog_query_text: String,
-    pub catalog_source: mq_mods::CatalogSource,
-    pub catalog_kind: ProjectKind,
-    pub catalog_filter_version: String,
+    pub catalog: crate::catalog_state::CatalogState,
 
     // Dialogs & Versions
     pub show_create_instance_dialog: bool,
@@ -251,12 +255,7 @@ impl UiState {
             installed_mods: Vec::new(),
             mod_conflicts: Vec::new(),
             is_scanning_mods: false,
-            catalog_hits: Vec::new(),
-            catalog_searching: false,
-            catalog_query_text: String::new(),
-            catalog_source: mq_mods::CatalogSource::Modrinth,
-            catalog_kind: ProjectKind::Mod,
-            catalog_filter_version: "1.21.1".to_string(),
+            catalog: crate::catalog_state::CatalogState::default(),
             show_create_instance_dialog: false,
             create_inst_name: "1.21.1 Fabric".to_string(),
             create_inst_mc_ver: "1.21.1".to_string(),
@@ -284,9 +283,17 @@ impl UiState {
     pub fn drain_events(&mut self) {
         while let Ok(resp) = self.resp_receiver.try_recv() {
             match resp {
-                UiWorkerResponse::CatalogResults(hits) => {
-                    self.catalog_hits = hits;
-                    self.catalog_searching = false;
+                UiWorkerResponse::CatalogResults(page) => {
+                    self.catalog.apply_page(page);
+                }
+                UiWorkerResponse::IconLoaded { url, image } => {
+                    self.catalog.icons.insert(
+                        url,
+                        match image {
+                            Some(img) => crate::catalog_state::IconSlot::Ready(img),
+                            None => crate::catalog_state::IconSlot::Failed,
+                        },
+                    );
                 }
                 UiWorkerResponse::ScanModsResults { mods, conflicts } => {
                     self.installed_mods = mods;

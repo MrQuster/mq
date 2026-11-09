@@ -857,27 +857,36 @@ impl MqApp {
                         );
                     }
                 }
-                UiWorkerCommand::SearchCatalog { source, query } => {
+                UiWorkerCommand::SearchCatalog {
+                    request_id,
+                    latest,
+                    source,
+                    query,
+                } => {
                     let bus = self.state.event_bus.clone();
                     let config = self.state.config.clone();
                     let resp_tx = self.state.resp_sender.clone();
                     tokio::spawn(async move {
-                        let hits = match source {
-                            mq_mods::CatalogSource::Modrinth => {
-                                match mq_mods::ModrinthClient::from_config(&config) {
-                                    Ok(m_client) => {
-                                        m_client.search(&query).await.unwrap_or_default()
-                                    }
-                                    Err(_) => Vec::new(),
-                                }
-                            }
-                            mq_mods::CatalogSource::CurseForge => Vec::new(),
-                        };
-                        let _ = resp_tx.send(UiWorkerResponse::CatalogResults(hits));
+                        let started = std::time::Instant::now();
+                        let page = crate::catalog_worker::run_search(
+                            &config, request_id, &latest, source, &query,
+                        )
+                        .await;
+                        // Cancelled by a newer request: drop silently.
+                        let Some(page) = page else { return };
+                        let _ = resp_tx.send(UiWorkerResponse::CatalogResults(page));
                         bus.publish(mq_core::Event::PhaseCompleted {
                             phase: "catalog_search".to_string(),
-                            elapsed_ms: 50,
+                            elapsed_ms: started.elapsed().as_millis() as u64,
                         });
+                    });
+                }
+                UiWorkerCommand::FetchIcon { url } => {
+                    let resp_tx = self.state.resp_sender.clone();
+                    let cache_dir = self.state.paths.cache_dir.join("catalog-icons");
+                    tokio::spawn(async move {
+                        let image = crate::catalog_worker::load_icon(&cache_dir, &url).await;
+                        let _ = resp_tx.send(UiWorkerResponse::IconLoaded { url, image });
                     });
                 }
                 _ => {}

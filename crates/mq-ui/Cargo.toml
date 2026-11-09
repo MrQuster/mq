@@ -29,7 +29,8 @@ eframe.workspace = true
 egui_extras.workspace = true
 egui-wgpu = "0.31"
 wgpu = "24"
-image.workspace = true
+image = { workspace = true, features = ["jpeg", "webp"] }
+url.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
