@@ -830,10 +830,7 @@ mod tests {
                 .as_deref(),
             Some("legacy_env_cf_key")
         );
-        assert_eq!(
-            empty_cfg.effective_cf_api_key_with_envs(None, None),
-            None
-        );
+        assert_eq!(empty_cfg.effective_cf_api_key_with_envs(None, None), None);
 
         // 3. Masking replaces raw key with "***"
         let log_line = "Header x-api-key: user_setting_cf_key failed";

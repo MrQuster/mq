@@ -278,7 +278,8 @@ pub async fn install_curseforge_modpack(
                 if let std::collections::hash_map::Entry::Vacant(e) = versions_map.entry(key) {
                     if let Ok(ver) = client.get_mod_file(f.project_id, f.file_id).await {
                         e.insert(ver);
-                    } else if let Ok(all_files) = client.get_mod_files(f.project_id, None, None).await
+                    } else if let Ok(all_files) =
+                        client.get_mod_files(f.project_id, None, None).await
                     {
                         if let Some(matched) = all_files
                             .into_iter()
@@ -453,12 +454,8 @@ pub async fn install_curseforge_modpack(
             link_or_copy_cas_blob(&item.cas_path, &item.dest_path)?;
         }
 
-        let (actual_sha1, actual_sha512, _) = verify_file_sha1_and_sha512(
-            &item.dest_path,
-            &item.filename,
-            item.expected_sha1,
-            None,
-        )?;
+        let (actual_sha1, actual_sha512, _) =
+            verify_file_sha1_and_sha512(&item.dest_path, &item.filename, item.expected_sha1, None)?;
 
         lockfile.record_install(
             item.project_id.to_string(),
@@ -605,7 +602,8 @@ impl BlockedDownloadsWatcher {
             return Ok(None);
         }
 
-        let (actual_sha1, actual_sha512, actual_size) = stream_hash_file_sha1_sha512(candidate_path)?;
+        let (actual_sha1, actual_sha512, actual_size) =
+            stream_hash_file_sha1_sha512(candidate_path)?;
         let need_fp = self
             .pending
             .iter()
@@ -820,7 +818,8 @@ mod tests {
                     let req = String::from_utf8_lossy(&req_buf[..n]);
                     let first_line = req.lines().next().unwrap_or("");
 
-                    let (ctype, body): (&str, Vec<u8>) = if first_line.starts_with("POST /v1/mods/files")
+                    let (ctype, body): (&str, Vec<u8>) = if first_line
+                        .starts_with("POST /v1/mods/files")
                     {
                         let json = serde_json::json!({
                             "data": [
@@ -1077,6 +1076,9 @@ mod tests {
         let entry_40 = updated_lock.entries.get("40").expect("lock entry for 40");
         assert_eq!(entry_40.source, LockSource::CurseForge);
         assert_eq!(entry_40.filename, "restricted-mod-1.21.1.jar");
-        assert_eq!(entry_40.sha1.as_deref(), Some(blocked_sha1.to_hex().as_str()));
+        assert_eq!(
+            entry_40.sha1.as_deref(),
+            Some(blocked_sha1.to_hex().as_str())
+        );
     }
 }

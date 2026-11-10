@@ -651,7 +651,12 @@ impl CurseForgeClient {
             qp.append_pair("gameId", &MINECRAFT_GAME_ID.to_string());
             qp.append_pair("classId", &q.project_kind.curseforge_class_id().to_string());
             qp.append_pair("searchFilter", &q.query);
-            if let Some(slug) = opts.slug.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some(slug) = opts
+                .slug
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
                 qp.append_pair("slug", slug);
             }
             if let Some(mc_ver) = q
@@ -673,8 +678,8 @@ impl CurseForgeClient {
                 qp.append_pair("categoryId", &cat_id.to_string());
             }
             if !opts.category_ids.is_empty() {
-                let serialized_cats = serde_json::to_string(&opts.category_ids)
-                    .unwrap_or_else(|_| "[]".to_owned());
+                let serialized_cats =
+                    serde_json::to_string(&opts.category_ids).unwrap_or_else(|_| "[]".to_owned());
                 qp.append_pair("categoryIds", &serialized_cats);
             }
             if let Some(sort_field) = opts.sort_field {
@@ -1319,17 +1324,17 @@ impl CfFileDto {
 
         // STRICT RULE: Never synthesize edge.forgecdn.net fallback URLs when downloadUrl is null
         // or when allowModDistribution is false. Leave `url` empty ("") to signal a blocked file.
-        let url = if is_curseforge_file_blocked(self.download_url.as_deref(), allow_mod_distribution)
-        {
-            String::new()
-        } else {
-            self.download_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|u| !u.is_empty())
-                .unwrap_or("")
-                .to_owned()
-        };
+        let url =
+            if is_curseforge_file_blocked(self.download_url.as_deref(), allow_mod_distribution) {
+                String::new()
+            } else {
+                self.download_url
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|u| !u.is_empty())
+                    .unwrap_or("")
+                    .to_owned()
+            };
 
         // In CurseForge API v1, algo == 1 is SHA-1 (algo == 2 is MD5).
         let sha1 = match self
@@ -1833,7 +1838,10 @@ mod tests {
             blocked.webpage_url,
             "https://www.curseforge.com/minecraft/mc-mods/sodium/download/4572915"
         );
-        assert_eq!(blocked.target_rel_path, "mods/sodium-fabric-0.6.0+mc26.1.jar");
+        assert_eq!(
+            blocked.target_rel_path,
+            "mods/sodium-fabric-0.6.0+mc26.1.jar"
+        );
 
         let reqs = recorded.lock().unwrap();
         assert_eq!(

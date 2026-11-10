@@ -174,7 +174,11 @@ const fn is_unix_symlink_mode(mode: u32) -> bool {
     (mode & 0o170000) == 0o120000
 }
 
-fn validate_entry_path_strict(base_dir: &Path, raw_name: &str, unix_mode: Option<u32>) -> MqResult<PathBuf> {
+fn validate_entry_path_strict(
+    base_dir: &Path,
+    raw_name: &str,
+    unix_mode: Option<u32>,
+) -> MqResult<PathBuf> {
     if let Some(mode) = unix_mode {
         if is_unix_symlink_mode(mode) {
             return Err(MqError::ZipSlip {
@@ -591,7 +595,8 @@ pub fn import_instance_archive_detailed(
                     )));
                 }
                 if entry_written >= MIN_BYTES_FOR_RATIO_CHECK
-                    && (comp_size == 0 || (entry_written / comp_size) > MAX_IMPORT_COMPRESSION_RATIO)
+                    && (comp_size == 0
+                        || (entry_written / comp_size) > MAX_IMPORT_COMPRESSION_RATIO)
                 {
                     drop(out_file);
                     let _ = fs::remove_dir_all(&dest_dir);
@@ -914,10 +919,7 @@ lang_initialized = true
         assert_eq!(prism_out.manifest.name, "Prism Speed Pack");
         assert_eq!(prism_out.manifest.mc_version, "1.21.1");
         assert_eq!(prism_out.manifest.loader, ModLoaderKind::Fabric);
-        assert_eq!(
-            prism_out.manifest.loader_version.as_deref(),
-            Some("0.16.9")
-        );
+        assert_eq!(prism_out.manifest.loader_version.as_deref(), Some("0.16.9"));
         assert_eq!(prism_out.manifest.memory_min_mb, 2048);
         assert_eq!(prism_out.manifest.memory_max_mb, 6144);
         assert_eq!(prism_out.manifest.wrapper_cmd, None);

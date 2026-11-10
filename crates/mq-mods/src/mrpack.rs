@@ -255,7 +255,10 @@ fn extract_modrinth_ids_from_urls(urls: &[String]) -> Option<(String, String)> {
     None
 }
 
-fn collect_zip_prefix_rel_paths(mrpack_path: &Path, prefixes: &[&str]) -> MqResult<BTreeSet<String>> {
+fn collect_zip_prefix_rel_paths(
+    mrpack_path: &Path,
+    prefixes: &[&str],
+) -> MqResult<BTreeSet<String>> {
     let file = File::open(mrpack_path)?;
     let mut archive = ZipArchive::new(file).map_err(|err| {
         MqError::Archive(format!(
@@ -1104,10 +1107,7 @@ mod tests {
             .expect("sodium lock entry")
             .1;
         assert_eq!(sodium_lock.source, LockSource::Modrinth);
-        assert_eq!(
-            sodium_lock.sha1.as_deref(),
-            Some(sha1_a.to_hex().as_str())
-        );
+        assert_eq!(sodium_lock.sha1.as_deref(), Some(sha1_a.to_hex().as_str()));
         assert_eq!(sodium_lock.sha512, sha512_a.to_hex());
     }
 
@@ -1248,7 +1248,8 @@ mod tests {
             let opts = SimpleFileOptions::default();
             zw.start_file("modrinth.index.json", opts).unwrap();
             zw.write_all(index_json.to_string().as_bytes()).unwrap();
-            zw.start_file("overrides/config/untouched.toml", opts).unwrap();
+            zw.start_file("overrides/config/untouched.toml", opts)
+                .unwrap();
             zw.write_all(b"version = 1\n").unwrap();
             zw.start_file("overrides/config/user_edited.toml", opts)
                 .unwrap();
@@ -1327,7 +1328,8 @@ mod tests {
             let opts = SimpleFileOptions::default();
             zw.start_file("modrinth.index.json", opts).unwrap();
             zw.write_all(index_json.to_string().as_bytes()).unwrap();
-            zw.start_file("overrides/config/untouched.toml", opts).unwrap();
+            zw.start_file("overrides/config/untouched.toml", opts)
+                .unwrap();
             zw.write_all(b"version = 2\n").unwrap();
             zw.start_file("overrides/config/user_edited.toml", opts)
                 .unwrap();
