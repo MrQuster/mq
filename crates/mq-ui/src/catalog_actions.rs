@@ -98,6 +98,48 @@ impl UiState {
             .send(UiWorkerCommand::PreviewLocalPack { request_id, path });
     }
 
+    /// Starts looking for newer versions of the files installed in `id`.
+    pub fn check_updates(&mut self, id: InstanceId) {
+        let Some(inst) = self.instances.iter().find(|i| i.id == id) else {
+            return;
+        };
+        let (mc_version, loader) = (inst.mc_version.clone(), inst.loader);
+        self.updates.request_id += 1;
+        self.updates.instance = Some(id.clone());
+        self.updates.checking = true;
+        self.updates.checked = false;
+        self.updates.items.clear();
+        self.updates.error = None;
+        let _ = self.cmd_sender.send(UiWorkerCommand::CheckUpdates {
+            request_id: self.updates.request_id,
+            instance_id: id,
+            mc_version,
+            loader,
+        });
+    }
+
+    /// Updates one file from the last check; progress shows up in the downloads queue.
+    pub fn apply_update(&mut self, index: usize) {
+        let Some(id) = self.updates.instance.clone() else {
+            return;
+        };
+        if index >= self.updates.items.len() {
+            return;
+        }
+        let cand = self.updates.items.remove(index);
+        let (job_id, _cancel) = self.jobs.push(
+            format!("Обновление: {}", cand.new.filename),
+            format!("Инстанс «{id}»"),
+            1,
+            None,
+        );
+        let _ = self.cmd_sender.send(UiWorkerCommand::ApplyUpdate {
+            job_id,
+            instance_id: id,
+            candidate: Box::new(cand),
+        });
+    }
+
     /// Changes the target instance of the open dialog and recomputes the plan.
     pub fn set_install_target(&mut self, id: InstanceId) {
         if let Some(d) = self.install.as_mut() {

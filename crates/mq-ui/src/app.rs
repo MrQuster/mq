@@ -235,6 +235,65 @@ impl MqApp {
                         }
                     });
                 }
+                UiWorkerCommand::CleanupUnusedDeps { instance_id } => {
+                    let inst_dir = self.state.paths.instance_dir(instance_id.as_str());
+                    let mods_dir = inst_dir.join("mods");
+                    let pool = self.state.compute_pool.clone();
+                    let guard = self.state.cancel_epoch.snapshot();
+                    let resp_tx = self.state.resp_sender.clone();
+                    tokio::spawn(async move {
+                        let result = tokio::task::spawn_blocking({
+                            let inst_dir = inst_dir.clone();
+                            let mods_dir = mods_dir.clone();
+                            move || -> Result<usize, String> {
+                                let mut lock = mq_mods::ModLockFile::load_for_instance(&inst_dir);
+                                let mut removed = 0usize;
+                                for key in lock.find_unused_dependencies() {
+                                    let Some(filename) =
+                                        lock.entries.get(&key).map(|e| e.filename.clone())
+                                    else {
+                                        continue;
+                                    };
+                                    for path in [
+                                        mods_dir.join(&filename),
+                                        mods_dir.join(format!("{filename}.disabled")),
+                                    ] {
+                                        if path.exists() {
+                                            let _ = std::fs::remove_file(&path);
+                                        }
+                                    }
+                                    if lock.remove_entry(&key).is_some() {
+                                        removed += 1;
+                                    }
+                                }
+                                if removed > 0 {
+                                    lock.save_for_instance(&inst_dir)
+                                        .map_err(|e| e.to_string())?;
+                                }
+                                Ok(removed)
+                            }
+                        })
+                        .await;
+                        let (removed, error) = match result {
+                            Ok(Ok(n)) => (n, None),
+                            Ok(Err(e)) => (0, Some(e)),
+                            Err(e) => (0, Some(e.to_string())),
+                        };
+
+                        if error.is_none() {
+                            if let Ok(rep) =
+                                mq_mods::scan_mods_directory(&mods_dir, &pool, &guard).await
+                            {
+                                let _ = resp_tx.send(UiWorkerResponse::ScanModsResults {
+                                    mods: rep.mods,
+                                    conflicts: rep.conflicts,
+                                });
+                            }
+                        }
+                        let _ =
+                            resp_tx.send(UiWorkerResponse::UnusedDepsCleaned { removed, error });
+                    });
+                }
                 UiWorkerCommand::ToggleMod {
                     instance_id,
                     file_name,
@@ -925,6 +984,41 @@ impl MqApp {
                         let result = crate::catalog_ops::prepare_modpack(&ctx, &version).await;
                         let _ =
                             resp_tx.send(UiWorkerResponse::ModpackPrepared { request_id, result });
+                    });
+                }
+                UiWorkerCommand::CheckUpdates {
+                    request_id,
+                    instance_id,
+                    mc_version,
+                    loader,
+                } => {
+                    let config = self.state.config.clone();
+                    let dir = self.state.paths.instance_dir(instance_id.as_str());
+                    let resp_tx = self.state.resp_sender.clone();
+                    tokio::spawn(async move {
+                        let result =
+                            crate::catalog_ops::check_updates(&config, &dir, &mc_version, loader)
+                                .await;
+                        let _ =
+                            resp_tx.send(UiWorkerResponse::UpdatesChecked { request_id, result });
+                    });
+                }
+                UiWorkerCommand::ApplyUpdate {
+                    job_id,
+                    instance_id,
+                    candidate,
+                } => {
+                    let ctx = self.ops_ctx();
+                    let resp_tx = self.state.resp_sender.clone();
+                    tokio::spawn(async move {
+                        let result =
+                            crate::catalog_ops::apply_update(&ctx, &instance_id, &candidate)
+                                .await
+                                .map(|()| crate::state::JobOutput {
+                                    instance_id: Some(instance_id.clone()),
+                                    blocked: Vec::new(),
+                                });
+                        let _ = resp_tx.send(UiWorkerResponse::JobFinished { job_id, result });
                     });
                 }
                 UiWorkerCommand::PreviewLocalPack { request_id, path } => {

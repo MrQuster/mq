@@ -1854,6 +1854,55 @@ impl InstancesView {
         lock
     }
 
+    /// "Проверить обновления": newer versions at the source, one-click update with rollback.
+    fn updates_panel(ui: &mut Ui, state: &mut UiState, inst_id: &mq_core::InstanceId) {
+        ui.horizontal(|ui| {
+            if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Проверить обновления")
+                .clicked()
+                && !state.updates.checking
+            {
+                state.check_updates(inst_id.clone());
+            }
+            if state.updates.checking {
+                ui.label(RichText::new("Проверка...").color(TEXT_MUTED));
+            }
+        });
+        if state.updates.instance.as_ref() != Some(inst_id) {
+            return;
+        }
+        if let Some(e) = &state.updates.error {
+            ui.label(RichText::new(e).color(STATUS_DANGER));
+        }
+        if state.updates.checked && state.updates.items.is_empty() && state.updates.error.is_none()
+        {
+            ui.label(RichText::new("Все установленные файлы актуальны").color(TEXT_MUTED));
+        }
+        let mut apply = None;
+        for (i, c) in state.updates.items.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{} -> {}", c.old_filename, c.new.filename))
+                        .color(TEXT_PRIMARY),
+                );
+                version_badge(
+                    ui,
+                    match c.source {
+                        mq_mods::CatalogSource::Modrinth => "Modrinth",
+                        mq_mods::CatalogSource::CurseForge => "CurseForge",
+                    },
+                    ACCENT_COBALT,
+                );
+                if secondary_glass_button(ui, None, "Обновить").clicked() {
+                    apply = Some(i);
+                }
+            });
+        }
+        if let Some(i) = apply {
+            state.apply_update(i);
+        }
+        ui.add_space(4.0);
+    }
+
     fn render_mods_tab(&mut self, ui: &mut Ui, state: &mut UiState, inst_id: &mq_core::InstanceId) {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
@@ -1867,6 +1916,13 @@ impl InstancesView {
                     instance_id: inst_id.clone(),
                 });
             }
+            if secondary_glass_button(ui, Some(VectorIcon::Trash), "Удалить неиспользуемые")
+                .clicked()
+            {
+                let _ = state.cmd_sender.send(UiWorkerCommand::CleanupUnusedDeps {
+                    instance_id: inst_id.clone(),
+                });
+            }
             if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть mods/").clicked()
             {
                 let mods_dir = state.paths.instance_dir(inst_id.as_str()).join("mods");
@@ -1875,6 +1931,7 @@ impl InstancesView {
         });
 
         ui.add_space(4.0);
+        Self::updates_panel(ui, state, inst_id);
 
         if !state.mod_conflicts.is_empty() {
             let warn_frame = egui::Frame::new()

@@ -53,6 +53,10 @@ pub enum UiWorkerResponse {
         job_id: u64,
         result: Result<JobOutput, String>,
     },
+    UpdatesChecked {
+        request_id: u64,
+        result: Result<Vec<crate::catalog_flow::UpdateCandidate>, String>,
+    },
     ManualProgress {
         pending: Vec<mq_mods::BlockedDownload>,
         newly_done: Vec<String>,
@@ -60,6 +64,10 @@ pub enum UiWorkerResponse {
     ScanModsResults {
         mods: Vec<InstalledModEntry>,
         conflicts: Vec<ModConflict>,
+    },
+    UnusedDepsCleaned {
+        removed: usize,
+        error: Option<String>,
     },
     VersionManifestFetched(Vec<(String, String)>),
     InstanceInstallStarted(InstanceId),
@@ -112,6 +120,17 @@ pub enum UiWorkerCommand {
         request_id: u64,
         version: mq_mods::ProjectVersion,
     },
+    CheckUpdates {
+        request_id: u64,
+        instance_id: InstanceId,
+        mc_version: String,
+        loader: ModLoaderKind,
+    },
+    ApplyUpdate {
+        job_id: u64,
+        instance_id: InstanceId,
+        candidate: Box<crate::catalog_flow::UpdateCandidate>,
+    },
     PreviewLocalPack {
         request_id: u64,
         path: std::path::PathBuf,
@@ -145,6 +164,9 @@ pub enum UiWorkerCommand {
         instance_name: Option<String>,
     },
     ScanInstanceMods {
+        instance_id: InstanceId,
+    },
+    CleanupUnusedDeps {
         instance_id: InstanceId,
     },
     ToggleMod {
@@ -227,6 +249,7 @@ pub struct UiState {
     pub project: crate::catalog_flow::ProjectViewState,
     pub install: Option<crate::catalog_flow::InstallDialog>,
     pub jobs: crate::catalog_flow::JobQueue,
+    pub updates: crate::catalog_flow::UpdatesState,
     pub manual: crate::catalog_flow::ManualDownloadState,
     pub manual_watcher: Option<crate::catalog_ops::SharedWatcher>,
     pub install_seq: u64,
@@ -335,6 +358,7 @@ impl UiState {
             project: crate::catalog_flow::ProjectViewState::default(),
             install: None,
             jobs: crate::catalog_flow::JobQueue::default(),
+            updates: crate::catalog_flow::UpdatesState::default(),
             manual: crate::catalog_flow::ManualDownloadState::default(),
             manual_watcher: None,
             install_seq: 0,
@@ -367,6 +391,11 @@ impl UiState {
             Ok(out) => {
                 self.jobs.finish(job_id, Ok(()));
                 let _ = self.cmd_sender.send(UiWorkerCommand::RefreshInstances);
+                if let Some(id) = self.selected_instance_id.clone() {
+                    let _ = self
+                        .cmd_sender
+                        .send(UiWorkerCommand::ScanInstanceMods { instance_id: id });
+                }
                 if let Some(id) = out.instance_id {
                     if !out.blocked.is_empty() {
                         self.open_manual_dialog(&id, out.blocked);
@@ -442,6 +471,16 @@ impl UiState {
                     done,
                     total,
                 } => self.jobs.progress(job_id, done, total),
+                UiWorkerResponse::UpdatesChecked { request_id, result } => {
+                    if request_id == self.updates.request_id {
+                        self.updates.checking = false;
+                        self.updates.checked = true;
+                        match result {
+                            Ok(items) => self.updates.items = items,
+                            Err(e) => self.updates.error = Some(e),
+                        }
+                    }
+                }
                 UiWorkerResponse::JobFinished { job_id, result } => {
                     self.finish_job(job_id, result);
                 }
@@ -464,6 +503,18 @@ impl UiState {
                     self.installed_mods = mods;
                     self.mod_conflicts = conflicts;
                     self.is_scanning_mods = false;
+                }
+                UiWorkerResponse::UnusedDepsCleaned { removed, error } => {
+                    self.status_message = Some(match error {
+                        Some(e) => (format!("Не удалось очистить зависимости: {e}"), true),
+                        None if removed == 0 => {
+                            ("Неиспользуемых зависимостей не найдено".to_string(), false)
+                        }
+                        None => (
+                            format!("Удалено неиспользуемых зависимостей: {removed}"),
+                            false,
+                        ),
+                    });
                 }
                 UiWorkerResponse::VersionManifestFetched(versions) => {
                     self.remote_versions = versions;

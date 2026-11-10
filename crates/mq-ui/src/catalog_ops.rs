@@ -290,6 +290,98 @@ pub async fn run_content_job(
     Ok(())
 }
 
+/// Looks for newer versions of everything recorded in the instance lock files.
+/// Manually added files (no source) are skipped; blocked downloads are not offered.
+pub async fn check_updates(
+    config: &AppConfig,
+    instance_dir: &Path,
+    mc_version: &str,
+    loader: mq_core::ModLoaderKind,
+) -> Result<Vec<crate::catalog_flow::UpdateCandidate>, String> {
+    let mut found = Vec::new();
+    for kind in [
+        ProjectKind::Mod,
+        ProjectKind::ResourcePack,
+        ProjectKind::Shader,
+    ] {
+        let dir = instance_dir.to_path_buf();
+        let lock = tokio::task::spawn_blocking(move || {
+            mq_mods::ModLockFile::load_or_default(&mq_mods::content_target_dir(&dir, kind))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        for entry in lock.entries.values().take(200) {
+            let source = match entry.source {
+                LockSource::Modrinth => CatalogSource::Modrinth,
+                LockSource::CurseForge => CatalogSource::CurseForge,
+                LockSource::Manual => continue,
+            };
+            if entry.project_id.is_empty() || entry.kind != kind {
+                continue;
+            }
+            let req = PlanRequest {
+                source,
+                project_id: entry.project_id.clone(),
+                mc_version: mc_version.to_string(),
+                loader: crate::catalog_actions::loader_filter(kind, loader),
+                kind,
+                selected_optionals: BTreeSet::new(),
+                instance_dir: None,
+            };
+            // A source that fails (no key, offline) just yields no candidates for its entries.
+            let Ok(outcome) = plan_content(config, &req).await else {
+                continue;
+            };
+            let root = outcome
+                .plan
+                .downloads
+                .iter()
+                .rev()
+                .find(|d| d.project_id == entry.project_id)
+                .or_else(|| outcome.plan.downloads.last());
+            if let Some(new) = root {
+                if !new.is_download_blocked()
+                    && new.version_id != entry.version_id
+                    && new.filename != entry.filename
+                {
+                    found.push(crate::catalog_flow::UpdateCandidate {
+                        source,
+                        kind,
+                        project_id: entry.project_id.clone(),
+                        old_filename: entry.filename.clone(),
+                        old_version_id: entry.version_id.clone(),
+                        new: new.clone(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Replaces one installed file; the previous file is restored if the update fails.
+pub async fn apply_update(
+    ctx: &OpsCtx,
+    instance_id: &InstanceId,
+    cand: &crate::catalog_flow::UpdateCandidate,
+) -> Result<(), String> {
+    let dir = mq_mods::content_target_dir(&ctx.paths.instance_dir(instance_id.as_str()), cand.kind);
+    let guard = ctx.epoch.snapshot();
+    mq_mods::update_installed_content(
+        &dir,
+        &cand.old_filename,
+        &cand.new,
+        cand.kind,
+        lock_source(cand.source),
+        &ctx.paths,
+        &ctx.net,
+        &guard,
+    )
+    .await
+    .map(|_| ())
+    .map_err(|e| err_text(&ctx.config, &e))
+}
+
 fn is_mrpack(name: &str) -> bool {
     name.to_ascii_lowercase().ends_with(".mrpack")
 }

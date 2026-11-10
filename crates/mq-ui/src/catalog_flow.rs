@@ -475,6 +475,28 @@ impl InstallDialog {
     }
 }
 
+/// One installed file that has a newer version at its source.
+#[derive(Debug, Clone)]
+pub struct UpdateCandidate {
+    pub source: mq_mods::CatalogSource,
+    pub kind: ProjectKind,
+    pub project_id: String,
+    pub old_filename: String,
+    pub old_version_id: String,
+    pub new: mq_mods::ResolvedModDownload,
+}
+
+/// State of the "check for updates" panel of the instance mods tab.
+#[derive(Default)]
+pub struct UpdatesState {
+    pub instance: Option<InstanceId>,
+    pub checking: bool,
+    pub checked: bool,
+    pub items: Vec<UpdateCandidate>,
+    pub error: Option<String>,
+    pub request_id: u64,
+}
+
 /// Human-readable size (`12.3 МБ`).
 pub fn format_size(bytes: u64) -> String {
     const KB: f64 = 1024.0;

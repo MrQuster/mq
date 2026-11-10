@@ -380,6 +380,18 @@ fn manual_window(ctx: &Context, state: &mut UiState) {
                 .color(TEXT_MUTED)
                 .small(),
         );
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("Осталось: {}", state.manual.remaining()))
+                    .color(TEXT_PRIMARY)
+                    .strong(),
+            );
+            ui.label(
+                RichText::new("Перетащите скачанный файл в окно лаунчера")
+                    .color(TEXT_MUTED)
+                    .small(),
+            );
+        });
         ui.add_space(8.0);
         for b in &state.manual.pending {
             ui.horizontal(|ui| {
@@ -408,16 +420,24 @@ fn manual_window(ctx: &Context, state: &mut UiState) {
     if close {
         state.manual.open = false;
     }
+    // Files dragged into the window are handed to the watcher immediately.
+    let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+        i.raw
+            .dropped_files
+            .iter()
+            .filter_map(|f| f.path.clone())
+            .collect()
+    });
     // Poll the downloads folder at most every 2 seconds.
     let due = state
         .manual
         .last_poll
         .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(2));
-    if state.manual.open && due {
+    if state.manual.open && (due || !dropped.is_empty()) {
         state.manual.last_poll = Some(std::time::Instant::now());
-        let _ = state.cmd_sender.send(UiWorkerCommand::PollManual {
-            dropped: Vec::new(),
-        });
+        let _ = state
+            .cmd_sender
+            .send(UiWorkerCommand::PollManual { dropped });
     }
     ctx.request_repaint_after(std::time::Duration::from_secs(2));
 }
