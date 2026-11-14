@@ -144,6 +144,31 @@ pub enum LaunchAction {
     HideUntilExit,
 }
 
+/// Launcher backdrop style applied behind main workspace panels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BackgroundStyle {
+    /// Layered gradient mesh with a subtle architectural grid and corner crosshairs.
+    #[default]
+    Procedural,
+    /// Flat solid background color from the active theme.
+    Solid,
+    /// User-supplied image backdrop with configurable dimming.
+    CustomImage,
+}
+
+impl BackgroundStyle {
+    pub const ALL: [Self; 3] = [Self::Procedural, Self::Solid, Self::CustomImage];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Procedural => "Процедурный фон",
+            Self::Solid => "Однотонный",
+            Self::CustomImage => "Своё изображение",
+        }
+    }
+}
+
 /// Complete theme and UI styling configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -164,6 +189,7 @@ pub struct ThemeConfig {
     pub density: UiDensity,
     pub ui_scale: f32,
     pub font_size: f32,
+    pub background_style: BackgroundStyle,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backdrop_path: Option<String>,
     pub backdrop_dim: f32,
@@ -185,16 +211,17 @@ impl ThemeConfig {
             border_glow: 0.0,
             bg_window: [0x0F, 0x11, 0x15],
             bg_card: [0x1A, 0x1E, 0x26],
-            accent_primary: [0x3D, 0xDC, 0x97],
-            accent_secondary: [0x34, 0xC3, 0x86],
+            accent_primary: [0x4C, 0x9A, 0x82],
+            accent_secondary: [0x3D, 0x83, 0x6D],
             text_primary: [0xE6, 0xE8, 0xEE],
             text_muted: [0x9A, 0xA1, 0xB2],
-            status_success: [0x3D, 0xDC, 0x97],
+            status_success: [0x4C, 0x9A, 0x82],
             status_error: [0xE5, 0x48, 0x4D],
             corner_radius: 8.0,
             density: UiDensity::Comfortable,
             ui_scale: 1.0,
             font_size: 14.0,
+            background_style: BackgroundStyle::Procedural,
             backdrop_path: None,
             backdrop_dim: 0.0,
             launch_action: LaunchAction::KeepOpen,
@@ -213,12 +240,13 @@ impl ThemeConfig {
             accent_secondary: [0x4A, 0x7C, 0xD8],
             text_primary: [0xEA, 0xEA, 0xEA],
             text_muted: [0xA0, 0xA0, 0xA0],
-            status_success: [0x3D, 0xDC, 0x97],
+            status_success: [0x4C, 0x9A, 0x82],
             status_error: [0xE5, 0x48, 0x4D],
             corner_radius: 8.0,
             density: UiDensity::Comfortable,
             ui_scale: 1.0,
             font_size: 14.0,
+            background_style: BackgroundStyle::Procedural,
             backdrop_path: None,
             backdrop_dim: 0.0,
             launch_action: LaunchAction::KeepOpen,
@@ -233,16 +261,17 @@ impl ThemeConfig {
             border_glow: 0.0,
             bg_window: [0x11, 0x12, 0x15],
             bg_card: [0x1C, 0x1F, 0x26],
-            accent_primary: [0x1B, 0xD9, 0x6A],
-            accent_secondary: [0x17, 0xBF, 0x5D],
+            accent_primary: [0x2E, 0x9E, 0x6B],
+            accent_secondary: [0x24, 0x83, 0x57],
             text_primary: [0xED, 0xED, 0xED],
             text_muted: [0x9D, 0xA3, 0xAF],
-            status_success: [0x1B, 0xD9, 0x6A],
+            status_success: [0x2E, 0x9E, 0x6B],
             status_error: [0xE5, 0x48, 0x4D],
             corner_radius: 8.0,
             density: UiDensity::Comfortable,
             ui_scale: 1.0,
             font_size: 14.0,
+            background_style: BackgroundStyle::Procedural,
             backdrop_path: None,
             backdrop_dim: 0.0,
             launch_action: LaunchAction::KeepOpen,
@@ -267,6 +296,7 @@ impl ThemeConfig {
             density: UiDensity::Comfortable,
             ui_scale: 1.0,
             font_size: 14.0,
+            background_style: BackgroundStyle::Procedural,
             backdrop_path: None,
             backdrop_dim: 0.0,
             launch_action: LaunchAction::KeepOpen,
@@ -291,6 +321,7 @@ impl ThemeConfig {
             density: UiDensity::Comfortable,
             ui_scale: 1.0,
             font_size: 14.0,
+            background_style: BackgroundStyle::Procedural,
             backdrop_path: None,
             backdrop_dim: 0.0,
             launch_action: LaunchAction::KeepOpen,
@@ -315,6 +346,7 @@ impl ThemeConfig {
             density: UiDensity::Comfortable,
             ui_scale: 1.0,
             font_size: 14.0,
+            background_style: BackgroundStyle::Procedural,
             backdrop_path: None,
             backdrop_dim: 0.0,
             launch_action: LaunchAction::KeepOpen,
@@ -334,7 +366,9 @@ impl ThemeConfig {
                 return;
             }
         };
+        new_cfg.background_style = self.background_style;
         new_cfg.backdrop_path = self.backdrop_path.clone();
+        new_cfg.backdrop_dim = self.backdrop_dim;
         new_cfg.launch_action = self.launch_action;
         *self = new_cfg;
     }
@@ -765,16 +799,18 @@ mod tests {
         assert_eq!(md.window_opacity, 1.0);
         assert_eq!(md.card_opacity, 1.0);
         assert_eq!(md.bg_window, [0x0F, 0x11, 0x15]);
-        assert_eq!(md.accent_primary, [0x3D, 0xDC, 0x97]);
+        assert_eq!(md.accent_primary, [0x4C, 0x9A, 0x82]);
+        assert_eq!(md.background_style, BackgroundStyle::Procedural);
 
         let prism = ThemeConfig::preset_prism_classic_dark();
         assert_eq!(prism.preset, ThemePreset::PrismClassicDark);
         assert_eq!(prism.bg_window, [0x19, 0x19, 0x19]);
         assert_eq!(prism.accent_primary, [0x5B, 0x8D, 0xEF]);
+        assert_eq!(prism.status_success, [0x4C, 0x9A, 0x82]);
 
         let modrinth = ThemeConfig::preset_modrinth_emerald();
         assert_eq!(modrinth.preset, ThemePreset::ModrinthEmerald);
-        assert_eq!(modrinth.accent_primary, [0x1B, 0xD9, 0x6A]);
+        assert_eq!(modrinth.accent_primary, [0x2E, 0x9E, 0x6B]);
 
         let cat = ThemeConfig::preset_catppuccin_mocha();
         assert_eq!(cat.preset, ThemePreset::CatppuccinMocha);
@@ -787,6 +823,29 @@ mod tests {
         let light = ThemeConfig::preset_light_clean();
         assert_eq!(light.preset, ThemePreset::LightClean);
         assert_eq!(light.accent_primary, [0x05, 0x96, 0x69]);
+    }
+
+    #[test]
+    fn background_style_persists_through_toml_and_apply_preset() {
+        let mut cfg = ThemeConfig::preset_matte_dark();
+        cfg.background_style = BackgroundStyle::CustomImage;
+        cfg.backdrop_path = Some("/tmp/wall.png".into());
+        cfg.backdrop_dim = 0.45;
+
+        cfg.apply_preset(ThemePreset::LightClean);
+        assert_eq!(cfg.preset, ThemePreset::LightClean);
+        assert_eq!(cfg.background_style, BackgroundStyle::CustomImage);
+        assert_eq!(cfg.backdrop_path.as_deref(), Some("/tmp/wall.png"));
+        assert!((cfg.backdrop_dim - 0.45).abs() < 1e-6);
+
+        let toml_str = toml::to_string_pretty(&cfg).expect("serialize theme");
+        let parsed: ThemeConfig = toml::from_str(&toml_str).expect("deserialize theme");
+        assert_eq!(parsed.background_style, BackgroundStyle::CustomImage);
+
+        // Legacy TOML without background_style falls back cleanly to Procedural.
+        let legacy_toml = "preset = \"matte_dark\"\n";
+        let legacy: ThemeConfig = toml::from_str(legacy_toml).expect("parse legacy theme");
+        assert_eq!(legacy.background_style, BackgroundStyle::Procedural);
     }
 
     #[test]

@@ -12,10 +12,12 @@ use crate::instances_view::InstancesView;
 use crate::perf_view::PerfView;
 use crate::settings_view::SettingsView;
 use crate::sidebar::{
-    render_sidebar_with_state, sidebar_width, NavTab, SidebarAction, SidebarState,
+    build_app_icon, render_sidebar_with_state, sidebar_width, NavTab, SidebarAction, SidebarState,
 };
 use crate::state::{UiState, UiWorkerCommand, UiWorkerResponse};
-use crate::theme::{apply_theme, solid_sidebar_frame, Tokens};
+use crate::theme::{
+    apply_theme, paint_launcher_background, solid_hud_frame, solid_sidebar_frame, Tokens,
+};
 
 #[cfg(any(feature = "test-hooks", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1213,16 +1215,26 @@ impl MqApp {
             watchdog_violations: self.state.watchdog.violation_count(),
         };
 
-        TopBottomPanel::bottom("mq_hud").show(ctx, |ui| {
-            render_bottom_hud(ui, &hud_data);
-        });
+        TopBottomPanel::bottom("mq_hud")
+            .frame(solid_hud_frame(&tokens))
+            .show(ctx, |ui| {
+                render_bottom_hud(ui, &hud_data);
+            });
 
-        CentralPanel::default().show(ctx, |ui| match self.current_tab {
-            NavTab::Instances => self.instances_view.ui(ui, &mut self.state),
-            NavTab::Catalog => self.catalog_view.ui(ui, &mut self.state),
-            NavTab::Accounts => self.accounts_view.ui(ui, &mut self.state),
-            NavTab::Downloads | NavTab::Performance => self.perf_view.ui(ui, &self.state),
-            NavTab::Settings => self.settings_view.ui(ui, &mut self.state),
+        let panel_frame = egui::Frame::new()
+            .fill(egui::Color32::TRANSPARENT)
+            .inner_margin(egui::Margin::same(16));
+        CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
+            let bg_rect = ui.max_rect().expand(16.0);
+            let bg_painter = ui.painter().with_clip_rect(bg_rect);
+            paint_launcher_background(ctx, &bg_painter, bg_rect, &self.state.config.theme, &tokens);
+            match self.current_tab {
+                NavTab::Instances => self.instances_view.ui(ui, &mut self.state),
+                NavTab::Catalog => self.catalog_view.ui(ui, &mut self.state),
+                NavTab::Accounts => self.accounts_view.ui(ui, &mut self.state),
+                NavTab::Downloads | NavTab::Performance => self.perf_view.ui(ui, &self.state),
+                NavTab::Settings => self.settings_view.ui(ui, &mut self.state),
+            }
         });
     }
     #[cfg(feature = "test-hooks")]
@@ -1587,17 +1599,27 @@ impl MqApp {
             watchdog_violations: self.state.watchdog.violation_count(),
         };
 
-        TopBottomPanel::bottom("mq_hud").show(ctx, |ui| {
-            render_bottom_hud(ui, &hud_data);
-        });
+        TopBottomPanel::bottom("mq_hud")
+            .frame(solid_hud_frame(&tokens))
+            .show(ctx, |ui| {
+                render_bottom_hud(ui, &hud_data);
+            });
 
         // 3. Central Panel (Active view)
-        CentralPanel::default().show(ctx, |ui| match self.current_tab {
-            NavTab::Instances => self.instances_view.ui(ui, &mut self.state),
-            NavTab::Catalog => self.catalog_view.ui(ui, &mut self.state),
-            NavTab::Accounts => self.accounts_view.ui(ui, &mut self.state),
-            NavTab::Downloads | NavTab::Performance => self.perf_view.ui(ui, &self.state),
-            NavTab::Settings => self.settings_view.ui(ui, &mut self.state),
+        let panel_frame = egui::Frame::new()
+            .fill(egui::Color32::TRANSPARENT)
+            .inner_margin(egui::Margin::same(16));
+        CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
+            let bg_rect = ui.max_rect().expand(16.0);
+            let bg_painter = ui.painter().with_clip_rect(bg_rect);
+            paint_launcher_background(ctx, &bg_painter, bg_rect, &self.state.config.theme, &tokens);
+            match self.current_tab {
+                NavTab::Instances => self.instances_view.ui(ui, &mut self.state),
+                NavTab::Catalog => self.catalog_view.ui(ui, &mut self.state),
+                NavTab::Accounts => self.accounts_view.ui(ui, &mut self.state),
+                NavTab::Downloads | NavTab::Performance => self.perf_view.ui(ui, &self.state),
+                NavTab::Settings => self.settings_view.ui(ui, &mut self.state),
+            }
         });
 
         // 4. Modal Recovery Dialog (if previous installation terminated unexpectedly)
@@ -1742,7 +1764,8 @@ pub fn run_gui(state: UiState, backend: GuiBackend) -> Result<(), eframe::Error>
             .with_inner_size([1180.0, 740.0])
             .with_min_inner_size([960.0, 600.0])
             .with_transparent(false)
-            .with_decorations(true),
+            .with_decorations(true)
+            .with_icon(build_app_icon()),
         renderer: match backend {
             GuiBackend::Vulkan => eframe::Renderer::Wgpu,
             GuiBackend::Gl => eframe::Renderer::Glow,

@@ -234,38 +234,140 @@ pub const fn account_source_label(kind: AccountKind) -> &'static str {
     }
 }
 
-/// Paints the crisp geometric `MQ` isometric cube emblem inside `rect` (graphite + accent, no gradients).
+/// Paints the minimalist geometric `MQ` emblem inside `rect` (clean squircle + `Q` frame + `M` glyph).
 pub fn paint_mq_emblem(painter: &Painter, rect: Rect, tokens: &Tokens) {
-    painter.rect_filled(rect, CornerRadius::same(6), tokens.bg_surface);
+    let rx = (rect.width() * 0.22).round().max(4.0);
+    let corner = CornerRadius::same(rx as u8);
+    painter.rect_filled(rect, corner, tokens.bg_surface);
     painter.rect_stroke(
         rect,
-        CornerRadius::same(6),
-        Stroke::new(1.0_f32, tokens.accent.gamma_multiply(0.7)),
+        corner,
+        Stroke::new(1.0_f32, tokens.border_strong),
         StrokeKind::Inside,
     );
 
-    let r = rect.shrink(5.0);
-    let p = |nx: f32, ny: f32| Pos2::new(r.left() + r.width() * nx, r.top() + r.height() * ny);
+    let p = |nx: f32, ny: f32| {
+        Pos2::new(
+            rect.left() + rect.width() * nx,
+            rect.top() + rect.height() * ny,
+        )
+    };
 
-    let hex = vec![
-        p(0.50, 0.06),
-        p(0.90, 0.28),
-        p(0.90, 0.72),
-        p(0.50, 0.94),
-        p(0.10, 0.72),
-        p(0.10, 0.28),
-    ];
-    painter.add(Shape::closed_line(hex, Stroke::new(1.5_f32, tokens.accent)));
-
-    let m_stroke = Stroke::new(1.8_f32, tokens.text);
-    painter.line_segment([p(0.26, 0.68), p(0.26, 0.34)], m_stroke);
-    painter.line_segment([p(0.26, 0.34), p(0.50, 0.54)], m_stroke);
-    painter.line_segment([p(0.50, 0.54), p(0.74, 0.34)], m_stroke);
-    painter.line_segment([p(0.74, 0.34), p(0.74, 0.68)], m_stroke);
-    painter.line_segment(
-        [p(0.56, 0.58), p(0.78, 0.78)],
-        Stroke::new(1.8_f32, tokens.accent),
+    // Outer geometric `Q` rounded-square ring + bottom-right diagonal tail
+    let q_rect = Rect::from_min_max(p(0.19, 0.19), p(0.79, 0.79));
+    let q_stroke_w = (rect.width() * 0.085).clamp(1.6, 4.0);
+    painter.rect_stroke(
+        q_rect,
+        CornerRadius::same((rect.width() * 0.14).round().max(3.0) as u8),
+        Stroke::new(q_stroke_w, tokens.accent),
+        StrokeKind::Middle,
     );
+    painter.line_segment(
+        [p(0.69, 0.69), p(0.85, 0.85)],
+        Stroke::new((rect.width() * 0.095).clamp(1.8, 4.4), tokens.accent),
+    );
+
+    // Centered crisp geometric `M` inside the `Q` frame
+    let m_stroke = Stroke::new((rect.width() * 0.082).clamp(1.6, 3.8), tokens.text);
+    let m_pts = vec![
+        p(0.34, 0.61),
+        p(0.34, 0.35),
+        p(0.49, 0.50),
+        p(0.64, 0.35),
+        p(0.64, 0.61),
+    ];
+    painter.add(Shape::line(m_pts, m_stroke));
+}
+
+/// Builds a `64x64` antialiased window/taskbar icon matching the minimalist geometric `MQ` emblem.
+pub fn build_app_icon() -> egui::IconData {
+    const SIZE: usize = 64;
+    const SS: usize = 4; // 4x4 supersampling for crisp subpixel edges
+
+    let mut rgba = vec![0u8; SIZE * SIZE * 4];
+    let bg = [0x12u8, 0x15, 0x1B];
+    let border = [0x2A, 0x31, 0x3E];
+    let accent = [0x4C, 0x9A, 0x82];
+    let fg = [0xE6, 0xE8, 0xEE];
+
+    fn sd_rounded_box(px: f32, py: f32, cx: f32, cy: f32, hx: f32, hy: f32, r: f32) -> f32 {
+        let qx = (px - cx).abs() - (hx - r);
+        let qy = (py - cy).abs() - (hy - r);
+        let ax = qx.max(0.0);
+        let ay = qy.max(0.0);
+        (ax * ax + ay * ay).sqrt() + qx.max(qy).min(0.0) - r
+    }
+
+    fn sd_segment(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+        let pax = px - ax;
+        let pay = py - ay;
+        let bax = bx - ax;
+        let bay = by - ay;
+        let h = ((pax * bax + pay * bay) / (bax * bax + bay * bay)).clamp(0.0, 1.0);
+        let dx = pax - bax * h;
+        let dy = pay - bay * h;
+        (dx * dx + dy * dy).sqrt()
+    }
+
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let mut acc_r = 0.0_f32;
+            let mut acc_g = 0.0_f32;
+            let mut acc_b = 0.0_f32;
+            let mut acc_a = 0.0_f32;
+
+            for sy in 0..SS {
+                for sx in 0..SS {
+                    let nx = ((x * SS + sx) as f32 + 0.5) / ((SIZE * SS) as f32);
+                    let ny = ((y * SS + sy) as f32 + 0.5) / ((SIZE * SS) as f32);
+
+                    let d_outer = sd_rounded_box(nx, ny, 0.5, 0.5, 0.47, 0.47, 0.11);
+                    if d_outer > 0.0 {
+                        continue;
+                    }
+
+                    let mut col = if d_outer > -0.022 { border } else { bg };
+
+                    let d_q_box =
+                        sd_rounded_box(nx, ny, 0.49, 0.49, 0.295, 0.295, 0.085).abs() - 0.044;
+                    let d_q_tail = sd_segment(nx, ny, 0.69, 0.69, 0.85, 0.85) - 0.048;
+                    if d_q_box.min(d_q_tail) <= 0.0 {
+                        col = accent;
+                    }
+
+                    let m_r = 0.041;
+                    let d_m = sd_segment(nx, ny, 0.34, 0.61, 0.34, 0.35)
+                        .min(sd_segment(nx, ny, 0.34, 0.35, 0.49, 0.50))
+                        .min(sd_segment(nx, ny, 0.49, 0.50, 0.64, 0.35))
+                        .min(sd_segment(nx, ny, 0.64, 0.35, 0.64, 0.61))
+                        - m_r;
+                    if d_m <= 0.0 {
+                        col = fg;
+                    }
+
+                    acc_r += col[0] as f32;
+                    acc_g += col[1] as f32;
+                    acc_b += col[2] as f32;
+                    acc_a += 255.0;
+                }
+            }
+
+            let samples = (SS * SS) as f32;
+            let idx = (y * SIZE + x) * 4;
+            if acc_a > 0.0 {
+                rgba[idx] = (acc_r / acc_a * 255.0).round() as u8;
+                rgba[idx + 1] = (acc_g / acc_a * 255.0).round() as u8;
+                rgba[idx + 2] = (acc_b / acc_a * 255.0).round() as u8;
+                rgba[idx + 3] = (acc_a / samples).round() as u8;
+            }
+        }
+    }
+
+    egui::IconData {
+        rgba,
+        width: SIZE as u32,
+        height: SIZE as u32,
+    }
 }
 
 #[inline]

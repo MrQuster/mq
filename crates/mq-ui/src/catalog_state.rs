@@ -152,6 +152,8 @@ pub struct CatalogState {
     pub request_seq: u64,
     pub latest_request: Arc<AtomicU64>,
     pub icons: HashMap<String, IconSlot>,
+    /// Multi-select queue of catalog entries awaiting batch installation.
+    pub batch_queue: Vec<CatalogHit>,
 }
 
 impl Default for CatalogState {
@@ -171,7 +173,50 @@ impl Default for CatalogState {
             request_seq: 0,
             latest_request: Arc::new(AtomicU64::new(0)),
             icons: HashMap::new(),
+            batch_queue: Vec::new(),
         }
+    }
+}
+
+impl CatalogState {
+    /// Returns `true` if `hit` is currently in the batch installation queue.
+    pub fn is_queued(&self, source: CatalogSource, project_id: &str) -> bool {
+        self.batch_queue
+            .iter()
+            .any(|item| item.source == source && item.project_id == project_id)
+    }
+
+    /// Toggles `hit` in the batch queue and returns `true` if it is now queued.
+    pub fn toggle_queue(&mut self, hit: CatalogHit) -> bool {
+        if let Some(pos) = self
+            .batch_queue
+            .iter()
+            .position(|item| item.source == hit.source && item.project_id == hit.project_id)
+        {
+            self.batch_queue.remove(pos);
+            false
+        } else {
+            self.batch_queue.push(hit);
+            true
+        }
+    }
+
+    /// Removes every entry matching the `(source, project_id)` pairs.
+    pub fn remove_queued<'a>(&mut self, items: impl IntoIterator<Item = (CatalogSource, &'a str)>) {
+        let targets: Vec<(CatalogSource, String)> = items
+            .into_iter()
+            .map(|(source, id)| (source, id.to_string()))
+            .collect();
+        self.batch_queue.retain(|entry| {
+            !targets
+                .iter()
+                .any(|(src, id)| *src == entry.source && id == &entry.project_id)
+        });
+    }
+
+    /// Clears all items from the batch installation queue.
+    pub fn clear_queue(&mut self) {
+        self.batch_queue.clear();
     }
 }
 
@@ -451,5 +496,25 @@ mod tests {
         assert_eq!(icon_cache_name("a"), icon_cache_name("a"));
         assert_ne!(icon_cache_name("a"), icon_cache_name("b"));
         assert_eq!(icon_cache_name("").len(), 16 + 4);
+    }
+
+    #[test]
+    fn batch_queue_toggles_and_removes_by_source_and_id() {
+        let mut s = CatalogState::default();
+        let h1 = hit(CatalogSource::Modrinth, "sodium", "Sodium", 100);
+        let h2 = hit(CatalogSource::CurseForge, "sodium", "Sodium CF", 90);
+        assert!(s.toggle_queue(h1.clone()));
+        assert!(s.is_queued(CatalogSource::Modrinth, "sodium"));
+        assert!(!s.is_queued(CatalogSource::CurseForge, "sodium"));
+        assert!(s.toggle_queue(h2));
+        assert_eq!(s.batch_queue.len(), 2);
+
+        // Toggling existing Modrinth entry removes only that source+id.
+        assert!(!s.toggle_queue(h1));
+        assert_eq!(s.batch_queue.len(), 1);
+        assert!(s.is_queued(CatalogSource::CurseForge, "sodium"));
+
+        s.remove_queued([(CatalogSource::CurseForge, "sodium")]);
+        assert!(s.batch_queue.is_empty());
     }
 }

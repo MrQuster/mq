@@ -156,6 +156,8 @@ pub async fn load_project(
 pub struct PlanRequest {
     pub source: CatalogSource,
     pub project_id: String,
+    /// Additional `(source, project_id)` entries for batch installation planning.
+    pub extra_projects: Vec<(CatalogSource, String)>,
     pub mc_version: String,
     pub loader: Option<ModLoaderKind>,
     pub kind: ProjectKind,
@@ -164,11 +166,12 @@ pub struct PlanRequest {
     pub instance_dir: Option<PathBuf>,
 }
 
-/// Dependency plan plus display titles for every project id mentioned in it.
+/// Dependency plan plus display titles and source map for every project id mentioned in it.
 #[derive(Debug, Clone)]
 pub struct PlanOutcome {
     pub plan: DependencyResolutionPlan,
     pub titles: HashMap<String, String>,
+    pub sources: HashMap<String, CatalogSource>,
 }
 
 /// Project ids/slugs recorded in the instance lockfile (blocking file read).
@@ -182,10 +185,104 @@ pub fn installed_project_ids(instance_dir: &Path, kind: ProjectKind) -> BTreeSet
         .collect()
 }
 
-async fn plan_with<P>(provider: &P, req: &PlanRequest) -> Result<PlanOutcome, String>
+/// Merges and deduplicates dependency plans across one or more explicitly selected projects.
+///
+/// Any requested root project keeps `is_dependency = false` even if another queued item depends on it.
+pub fn merge_dependency_plans(
+    plans: Vec<(CatalogSource, String, DependencyResolutionPlan)>,
+) -> (DependencyResolutionPlan, HashMap<String, CatalogSource>) {
+    use std::collections::HashSet;
+
+    let mut explicit_roots: HashSet<String> = HashSet::with_capacity(plans.len() * 2);
+    for (_, root_id, sub) in &plans {
+        explicit_roots.insert(root_id.clone());
+        for dl in &sub.downloads {
+            if !dl.is_dependency {
+                explicit_roots.insert(dl.project_id.clone());
+            }
+        }
+    }
+
+    let mut merged = DependencyResolutionPlan::default();
+    let mut sources = HashMap::new();
+    let mut seen_dl: HashSet<String> = HashSet::new();
+    let mut seen_opt: HashSet<(Option<String>, Option<String>)> = HashSet::new();
+    let mut seen_emb: HashSet<(Option<String>, Option<String>)> = HashSet::new();
+    let mut seen_blocked: HashSet<(String, String)> = HashSet::new();
+
+    for (source, _, sub) in plans {
+        for mut dl in sub.downloads {
+            sources.entry(dl.project_id.clone()).or_insert(source);
+            if seen_dl.insert(dl.project_id.clone()) {
+                dl.is_dependency = !explicit_roots.contains(&dl.project_id);
+                merged.downloads.push(dl);
+            } else if explicit_roots.contains(&dl.project_id) {
+                if let Some(existing) = merged
+                    .downloads
+                    .iter_mut()
+                    .find(|item| item.project_id == dl.project_id)
+                {
+                    existing.is_dependency = false;
+                }
+            }
+        }
+        for emb in sub.embedded_dependencies {
+            let key = (emb.project_id.clone(), emb.file_name.clone());
+            if seen_emb.insert(key) {
+                merged.embedded_dependencies.push(emb);
+            }
+        }
+        for b in sub.blocked_downloads {
+            sources.entry(b.project_id.clone()).or_insert(source);
+            let key = (b.project_id.clone(), b.file_id.clone());
+            if seen_blocked.insert(key) {
+                merged.blocked_downloads.push(b);
+            }
+        }
+        for opt in sub.optional_dependencies {
+            if let Some(pid) = &opt.project_id {
+                if seen_dl.contains(pid) {
+                    continue;
+                }
+            }
+            let key = (opt.project_id.clone(), opt.file_name.clone());
+            if seen_opt.insert(key) {
+                merged.optional_dependencies.push(opt);
+            }
+        }
+    }
+
+    merged.optional_dependencies.retain(|opt| {
+        opt.project_id
+            .as_ref()
+            .is_none_or(|pid| !seen_dl.contains(pid))
+    });
+
+    (merged, sources)
+}
+
+async fn resolve_single_plan<P>(
+    provider: &P,
+    project_id: &str,
+    req: &PlanRequest,
+    opts: &ResolveOptions,
+) -> Result<DependencyResolutionPlan, String>
 where
     P: mq_mods::ModCatalogProvider + ContentProvider,
 {
+    resolve_dependency_plan(
+        provider,
+        project_id,
+        req.mc_version.as_str(),
+        req.loader,
+        opts,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Resolves required + optional + incompatible dependencies for single or batch installs.
+pub async fn plan_content(config: &AppConfig, req: &PlanRequest) -> Result<PlanOutcome, String> {
     let installed = match req.instance_dir.clone() {
         Some(dir) => {
             let kind = req.kind;
@@ -202,15 +299,52 @@ where
         installed_project_ids: installed,
         ..opts
     };
-    let plan = resolve_dependency_plan(
-        provider,
-        &req.project_id,
-        req.mc_version.as_str(),
-        req.loader,
-        &opts,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+
+    let mut targets: Vec<(CatalogSource, String)> =
+        Vec::with_capacity(1 + req.extra_projects.len());
+    targets.push((req.source, req.project_id.clone()));
+    for (source, project_id) in &req.extra_projects {
+        if !targets
+            .iter()
+            .any(|(s, p)| *s == *source && p == project_id)
+        {
+            targets.push((*source, project_id.clone()));
+        }
+    }
+
+    let mut modrinth_client: Option<ModrinthClient> = None;
+    let mut curseforge_client: Option<CurseForgeClient> = None;
+    let mut plans = Vec::with_capacity(targets.len());
+
+    for (source, project_id) in targets {
+        let sub = match source {
+            CatalogSource::Modrinth => {
+                if modrinth_client.is_none() {
+                    modrinth_client = Some(
+                        ModrinthClient::from_config(config).map_err(|e| err_text(config, &e))?,
+                    );
+                }
+                let client = modrinth_client.as_ref().expect("initialized above");
+                resolve_single_plan(client, &project_id, req, &opts)
+                    .await
+                    .map_err(|e| err_text(config, &e))?
+            }
+            CatalogSource::CurseForge => {
+                if curseforge_client.is_none() {
+                    curseforge_client = Some(
+                        CurseForgeClient::from_config(config).map_err(|e| err_text(config, &e))?,
+                    );
+                }
+                let client = curseforge_client.as_ref().expect("initialized above");
+                resolve_single_plan(client, &project_id, req, &opts)
+                    .await
+                    .map_err(|e| err_text(config, &e))?
+            }
+        };
+        plans.push((source, project_id, sub));
+    }
+
+    let (plan, sources) = merge_dependency_plans(plans);
 
     let mut ids: Vec<String> = plan
         .downloads
@@ -224,27 +358,30 @@ where
     );
     ids.sort();
     ids.dedup();
+
     let mut titles = HashMap::new();
-    for id in ids.into_iter().take(16) {
-        if let Ok(hit) = ContentProvider::get_project(provider, &id).await {
+    for id in ids.into_iter().take(48) {
+        let src = sources.get(&id).copied().unwrap_or(req.source);
+        let hit = match src {
+            CatalogSource::Modrinth => match modrinth_client.as_ref() {
+                Some(c) => ContentProvider::get_project(c, &id).await.ok(),
+                None => None,
+            },
+            CatalogSource::CurseForge => match curseforge_client.as_ref() {
+                Some(c) => ContentProvider::get_project(c, &id).await.ok(),
+                None => None,
+            },
+        };
+        if let Some(hit) = hit {
             titles.insert(id, hit.title);
         }
     }
-    Ok(PlanOutcome { plan, titles })
-}
 
-/// Resolves required + optional + incompatible dependencies for the install dialog.
-pub async fn plan_content(config: &AppConfig, req: &PlanRequest) -> Result<PlanOutcome, String> {
-    match req.source {
-        CatalogSource::Modrinth => {
-            let c = ModrinthClient::from_config(config).map_err(|e| err_text(config, &e))?;
-            plan_with(&c, req).await.map_err(|e| err_text(config, &e))
-        }
-        CatalogSource::CurseForge => {
-            let c = CurseForgeClient::from_config(config).map_err(|e| err_text(config, &e))?;
-            plan_with(&c, req).await.map_err(|e| err_text(config, &e))
-        }
-    }
+    Ok(PlanOutcome {
+        plan,
+        titles,
+        sources,
+    })
 }
 
 /// Converts the catalog source into the lockfile source tag.
@@ -322,6 +459,7 @@ pub async fn check_updates(
             let req = PlanRequest {
                 source,
                 project_id: entry.project_id.clone(),
+                extra_projects: Vec::new(),
                 mc_version: mc_version.to_string(),
                 loader: crate::catalog_actions::loader_filter(kind, loader),
                 kind,
@@ -630,5 +768,65 @@ mod tests {
         assert_eq!(p.loader, ModLoaderKind::Fabric);
         assert_eq!(p.file_count, 1, "server-only file is skipped");
         assert_eq!(p.total_size, 100);
+    }
+
+    #[test]
+    fn merge_dependency_plans_deduplicates_shared_dependencies_and_marks_roots() {
+        let dl = |project_id: &str, is_dependency: bool| mq_mods::ResolvedModDownload {
+            project_id: project_id.into(),
+            version_id: format!("v-{project_id}"),
+            filename: format!("{project_id}.jar"),
+            url: format!("https://cdn.example.test/{project_id}.jar"),
+            size: 10,
+            sha1: None,
+            sha512: None,
+            is_dependency,
+        };
+        let opt = |project_id: &str| mq_mods::OptionalDependency {
+            required_by_project_id: "mod-a".into(),
+            project_id: Some(project_id.into()),
+            version_id: Some("v1".into()),
+            file_name: Some(format!("{project_id}.jar")),
+        };
+
+        let plan_a = DependencyResolutionPlan {
+            downloads: vec![dl("fabric-api", true), dl("mod-a", false)],
+            optional_dependencies: vec![opt("mod-b"), opt("extra-opt")],
+            ..Default::default()
+        };
+        let plan_b = DependencyResolutionPlan {
+            downloads: vec![
+                dl("fabric-api", true),
+                dl("mod-a", true),
+                dl("mod-b", false),
+            ],
+            optional_dependencies: vec![opt("extra-opt")],
+            ..Default::default()
+        };
+
+        let (merged, sources) = merge_dependency_plans(vec![
+            (CatalogSource::Modrinth, "mod-a".into(), plan_a),
+            (CatalogSource::CurseForge, "mod-b".into(), plan_b),
+        ]);
+
+        let ids: Vec<_> = merged
+            .downloads
+            .iter()
+            .map(|d| (d.project_id.as_str(), d.is_dependency))
+            .collect();
+        assert_eq!(
+            ids,
+            [("fabric-api", true), ("mod-a", false), ("mod-b", false),]
+        );
+        assert_eq!(sources.get("fabric-api"), Some(&CatalogSource::Modrinth));
+        assert_eq!(sources.get("mod-b"), Some(&CatalogSource::CurseForge));
+        // mod-b became a downloaded root so it must not remain in optional_dependencies;
+        // extra-opt appears only once.
+        let opt_ids: Vec<_> = merged
+            .optional_dependencies
+            .iter()
+            .filter_map(|o| o.project_id.as_deref())
+            .collect();
+        assert_eq!(opt_ids, ["extra-opt"]);
     }
 }

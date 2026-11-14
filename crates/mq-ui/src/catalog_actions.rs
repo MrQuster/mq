@@ -42,6 +42,45 @@ impl UiState {
         self.replan_install();
     }
 
+    /// Opens the batch install dialog for all queued items of the active content kind.
+    pub fn open_batch_install(&mut self) {
+        let Some(id) = self.selected_instance_id.clone() else {
+            self.status_message = Some(("Сначала выберите инстанс".to_string(), true));
+            return;
+        };
+        let active_kind = self.catalog.tab.kind();
+        let mut hits: Vec<CatalogHit> = self
+            .catalog
+            .batch_queue
+            .iter()
+            .filter(|h| h.project_kind == active_kind && h.project_kind != ProjectKind::Modpack)
+            .cloned()
+            .collect();
+        if hits.is_empty() {
+            if let Some(first_kind) = self
+                .catalog
+                .batch_queue
+                .iter()
+                .find(|h| h.project_kind != ProjectKind::Modpack)
+                .map(|h| h.project_kind)
+            {
+                hits = self
+                    .catalog
+                    .batch_queue
+                    .iter()
+                    .filter(|h| h.project_kind == first_kind)
+                    .cloned()
+                    .collect();
+            }
+        }
+        let Some(dialog) = InstallDialog::new_batch(hits, InstallTarget::Existing(id)) else {
+            self.status_message = Some(("Очередь пакетной установки пуста".to_string(), true));
+            return;
+        };
+        self.install = Some(dialog);
+        self.replan_install();
+    }
+
     /// Opens the confirmation dialog for creating a new instance from a modpack version.
     pub fn open_install_modpack(&mut self, hit: CatalogHit, version: ProjectVersion) {
         let name = hit.title.clone();
@@ -183,6 +222,11 @@ impl UiState {
         };
         let (kind, source, project_id) =
             (d.hit.project_kind, d.hit.source, d.hit.project_id.clone());
+        let extra_projects = d
+            .batch_hits
+            .iter()
+            .map(|h| (h.source, h.project_id.clone()))
+            .collect();
         let selected: BTreeSet<String> = d.selected_optionals.clone();
         let Some(inst) = self.instances.iter().find(|i| i.id == id) else {
             d.loading = false;
@@ -192,6 +236,7 @@ impl UiState {
         let req = PlanRequest {
             source,
             project_id,
+            extra_projects,
             mc_version: inst.mc_version.clone(),
             loader: loader_filter(kind, inst.loader),
             kind,
@@ -241,10 +286,21 @@ impl UiState {
             return;
         }
 
+        let is_batch = d.is_batch();
+        let total_selected = 1 + d.batch_hits.len();
+        let queued_keys: Vec<(mq_mods::CatalogSource, String)> = std::iter::once(&d.hit)
+            .chain(d.batch_hits.iter())
+            .map(|h| (h.source, h.project_id.clone()))
+            .collect();
+        self.catalog
+            .remove_queued(queued_keys.iter().map(|(src, pid)| (*src, pid.as_str())));
+
         let (Some(plan), InstallTarget::Existing(instance_id)) = (d.plan, d.target) else {
             return;
         };
         let kind = d.hit.project_kind;
+        let fallback_source = d.hit.source;
+        let sources_map = d.sources;
         let (blocked_dl, downloads): (Vec<_>, Vec<_>) = plan
             .downloads
             .into_iter()
@@ -257,28 +313,72 @@ impl UiState {
             }
             return;
         }
-        let retry = RetrySpec::Content {
-            instance_id: instance_id.clone(),
-            kind,
-            source: d.hit.source,
-            downloads: downloads.clone(),
-            blocked: blocked.clone(),
-        };
-        let (job_id, cancel) = self.jobs.push(
-            d.hit.title.clone(),
-            format!("Инстанс «{instance_id}»"),
-            downloads.len(),
-            Some(retry),
-        );
-        let _ = self.cmd_sender.send(UiWorkerCommand::StartContentJob {
-            job_id,
-            cancel,
-            instance_id,
-            kind,
-            source: d.hit.source,
-            downloads,
-            blocked,
-        });
+
+        let mut modrinth_downloads = Vec::new();
+        let mut curseforge_downloads = Vec::new();
+        for dl in downloads {
+            let src = sources_map
+                .get(&dl.project_id)
+                .copied()
+                .unwrap_or(fallback_source);
+            match src {
+                mq_mods::CatalogSource::Modrinth => modrinth_downloads.push(dl),
+                mq_mods::CatalogSource::CurseForge => curseforge_downloads.push(dl),
+            }
+        }
+
+        let groups = [
+            (mq_mods::CatalogSource::Modrinth, modrinth_downloads),
+            (mq_mods::CatalogSource::CurseForge, curseforge_downloads),
+        ];
+        let active_groups = groups.iter().filter(|(_, list)| !list.is_empty()).count();
+        let mut first_group = true;
+        for (source, src_downloads) in groups {
+            if src_downloads.is_empty() {
+                continue;
+            }
+            let group_blocked = if first_group {
+                first_group = false;
+                blocked.clone()
+            } else {
+                Vec::new()
+            };
+            let job_title = if is_batch {
+                if active_groups > 1 {
+                    let src_label = match source {
+                        mq_mods::CatalogSource::Modrinth => "Modrinth",
+                        mq_mods::CatalogSource::CurseForge => "CurseForge",
+                    };
+                    format!("Пакетная установка ({total_selected}, {src_label})")
+                } else {
+                    format!("Пакетная установка ({total_selected})")
+                }
+            } else {
+                d.hit.title.clone()
+            };
+            let retry = RetrySpec::Content {
+                instance_id: instance_id.clone(),
+                kind,
+                source,
+                downloads: src_downloads.clone(),
+                blocked: group_blocked.clone(),
+            };
+            let (job_id, cancel) = self.jobs.push(
+                job_title,
+                format!("Инстанс «{instance_id}»"),
+                src_downloads.len(),
+                Some(retry),
+            );
+            let _ = self.cmd_sender.send(UiWorkerCommand::StartContentJob {
+                job_id,
+                cancel,
+                instance_id: instance_id.clone(),
+                kind,
+                source,
+                downloads: src_downloads,
+                blocked: group_blocked,
+            });
+        }
     }
 
     /// Requests cancellation of a running job.
@@ -527,5 +627,71 @@ mod tests {
         assert!(st.manual.open);
         assert_eq!(st.manual.remaining(), 1);
         assert!(st.manual_watcher.is_some());
+    }
+
+    #[test]
+    fn batch_install_plans_extra_projects_and_clears_queue() {
+        let (mut st, _t) = state();
+        let inst = st
+            .instance_mgr
+            .create_instance("Batch", "1.21.4", ModLoaderKind::Fabric, None)
+            .unwrap();
+        st.instances = st.instance_mgr.list_instances().unwrap();
+        st.selected_instance_id = Some(inst.id.clone());
+
+        let mut h1 = hit(ProjectKind::Mod);
+        h1.project_id = "mod-a".into();
+        h1.title = "Mod A".into();
+        let mut h2 = hit(ProjectKind::Mod);
+        h2.project_id = "mod-b".into();
+        h2.title = "Mod B".into();
+
+        st.catalog.toggle_queue(h1);
+        st.catalog.toggle_queue(h2);
+        st.open_batch_install();
+
+        let d = st.install.as_ref().expect("batch install dialog");
+        assert!(d.is_batch());
+        assert_eq!(d.batch_hits.len(), 1);
+
+        match st.cmd_receiver.try_recv().unwrap() {
+            UiWorkerCommand::PlanInstall { req, .. } => {
+                assert_eq!(req.project_id, "mod-a");
+                assert_eq!(
+                    req.extra_projects,
+                    vec![(CatalogSource::Modrinth, "mod-b".into())]
+                );
+            }
+            other => panic!(
+                "expected PlanInstall, got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+
+        let mut dep = dl("dep-api", "https://cdn.modrinth.com/dep-api.jar");
+        dep.project_id = "dep-api".into();
+        dep.is_dependency = true;
+        let mut d_a = dl("mod-a", "https://cdn.modrinth.com/mod-a.jar");
+        d_a.project_id = "mod-a".into();
+        d_a.is_dependency = false;
+        let mut d_b = dl("mod-b", "https://cdn.modrinth.com/mod-b.jar");
+        d_b.project_id = "mod-b".into();
+        d_b.is_dependency = false;
+
+        let d = st.install.as_mut().unwrap();
+        d.loading = false;
+        d.plan = Some(DependencyResolutionPlan {
+            downloads: vec![dep, d_a, d_b],
+            ..Default::default()
+        });
+        st.confirm_install();
+
+        assert!(st.catalog.batch_queue.is_empty());
+        assert_eq!(st.jobs.jobs.len(), 1);
+        assert_eq!(st.jobs.jobs[0].total_files, 3);
+        assert!(matches!(
+            st.cmd_receiver.try_recv().unwrap(),
+            UiWorkerCommand::StartContentJob { .. }
+        ));
     }
 }

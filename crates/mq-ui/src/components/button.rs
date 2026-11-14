@@ -7,7 +7,7 @@ use crate::theme::{Tokens, RADIUS_BUTTON};
 use crate::widgets::{paint_vector_icon, VectorIcon};
 
 /// Renders a primary action button (e.g. "Играть", "Создать", "Сохранить")
-/// using the single accent color (`#3DDC97` in Matte Dark) with high contrast text.
+/// using the single accent color (`#4C9A82` in Matte Dark) with high contrast text.
 pub fn button_primary(
     ui: &mut Ui,
     tokens: &Tokens,

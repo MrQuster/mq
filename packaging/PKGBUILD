@@ -1,6 +1,6 @@
 # Maintainer: MrQuster <https://github.com/MrQuster>
 pkgname=mq-launcher
-pkgver=2.2.0
+pkgver=2.5.0
 pkgrel=1
 pkgdesc="High-performance modular Minecraft: Java Edition launcher for Linux by MrQuster"
 arch=('x86_64')

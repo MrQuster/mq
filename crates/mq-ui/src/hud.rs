@@ -9,10 +9,7 @@ use egui::{
 use mq_core::CpuSnapshot;
 
 use crate::state::safe_clamp_f32;
-use crate::theme::{
-    hud_frame, ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE, RADIUS_TAG,
-    STATUS_DANGER, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY,
-};
+use crate::theme::{solid_hud_frame, Tokens, ACCENT_COBALT, RADIUS_TAG};
 use crate::widgets::{status_dot, version_badge};
 
 /// Fixed height of the bottom status & telemetry HUD bar (`38px`).
@@ -49,17 +46,17 @@ pub fn is_zero_viewport(ctx: &Context) -> bool {
         || rect.height() <= 1.0
 }
 
-fn core_bar_color(usage_pct: f32) -> Color32 {
+fn core_bar_color(tokens: &Tokens, usage_pct: f32) -> Color32 {
     if usage_pct >= 90.0 {
-        STATUS_WARN
+        tokens.warning
     } else if usage_pct >= 55.0 {
         ACCENT_COBALT
     } else {
-        ACCENT_EMERALD
+        tokens.accent
     }
 }
 
-fn render_per_core_bars(ui: &mut Ui, snap: &CpuSnapshot) {
+fn render_per_core_bars(ui: &mut Ui, snap: &CpuSnapshot, tokens: &Tokens) {
     let core_count = snap.per_core.len().max(1);
     let bar_w = 5.0;
     let gap = 2.0;
@@ -70,11 +67,11 @@ fn render_per_core_bars(ui: &mut Ui, snap: &CpuSnapshot) {
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-        painter.rect_filled(rect, CornerRadius::same(3), CARD_SURFACE);
+        painter.rect_filled(rect, CornerRadius::same(3), tokens.bg_surface);
         painter.rect_stroke(
             rect,
             CornerRadius::same(3),
-            Stroke::new(1.0_f32, BORDER_SUBTLE),
+            Stroke::new(1.0_f32, tokens.border),
             StrokeKind::Inside,
         );
 
@@ -94,7 +91,7 @@ fn render_per_core_bars(ui: &mut Ui, snap: &CpuSnapshot) {
                 Pos2::new(x0, inner_top),
                 Pos2::new(x0 + bar_w, inner_bottom),
             );
-            painter.rect_filled(track_rect, CornerRadius::same(1), BORDER_SUBTLE);
+            painter.rect_filled(track_rect, CornerRadius::same(1), tokens.border);
 
             if pct > 0.5 {
                 let fill_h = safe_clamp_f32(max_bar_h * (pct / 100.0), 1.5, max_bar_h);
@@ -102,7 +99,11 @@ fn render_per_core_bars(ui: &mut Ui, snap: &CpuSnapshot) {
                     Pos2::new(x0, inner_bottom - fill_h),
                     Pos2::new(x0 + bar_w, inner_bottom),
                 );
-                painter.rect_filled(fill_rect, CornerRadius::same(1), core_bar_color(pct));
+                painter.rect_filled(
+                    fill_rect,
+                    CornerRadius::same(1),
+                    core_bar_color(tokens, pct),
+                );
             }
         }
     }
@@ -115,7 +116,7 @@ fn render_per_core_bars(ui: &mut Ui, snap: &CpuSnapshot) {
                     snap.total_pct, snap.rss_mib
                 ))
                 .font(FontId::new(12.0, FontFamily::Monospace))
-                .color(TEXT_PRIMARY),
+                .color(tokens.text),
             );
             if !snap.per_core.is_empty() {
                 ui.separator();
@@ -123,7 +124,7 @@ fn render_per_core_bars(ui: &mut Ui, snap: &CpuSnapshot) {
                     ui.label(
                         RichText::new(format!("cpu{}: {:>5.1}%", core.core_id, core.usage_pct))
                             .font(FontId::new(11.5, FontFamily::Monospace))
-                            .color(TEXT_MUTED),
+                            .color(tokens.text_muted),
                     );
                 }
             }
@@ -131,49 +132,52 @@ fn render_per_core_bars(ui: &mut Ui, snap: &CpuSnapshot) {
     }
 }
 
-fn render_smooth_progress_bar(ui: &mut Ui, fraction: f32) {
+fn render_smooth_progress_bar(ui: &mut Ui, fraction: f32, tokens: &Tokens) {
     let clamped = safe_clamp_f32(fraction, 0.0, 1.0);
     let desired = Vec2::new(130.0, 14.0);
     let (rect, _) = ui.allocate_exact_size(desired, Sense::hover());
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-        painter.rect_filled(rect, RADIUS_TAG, BORDER_SUBTLE);
+        painter.rect_filled(rect, RADIUS_TAG, tokens.border);
         if clamped > 0.0 {
             let fill_w = (rect.width() * clamped).max(3.0);
             let fill_rect = Rect::from_min_size(rect.min, Vec2::new(fill_w, rect.height()));
-            painter.rect_filled(fill_rect, RADIUS_TAG, ACCENT_EMERALD);
+            painter.rect_filled(fill_rect, RADIUS_TAG, tokens.accent);
         }
         let pct_str = format!("{:>3.0}%", clamped * 100.0);
-        let galley = painter.layout_no_wrap(
-            pct_str,
-            FontId::new(10.5, FontFamily::Monospace),
-            TEXT_PRIMARY,
-        );
+        let text_col = if clamped >= 0.45 {
+            tokens.accent_text
+        } else {
+            tokens.text
+        };
+        let galley =
+            painter.layout_no_wrap(pct_str, FontId::new(10.5, FontFamily::Monospace), text_col);
         let pos = Pos2::new(
             rect.center().x - galley.size().x * 0.5,
             rect.center().y - galley.size().y * 0.5,
         );
-        painter.galley(pos, galley, TEXT_PRIMARY);
+        painter.galley(pos, galley, text_col);
     }
 }
 
 /// Renders the bottom status bar and per-core CPU telemetry HUD inside `ui`.
 pub fn render_bottom_hud(ui: &mut Ui, data: &BottomHudData) {
+    let tokens = Tokens::active(ui.ctx());
     let avail_w = ui.available_width();
     ui.horizontal_centered(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
 
         // Left: Phase status dot + label + optional progress bar + throughput metrics
         let (dot_color, phase_text) = match data.active_phase.as_deref() {
-            Some(phase) if !phase.is_empty() => (ACCENT_EMERALD, phase),
-            _ => (ACCENT_EMERALD.gamma_multiply(0.65), "Готов к работе"),
+            Some(phase) if !phase.is_empty() => (tokens.accent, phase),
+            _ => (tokens.accent.gamma_multiply(0.75), "Готов к работе"),
         };
         status_dot(ui, dot_color, phase_text);
 
         if let Some(frac) = data.progress_fraction {
             if avail_w >= 500.0 {
-                render_smooth_progress_bar(ui, frac);
+                render_smooth_progress_bar(ui, frac, &tokens);
             }
         }
 
@@ -193,7 +197,7 @@ pub fn render_bottom_hud(ui: &mut Ui, data: &BottomHudData) {
             ui.label(
                 RichText::new(metrics_text)
                     .font(mono_font.clone())
-                    .color(TEXT_MUTED),
+                    .color(tokens.text_muted),
             );
         } else if avail_w >= 760.0 {
             ui.separator();
@@ -209,7 +213,7 @@ pub fn render_bottom_hud(ui: &mut Ui, data: &BottomHudData) {
             ui.label(
                 RichText::new(metrics_text)
                     .font(mono_font.clone())
-                    .color(TEXT_MUTED),
+                    .color(tokens.text_muted),
             );
         }
 
@@ -219,9 +223,9 @@ pub fn render_bottom_hud(ui: &mut Ui, data: &BottomHudData) {
 
             if data.watchdog_violations > 0 {
                 let badge_col = if data.watchdog_violations > 5 {
-                    STATUS_DANGER
+                    tokens.danger
                 } else {
-                    STATUS_WARN
+                    tokens.warning
                 };
                 version_badge(ui, &format!("WD: {}", data.watchdog_violations), badge_col);
             }
@@ -234,9 +238,9 @@ pub fn render_bottom_hud(ui: &mut Ui, data: &BottomHudData) {
                     data.cpu_snapshot.total_pct, data.cpu_snapshot.rss_mib
                 )
             };
-            ui.label(RichText::new(rss_label).font(mono_font).color(TEXT_PRIMARY));
+            ui.label(RichText::new(rss_label).font(mono_font).color(tokens.text));
 
-            render_per_core_bars(ui, &data.cpu_snapshot);
+            render_per_core_bars(ui, &data.cpu_snapshot, &tokens);
         });
     });
 }
@@ -246,9 +250,10 @@ pub fn show_bottom_hud(ctx: &Context, data: &BottomHudData) {
     if is_zero_viewport(ctx) {
         return;
     }
+    let tokens = Tokens::active(ctx);
     TopBottomPanel::bottom("mq_bottom_telemetry_hud")
         .exact_height(BOTTOM_HUD_HEIGHT)
-        .frame(hud_frame())
+        .frame(solid_hud_frame(&tokens))
         .show(ctx, |ui| {
             render_bottom_hud(ui, data);
         });

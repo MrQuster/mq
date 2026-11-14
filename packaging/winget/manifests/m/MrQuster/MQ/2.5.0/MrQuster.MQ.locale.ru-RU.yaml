@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.locale.1.6.0.schema.json
 
 PackageIdentifier: MrQuster.MQ
-PackageVersion: 2.4.0
+PackageVersion: 2.5.0
 PackageLocale: ru-RU
 Publisher: MrQuster
 PublisherUrl: https://github.com/MrQuster/mq
@@ -32,6 +32,6 @@ ReleaseNotes: |-
   - Установка в одну команду через PowerShell
   - Авторизация Ely.by в браузере через OAuth2 PKCE
   - Встроенный каталог Modrinth и CurseForge
-ReleaseNotesUrl: https://github.com/MrQuster/mq/releases/tag/v2.4.0
+ReleaseNotesUrl: https://github.com/MrQuster/mq/releases/tag/v2.5.0
 ManifestType: locale
 ManifestVersion: 1.6.0

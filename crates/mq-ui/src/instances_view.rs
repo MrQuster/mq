@@ -2,7 +2,10 @@
 //! Instances screen: instance grid, creation dialog, instance details, mods table,
 //! live game console with log filtering, and JVM settings. Zero emojis!
 
-use egui::{Color32, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
+use egui::{
+    Color32, CornerRadius, CursorIcon, FontId, Pos2, Rect, RichText, ScrollArea, Sense, Stroke,
+    StrokeKind, Ui, Vec2,
+};
 use mq_core::{GameLogLevel, ModLoaderKind};
 use mq_instances::{
     backup_world, delete_world, export_instance_to_zip, export_world_to_zip,
@@ -17,8 +20,9 @@ use crate::components::{
 };
 use crate::state::{UiState, UiWorkerCommand};
 use crate::theme::{
-    Tokens, ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE, CARD_SURFACE_HOVER,
-    RADIUS_CARD, STATUS_DANGER, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY,
+    blend_color, Tokens, ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE,
+    CARD_SURFACE_HOVER, RADIUS_CARD, RADIUS_TAG, STATUS_DANGER, STATUS_WARN, TEXT_MUTED,
+    TEXT_PRIMARY,
 };
 use crate::widgets::{
     danger_button, hero_action_button, loader_badge, paint_vector_icon, primary_emerald_button,
@@ -46,10 +50,10 @@ impl McVersionCategory {
 
     pub fn badge_color(&self) -> Color32 {
         match self {
-            Self::Release => ACCENT_EMERALD,
+            Self::Release => Color32::from_rgb(0x4C, 0x9A, 0x82),
             Self::Snapshot => ACCENT_COBALT,
-            Self::OldBeta => Color32::from_rgb(0xF5, 0x9E, 0x0B),
-            Self::OldAlpha => Color32::from_rgb(0xEC, 0x48, 0x99),
+            Self::OldBeta => Color32::from_rgb(0xD9, 0x8A, 0x2B),
+            Self::OldAlpha => Color32::from_rgb(0xC7, 0x67, 0x8F),
         }
     }
 }
@@ -209,12 +213,25 @@ pub enum InstanceSortMode {
     Created,
 }
 
+/// Filter status for installed mods list inside an instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModStatusFilter {
+    #[default]
+    All,
+    Enabled,
+    Disabled,
+}
+
 pub struct InstancesView {
     pub current_tab: InstanceDetailTab,
     pub view_mode: InstanceViewMode,
     pub sort_mode: InstanceSortMode,
     pub loader_filter: LoaderFilter,
     pub search_query: String,
+    pub mod_search_query: String,
+    pub mod_status_filter: ModStatusFilter,
+    pub pack_search_query: String,
+    pub shader_search_query: String,
     pub console_autoscroll: bool,
     pub console_search: String,
     pub show_releases: bool,
@@ -245,6 +262,10 @@ impl Default for InstancesView {
             sort_mode: InstanceSortMode::Playtime,
             loader_filter: LoaderFilter::All,
             search_query: String::new(),
+            mod_search_query: String::new(),
+            mod_status_filter: ModStatusFilter::All,
+            pack_search_query: String::new(),
+            shader_search_query: String::new(),
             console_autoscroll: true,
             console_search: String::new(),
             show_releases: true,
@@ -1484,11 +1505,40 @@ impl InstancesView {
 
         let modal_frame = egui::Frame::window(ui.style())
             .fill(tokens.bg_surface)
-            .stroke(Stroke::new(1.0_f32, tokens.border))
+            .stroke(Stroke::new(1.0_f32, tokens.border_strong))
             .corner_radius(RADIUS_CARD)
             .inner_margin(egui::Margin::same(20));
 
-        let body_max_h = (screen.height() - 160.0).clamp(200.0, 500.0);
+        let body_max_h = (screen.height() - 160.0).clamp(220.0, 520.0);
+
+        fn modal_chip_pill(ui: &mut Ui, tokens: &Tokens, selected: bool, label: &str) -> bool {
+            let fill = if selected {
+                blend_color(
+                    tokens.bg_surface,
+                    tokens.accent,
+                    if tokens.is_light() { 0.16 } else { 0.20 },
+                )
+            } else {
+                tokens.bg_input
+            };
+            let stroke = if selected {
+                tokens.accent
+            } else {
+                tokens.border
+            };
+            let fg = if selected {
+                tokens.text
+            } else {
+                tokens.text_muted
+            };
+            ui.add(
+                egui::Button::new(RichText::new(label).color(fg).size(12.5))
+                    .fill(fill)
+                    .stroke(Stroke::new(1.0_f32, stroke))
+                    .corner_radius(RADIUS_TAG),
+            )
+            .clicked()
+        }
 
         egui::Window::new("Создать инстанс")
             .order(egui::Order::Foreground)
@@ -1497,7 +1547,7 @@ impl InstancesView {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ui.ctx(), |ui| {
-                let modal_w = 460.0_f32.min(screen.width() - 32.0);
+                let modal_w = 480.0_f32.min(screen.width() - 32.0);
                 ui.set_width(modal_w);
 
                 ScrollArea::vertical()
@@ -1528,7 +1578,7 @@ impl InstancesView {
                                 ModLoaderKind::NeoForge,
                             ] {
                                 let is_sel = state.create_inst_loader == ldr;
-                                if ui.selectable_label(is_sel, ldr.as_str()).clicked() {
+                                if modal_chip_pill(ui, tokens, is_sel, ldr.as_str()) {
                                     state.create_inst_loader = ldr;
                                 }
                             }
@@ -1571,22 +1621,40 @@ impl InstancesView {
                         ui.add_space(4.0);
 
                         ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
-                            ui.checkbox(&mut self.show_releases, "Релизы");
-                            ui.checkbox(&mut self.show_snapshots, "Снапшоты");
-                            ui.checkbox(&mut self.show_betas, "Beta");
-                            ui.checkbox(&mut self.show_alphas, "Alpha");
+                            ui.spacing_mut().item_spacing = Vec2::new(10.0, 4.0);
+                            ui.checkbox(
+                                &mut self.show_releases,
+                                RichText::new("Релизы").color(tokens.text),
+                            );
+                            ui.checkbox(
+                                &mut self.show_snapshots,
+                                RichText::new("Снапшоты").color(tokens.text),
+                            );
+                            ui.checkbox(
+                                &mut self.show_betas,
+                                RichText::new("Beta").color(tokens.text),
+                            );
+                            ui.checkbox(
+                                &mut self.show_alphas,
+                                RichText::new("Alpha").color(tokens.text),
+                            );
                         });
 
                         ui.add_space(4.0);
 
                         ui.horizontal(|ui| {
+                            let search_w = if self.version_search.is_empty() {
+                                ui.available_width()
+                            } else {
+                                (ui.available_width() - 68.0).max(120.0)
+                            };
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.version_search)
-                                    .hint_text("Поиск версии (26.1, 1.21.4, 25w09b)...")
-                                    .desired_width(ui.available_width() - 64.0),
+                                    .hint_text("Поиск версии (1.21.4, 25w09b)...")
+                                    .desired_width(search_w),
                             );
-                            if !self.version_search.is_empty() && ui.small_button("Сброс").clicked()
+                            if !self.version_search.is_empty()
+                                && button_secondary(ui, tokens, None, "Сброс").clicked()
                             {
                                 self.version_search.clear();
                             }
@@ -1661,7 +1729,7 @@ impl InstancesView {
                             ui.set_width(ui.available_width());
                             ScrollArea::vertical()
                                 .id_salt("version_select_scroll")
-                                .max_height(110.0)
+                                .max_height(154.0)
                                 .show(ui, |ui| {
                                     if state.is_fetching_manifest
                                         && state.remote_versions.is_empty()
@@ -1688,27 +1756,198 @@ impl InstancesView {
                                     } else {
                                         for (vid, cat) in filtered {
                                             let is_sel = effective_ver == vid;
-                                            ui.horizontal(|ui| {
-                                                let text_col = if is_sel {
-                                                    tokens.accent
-                                                } else {
-                                                    tokens.text
-                                                };
-                                                if ui
-                                                    .selectable_label(
-                                                        is_sel,
-                                                        RichText::new(vid).color(text_col).strong(),
+                                            let is_latest = state.latest_release.as_deref()
+                                                == Some(vid)
+                                                || (state.remote_versions.is_empty()
+                                                    && vid == ALL_MC_RELEASES[0]);
+
+                                            let row_w = ui.available_width().max(180.0);
+                                            let (row_rect, row_resp) = ui.allocate_exact_size(
+                                                Vec2::new(row_w, 28.0),
+                                                Sense::click(),
+                                            );
+                                            if row_resp.hovered() {
+                                                ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+                                            }
+
+                                            if ui.is_rect_visible(row_rect) {
+                                                let painter = ui.painter();
+                                                let row_fill = if is_sel {
+                                                    blend_color(
+                                                        tokens.bg_surface,
+                                                        tokens.accent,
+                                                        if tokens.is_light() { 0.14 } else { 0.18 },
                                                     )
-                                                    .clicked()
-                                                {
-                                                    state.create_inst_mc_ver = vid.to_string();
+                                                } else if row_resp.hovered() {
+                                                    tokens.bg_surface_hover
+                                                } else {
+                                                    Color32::TRANSPARENT
+                                                };
+                                                if row_fill != Color32::TRANSPARENT {
+                                                    painter.rect_filled(
+                                                        row_rect, RADIUS_TAG, row_fill,
+                                                    );
                                                 }
-                                                version_badge(
-                                                    ui,
-                                                    cat.badge_label(),
-                                                    cat.badge_color(),
+                                                if is_sel {
+                                                    painter.rect_stroke(
+                                                        row_rect,
+                                                        RADIUS_TAG,
+                                                        Stroke::new(1.0_f32, tokens.accent),
+                                                        StrokeKind::Inside,
+                                                    );
+                                                    let bar = Rect::from_min_max(
+                                                        Pos2::new(
+                                                            row_rect.left() + 4.0,
+                                                            row_rect.top() + 5.0,
+                                                        ),
+                                                        Pos2::new(
+                                                            row_rect.left() + 7.0,
+                                                            row_rect.bottom() - 5.0,
+                                                        ),
+                                                    );
+                                                    painter.rect_filled(
+                                                        bar,
+                                                        CornerRadius::same(2),
+                                                        tokens.accent,
+                                                    );
+                                                } else if row_resp.hovered() {
+                                                    painter.rect_stroke(
+                                                        row_rect,
+                                                        RADIUS_TAG,
+                                                        Stroke::new(1.0_f32, tokens.border_strong),
+                                                        StrokeKind::Inside,
+                                                    );
+                                                }
+
+                                                let ver_col = if is_sel || row_resp.hovered() {
+                                                    tokens.text
+                                                } else {
+                                                    blend_color(
+                                                        tokens.text_muted,
+                                                        tokens.text,
+                                                        0.55,
+                                                    )
+                                                };
+                                                let ver_galley = painter.layout_no_wrap(
+                                                    vid.to_owned(),
+                                                    FontId::proportional(13.5),
+                                                    ver_col,
                                                 );
-                                            });
+                                                let ver_pos = Pos2::new(
+                                                    row_rect.left()
+                                                        + if is_sel { 14.0 } else { 10.0 },
+                                                    row_rect.center().y - ver_galley.size().y * 0.5,
+                                                );
+                                                painter.galley(ver_pos, ver_galley, ver_col);
+
+                                                let pad = Vec2::new(6.0, 2.0);
+                                                let cat_col = cat.badge_color();
+                                                let badge_fg = if tokens.is_light() {
+                                                    blend_color(cat_col, tokens.text, 0.35)
+                                                } else {
+                                                    cat_col
+                                                };
+                                                let badge_bg = if tokens.is_light() {
+                                                    blend_color(tokens.bg_surface, cat_col, 0.14)
+                                                } else {
+                                                    Color32::from_rgba_unmultiplied(
+                                                        cat_col.r(),
+                                                        cat_col.g(),
+                                                        cat_col.b(),
+                                                        32,
+                                                    )
+                                                };
+                                                let badge_border = if tokens.is_light() {
+                                                    blend_color(tokens.border, cat_col, 0.45)
+                                                } else {
+                                                    Color32::from_rgba_unmultiplied(
+                                                        cat_col.r(),
+                                                        cat_col.g(),
+                                                        cat_col.b(),
+                                                        110,
+                                                    )
+                                                };
+                                                let cat_galley = painter.layout_no_wrap(
+                                                    cat.badge_label().to_owned(),
+                                                    FontId::monospace(10.5),
+                                                    badge_fg,
+                                                );
+                                                let cat_size = cat_galley.size() + pad * 2.0;
+                                                let mut cursor_right = row_rect.right() - 8.0;
+                                                let cat_rect = Rect::from_min_size(
+                                                    Pos2::new(
+                                                        cursor_right - cat_size.x,
+                                                        row_rect.center().y - cat_size.y * 0.5,
+                                                    ),
+                                                    cat_size,
+                                                );
+                                                painter.rect_filled(cat_rect, RADIUS_TAG, badge_bg);
+                                                painter.rect_stroke(
+                                                    cat_rect,
+                                                    RADIUS_TAG,
+                                                    Stroke::new(1.0_f32, badge_border),
+                                                    StrokeKind::Inside,
+                                                );
+                                                painter.galley(
+                                                    cat_rect.min + pad,
+                                                    cat_galley,
+                                                    badge_fg,
+                                                );
+                                                cursor_right = cat_rect.left() - 6.0;
+
+                                                if is_latest && cat == McVersionCategory::Release {
+                                                    let lat_fg = if tokens.is_light() {
+                                                        blend_color(
+                                                            tokens.accent,
+                                                            tokens.text,
+                                                            0.35,
+                                                        )
+                                                    } else {
+                                                        tokens.accent
+                                                    };
+                                                    let lat_bg = blend_color(
+                                                        tokens.bg_surface,
+                                                        tokens.accent,
+                                                        0.16,
+                                                    );
+                                                    let lat_border = blend_color(
+                                                        tokens.border,
+                                                        tokens.accent,
+                                                        0.50,
+                                                    );
+                                                    let lat_galley = painter.layout_no_wrap(
+                                                        "Актуальная".to_owned(),
+                                                        FontId::monospace(10.0),
+                                                        lat_fg,
+                                                    );
+                                                    let lat_size = lat_galley.size() + pad * 2.0;
+                                                    let lat_rect = Rect::from_min_size(
+                                                        Pos2::new(
+                                                            cursor_right - lat_size.x,
+                                                            row_rect.center().y - lat_size.y * 0.5,
+                                                        ),
+                                                        lat_size,
+                                                    );
+                                                    painter
+                                                        .rect_filled(lat_rect, RADIUS_TAG, lat_bg);
+                                                    painter.rect_stroke(
+                                                        lat_rect,
+                                                        RADIUS_TAG,
+                                                        Stroke::new(1.0_f32, lat_border),
+                                                        StrokeKind::Inside,
+                                                    );
+                                                    painter.galley(
+                                                        lat_rect.min + pad,
+                                                        lat_galley,
+                                                        lat_fg,
+                                                    );
+                                                }
+                                            }
+
+                                            if row_resp.clicked() {
+                                                state.create_inst_mc_ver = vid.to_string();
+                                            }
+                                            ui.add_space(2.0);
                                         }
                                     }
                                 });
@@ -1742,10 +1981,12 @@ impl InstancesView {
                                     (12288, "12 ГБ"),
                                     (16384, "16 ГБ"),
                                 ] {
-                                    if ui
-                                        .selectable_label(state.create_inst_ram_mb == mb, lbl)
-                                        .clicked()
-                                    {
+                                    if modal_chip_pill(
+                                        ui,
+                                        tokens,
+                                        state.create_inst_ram_mb == mb,
+                                        lbl,
+                                    ) {
                                         state.create_inst_ram_mb = mb;
                                     }
                                 }
@@ -1907,33 +2148,48 @@ impl InstancesView {
 
     /// "Проверить обновления": newer versions at the source, one-click update with rollback.
     fn updates_panel(ui: &mut Ui, state: &mut UiState, inst_id: &mq_core::InstanceId) {
-        ui.horizontal(|ui| {
+        let tokens = Tokens::from_config(&state.config.theme);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Проверить обновления")
                 .clicked()
                 && !state.updates.checking
             {
                 state.check_updates(inst_id.clone());
             }
+            if state.updates.instance.as_ref() == Some(inst_id)
+                && state.updates.items.len() > 1
+                && primary_emerald_button(
+                    ui,
+                    Some(VectorIcon::Download),
+                    &format!("Обновить все ({})", state.updates.items.len()),
+                )
+                .clicked()
+            {
+                while !state.updates.items.is_empty() {
+                    state.apply_update(0);
+                }
+            }
             if state.updates.checking {
-                ui.label(RichText::new("Проверка...").color(TEXT_MUTED));
+                ui.label(RichText::new("Проверка...").color(tokens.text_muted));
             }
         });
         if state.updates.instance.as_ref() != Some(inst_id) {
             return;
         }
         if let Some(e) = &state.updates.error {
-            ui.label(RichText::new(e).color(STATUS_DANGER));
+            ui.label(RichText::new(e).color(tokens.danger));
         }
         if state.updates.checked && state.updates.items.is_empty() && state.updates.error.is_none()
         {
-            ui.label(RichText::new("Все установленные файлы актуальны").color(TEXT_MUTED));
+            ui.label(RichText::new("Все установленные файлы актуальны").color(tokens.text_muted));
         }
         let mut apply = None;
         for (i, c) in state.updates.items.iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(format!("{} -> {}", c.old_filename, c.new.filename))
-                        .color(TEXT_PRIMARY),
+                        .color(tokens.text),
                 );
                 version_badge(
                     ui,
@@ -1955,10 +2211,16 @@ impl InstancesView {
     }
 
     fn render_mods_tab(&mut self, ui: &mut Ui, state: &mut UiState, inst_id: &mq_core::InstanceId) {
+        let tokens = Tokens::from_config(&state.config.theme);
+        let total_count = state.installed_mods.len();
+        let enabled_count = state.installed_mods.iter().filter(|m| m.enabled).count();
+        let disabled_count = total_count.saturating_sub(enabled_count);
+
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             ui.label(
-                RichText::new(format!("Установлено модов: {}", state.installed_mods.len()))
+                RichText::new(format!("Модов: {total_count} (вкл. {enabled_count})"))
+                    .color(tokens.text)
                     .strong(),
             );
             if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Пересканировать").clicked()
@@ -1981,29 +2243,103 @@ impl InstancesView {
             }
         });
 
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+            let search_w = (ui.available_width() - 340.0).clamp(150.0, 300.0);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.mod_search_query)
+                    .hint_text("Поиск модов по названию, ID или файлу...")
+                    .desired_width(search_w),
+            );
+            if !self.mod_search_query.is_empty()
+                && secondary_glass_button(ui, None, "Сброс").clicked()
+            {
+                self.mod_search_query.clear();
+            }
+
+            for (filter, lbl) in [
+                (ModStatusFilter::All, format!("Все ({total_count})")),
+                (
+                    ModStatusFilter::Enabled,
+                    format!("Включены ({enabled_count})"),
+                ),
+                (
+                    ModStatusFilter::Disabled,
+                    format!("Отключены ({disabled_count})"),
+                ),
+            ] {
+                let is_sel = self.mod_status_filter == filter;
+                let fill = if is_sel {
+                    blend_color(tokens.bg_surface, tokens.accent, 0.18)
+                } else {
+                    tokens.bg_input
+                };
+                let stroke_col = if is_sel { tokens.accent } else { tokens.border };
+                let fg = if is_sel {
+                    tokens.text
+                } else {
+                    tokens.text_muted
+                };
+                if ui
+                    .add(
+                        egui::Button::new(RichText::new(lbl).color(fg).size(12.0))
+                            .fill(fill)
+                            .stroke(Stroke::new(1.0_f32, stroke_col))
+                            .corner_radius(RADIUS_TAG),
+                    )
+                    .clicked()
+                {
+                    self.mod_status_filter = filter;
+                }
+            }
+        });
+
         ui.add_space(4.0);
         Self::updates_panel(ui, state, inst_id);
 
         if !state.mod_conflicts.is_empty() {
             let warn_frame = egui::Frame::new()
-                .fill(CARD_SURFACE)
-                .stroke(Stroke::new(1.0_f32, STATUS_WARN))
+                .fill(tokens.bg_surface)
+                .stroke(Stroke::new(1.0_f32, tokens.warning))
                 .corner_radius(RADIUS_CARD)
                 .inner_margin(egui::Margin::same(8));
 
             warn_frame.show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
-                    paint_vector_icon(ui.painter(), rect, VectorIcon::Warning, STATUS_WARN);
-                    ui.label(RichText::new(format!("Обнаружено конфликтов: {}", state.mod_conflicts.len())).color(STATUS_WARN).strong());
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
+                    paint_vector_icon(ui.painter(), rect, VectorIcon::Warning, tokens.warning);
+                    ui.label(
+                        RichText::new(format!(
+                            "Обнаружено конфликтов: {}",
+                            state.mod_conflicts.len()
+                        ))
+                        .color(tokens.warning)
+                        .strong(),
+                    );
                 });
                 for c in &state.mod_conflicts {
                     match c {
                         mq_mods::ModConflict::DuplicateModId { mod_id, files } => {
-                            ui.label(RichText::new(format!("Дубликат ID '{mod_id}' в файлах: {}", files.join(", "))).color(STATUS_DANGER));
+                            ui.label(
+                                RichText::new(format!(
+                                    "Дубликат ID '{mod_id}' в файлах: {}",
+                                    files.join(", ")
+                                ))
+                                .color(tokens.danger),
+                            );
                         }
-                        mq_mods::ModConflict::MissingDependency { mod_id, required_dep, .. } => {
-                            ui.label(RichText::new(format!("Мод '{mod_id}' требует отсутствующую зависимость '{required_dep}'")).color(STATUS_WARN));
+                        mq_mods::ModConflict::MissingDependency {
+                            mod_id,
+                            required_dep,
+                            ..
+                        } => {
+                            ui.label(
+                                RichText::new(format!(
+                                    "Мод '{mod_id}' требует отсутствующую зависимость '{required_dep}'"
+                                ))
+                                .color(tokens.warning),
+                            );
                         }
                     }
                 }
@@ -2012,85 +2348,148 @@ impl InstancesView {
         }
 
         let lock = Self::cached_lock(ui.ctx(), &state.paths.instance_dir(inst_id.as_str()));
+        let q = self.mod_search_query.trim().to_lowercase();
+        let filtered_mods: Vec<_> = state
+            .installed_mods
+            .iter()
+            .filter(|m| match self.mod_status_filter {
+                ModStatusFilter::All => true,
+                ModStatusFilter::Enabled => m.enabled,
+                ModStatusFilter::Disabled => !m.enabled,
+            })
+            .filter(|m| {
+                q.is_empty()
+                    || m.name.to_lowercase().contains(&q)
+                    || m.file_name.to_lowercase().contains(&q)
+                    || m.mod_id.to_lowercase().contains(&q)
+            })
+            .collect();
+
         ScrollArea::vertical()
             .id_salt("mods_table_scroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-            if state.installed_mods.is_empty() {
-                ui.add_space(20.0);
-                ui.label(RichText::new("В этом инстансе пока нет модов. Найдите их во вкладке 'Каталог' или положите .jar файлы в папку mods/!").color(TEXT_MUTED));
-            } else {
-                for m in &state.installed_mods {
-                    let card = egui::Frame::new()
-                        .fill(CARD_SURFACE)
-                        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-                        .corner_radius(RADIUS_CARD)
-                        .inner_margin(egui::Margin::same(8));
+                if state.installed_mods.is_empty() {
+                    ui.add_space(20.0);
+                    ui.label(
+                        RichText::new(
+                            "В этом инстансе пока нет модов. Откройте «Каталог» или поместите .jar в папку mods/.",
+                        )
+                        .color(tokens.text_muted),
+                    );
+                } else if filtered_mods.is_empty() {
+                    ui.add_space(16.0);
+                    ui.label(
+                        RichText::new("По текущему фильтру моды не найдены.")
+                            .color(tokens.text_muted),
+                    );
+                } else {
+                    for m in filtered_mods {
+                        let card = egui::Frame::new()
+                            .fill(tokens.bg_surface)
+                            .stroke(Stroke::new(1.0_f32, tokens.border))
+                            .corner_radius(RADIUS_CARD)
+                            .inner_margin(egui::Margin::same(8));
 
-                    card.show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            // Toggle button
-                            let toggle_text = if m.enabled { "Вкл" } else { "Выкл" };
-                            let toggle_col = if m.enabled { ACCENT_EMERALD } else { TEXT_MUTED };
-                            if ui.button(RichText::new(toggle_text).color(toggle_col).strong()).clicked() {
-                                let _ = state.cmd_sender.send(UiWorkerCommand::ToggleMod {
-                                    instance_id: inst_id.clone(),
-                                    file_name: m.file_name.clone(),
-                                });
-                            }
-
-                            let right_w = 40.0;
-                            let middle_w = (ui.available_width() - right_w - 8.0).max(60.0);
-
-                            ui.allocate_ui_with_layout(
-                                Vec2::new(middle_w, 36.0),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-                                        let name_w = (ui.available_width() - 110.0).max(60.0);
-                                        ui.add_sized(
-                                            [name_w.min(180.0), 18.0],
-                                            egui::Label::new(RichText::new(&m.name).color(TEXT_PRIMARY).strong()).truncate(),
-                                        );
-                                        version_badge(ui, &m.version, ACCENT_COBALT);
-                                        if let Some(ld) = m.loader {
-                                            version_badge(ui, ld.as_str(), ACCENT_EMERALD);
-                                        }
-                                        match lock.find_by_filename(&m.file_name) {
-                                            Some((_, e)) => {
-                                                let (txt, col) = match e.source {
-                                                    mq_mods::LockSource::Modrinth => ("Modrinth", ACCENT_EMERALD),
-                                                    mq_mods::LockSource::Manual => ("Вручную", TEXT_MUTED),
-                                                    mq_mods::LockSource::CurseForge => ("CurseForge", Color32::from_rgb(0xF1, 0x64, 0x36)),
-                                                };
-                                                version_badge(ui, txt, col);
-                                            }
-                                            None => version_badge(ui, "Локальный", TEXT_MUTED),
-                                        }
-                                    });
-                                    let file_w = (ui.available_width() - 8.0).max(40.0);
-                                    ui.add_sized(
-                                        [file_w, 16.0],
-                                        egui::Label::new(RichText::new(format!("Файл: {}", m.file_name)).color(TEXT_MUTED).small()).truncate(),
-                                    );
-                                },
-                            );
-
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if secondary_glass_button(ui, Some(VectorIcon::Trash), "").clicked() {
-                                    let _ = state.cmd_sender.send(UiWorkerCommand::DeleteMod {
+                        card.show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let mut enabled = m.enabled;
+                                if crate::widgets::smooth_toggle(ui, &mut enabled).changed() {
+                                    let _ = state.cmd_sender.send(UiWorkerCommand::ToggleMod {
                                         instance_id: inst_id.clone(),
                                         file_name: m.file_name.clone(),
                                     });
                                 }
+
+                                let right_w = 40.0;
+                                let middle_w = (ui.available_width() - right_w - 8.0).max(60.0);
+
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(middle_w, 36.0),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                                            let name_w = (ui.available_width() - 180.0).max(60.0);
+                                            let name_col = if m.enabled {
+                                                tokens.text
+                                            } else {
+                                                tokens.text_muted
+                                            };
+                                            ui.add_sized(
+                                                [name_w.min(180.0), 18.0],
+                                                egui::Label::new(
+                                                    RichText::new(&m.name).color(name_col).strong(),
+                                                )
+                                                .truncate(),
+                                            );
+                                            version_badge(ui, &m.version, ACCENT_COBALT);
+                                            if let Some(ld) = m.loader {
+                                                version_badge(ui, ld.as_str(), tokens.accent);
+                                            }
+                                            match lock.find_by_filename(&m.file_name) {
+                                                Some((_, e)) => {
+                                                    let (txt, col) = match e.source {
+                                                        mq_mods::LockSource::Modrinth => {
+                                                            ("Modrinth", tokens.accent)
+                                                        }
+                                                        mq_mods::LockSource::Manual => {
+                                                            ("Вручную", tokens.text_muted)
+                                                        }
+                                                        mq_mods::LockSource::CurseForge => (
+                                                            "CurseForge",
+                                                            Color32::from_rgb(0xD9, 0x72, 0x45),
+                                                        ),
+                                                    };
+                                                    version_badge(ui, txt, col);
+                                                }
+                                                None => {
+                                                    version_badge(ui, "Локальный", tokens.text_muted)
+                                                }
+                                            }
+                                            if m.size > 0 {
+                                                ui.label(
+                                                    RichText::new(crate::catalog_flow::format_size(
+                                                        m.size,
+                                                    ))
+                                                    .color(tokens.text_muted)
+                                                    .small(),
+                                                );
+                                            }
+                                        });
+                                        let file_w = (ui.available_width() - 8.0).max(40.0);
+                                        ui.add_sized(
+                                            [file_w, 16.0],
+                                            egui::Label::new(
+                                                RichText::new(format!("Файл: {}", m.file_name))
+                                                    .color(tokens.text_muted)
+                                                    .small(),
+                                            )
+                                            .truncate(),
+                                        );
+                                    },
+                                );
+
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if secondary_glass_button(ui, Some(VectorIcon::Trash), "")
+                                            .clicked()
+                                        {
+                                            let _ =
+                                                state.cmd_sender.send(UiWorkerCommand::DeleteMod {
+                                                    instance_id: inst_id.clone(),
+                                                    file_name: m.file_name.clone(),
+                                                });
+                                        }
+                                    },
+                                );
                             });
                         });
-                    });
-                    ui.add_space(4.0);
+                        ui.add_space(4.0);
+                    }
                 }
-            }
-        });
+            });
     }
 
     fn render_console_tab(
@@ -2318,74 +2717,130 @@ impl InstancesView {
         });
     }
 
+    fn render_pack_directory_tab(
+        ui: &mut Ui,
+        tokens: &Tokens,
+        packs_dir: &std::path::Path,
+        title: &str,
+        folder_btn_label: &str,
+        empty_hint: &str,
+        search_query: &mut String,
+    ) {
+        let _ = std::fs::create_dir_all(packs_dir);
+        let packs = list_packs_in_dir(packs_dir);
+
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+            ui.label(
+                RichText::new(format!("{title}: {}", packs.len()))
+                    .color(tokens.text)
+                    .strong()
+                    .size(14.0),
+            );
+            if secondary_glass_button(ui, Some(VectorIcon::Folder), folder_btn_label).clicked() {
+                let _ = crate::opener::open_that(packs_dir);
+            }
+            ui.add(
+                egui::TextEdit::singleline(search_query)
+                    .hint_text("Поиск по имени файла...")
+                    .desired_width(200.0),
+            );
+            if !search_query.is_empty() && secondary_glass_button(ui, None, "Сброс").clicked()
+            {
+                search_query.clear();
+            }
+        });
+
+        ui.add_space(6.0);
+        let q = search_query.trim().to_lowercase();
+        let filtered: Vec<_> = packs
+            .into_iter()
+            .filter(|(name, _, _)| q.is_empty() || name.to_lowercase().contains(&q))
+            .collect();
+
+        if filtered.is_empty() {
+            ui.add_space(16.0);
+            let msg = if q.is_empty() {
+                empty_hint
+            } else {
+                "По вашему запросу ничего не найдено."
+            };
+            ui.label(RichText::new(msg).color(tokens.text_muted));
+            return;
+        }
+
+        ScrollArea::vertical()
+            .id_salt(("pack_dir_scroll", title))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for (name, enabled, size) in filtered {
+                    let card = egui::Frame::new()
+                        .fill(tokens.bg_surface)
+                        .stroke(Stroke::new(1.0_f32, tokens.border))
+                        .corner_radius(RADIUS_CARD)
+                        .inner_margin(egui::Margin::same(8));
+
+                    card.show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let mut is_on = enabled;
+                            if crate::widgets::smooth_toggle(ui, &mut is_on).changed() {
+                                toggle_pack_file(packs_dir, &name);
+                            }
+                            let name_w = (ui.available_width() - 140.0).max(60.0);
+                            let name_col = if enabled {
+                                tokens.text
+                            } else {
+                                tokens.text_muted
+                            };
+                            ui.add_sized(
+                                [name_w, 18.0],
+                                egui::Label::new(RichText::new(&name).color(name_col).strong())
+                                    .truncate(),
+                            );
+                            if size > 0 {
+                                ui.label(
+                                    RichText::new(crate::catalog_flow::format_size(size))
+                                        .color(tokens.text_muted)
+                                        .small(),
+                                );
+                            }
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if secondary_glass_button(ui, Some(VectorIcon::Trash), "")
+                                        .clicked()
+                                    {
+                                        delete_pack_file(packs_dir, &name);
+                                    }
+                                },
+                            );
+                        });
+                    });
+                    ui.add_space(4.0);
+                }
+            });
+    }
+
     fn render_resourcepacks_tab(
         &mut self,
         ui: &mut Ui,
         state: &mut UiState,
         inst_id: &mq_core::InstanceId,
     ) {
+        let tokens = Tokens::from_config(&state.config.theme);
         let packs_dir = state
             .paths
             .instance_dir(inst_id.as_str())
             .join("resourcepacks");
-        let _ = std::fs::create_dir_all(&packs_dir);
-        let packs = list_packs_in_dir(&packs_dir);
-
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-            ui.label(
-                RichText::new(format!("Ресурспаки: {}", packs.len()))
-                    .strong()
-                    .size(14.0),
-            );
-            if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть resourcepacks/")
-                .clicked()
-            {
-                let _ = crate::opener::open_that(&packs_dir);
-            }
-        });
-
-        ui.add_space(6.0);
-        if packs.is_empty() {
-            ui.add_space(20.0);
-            ui.label(RichText::new("Ресурспаки не установлены. Поместите .zip файлы в папку resourcepacks/ или установите из Каталога!").color(TEXT_MUTED));
-        } else {
-            for (name, enabled, size) in packs {
-                let card = egui::Frame::new()
-                    .fill(CARD_SURFACE)
-                    .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-                    .corner_radius(RADIUS_CARD)
-                    .inner_margin(egui::Margin::same(8));
-
-                card.show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let toggle_lbl = if enabled { "Вкл" } else { "Выкл" };
-                        let toggle_col = if enabled { ACCENT_EMERALD } else { TEXT_MUTED };
-                        if ui
-                            .button(RichText::new(toggle_lbl).color(toggle_col).strong())
-                            .clicked()
-                        {
-                            toggle_pack_file(&packs_dir, &name);
-                        }
-                        let name_w = (ui.available_width() - 80.0).max(60.0);
-                        ui.add_sized(
-                            [name_w, 18.0],
-                            egui::Label::new(RichText::new(&name).color(TEXT_PRIMARY).strong())
-                                .truncate(),
-                        );
-                        if size > 0 {
-                            let mib = (size as f64) / (1024.0 * 1024.0);
-                            ui.label(
-                                RichText::new(format!("{mib:.1} МБ"))
-                                    .color(TEXT_MUTED)
-                                    .small(),
-                            );
-                        }
-                    });
-                });
-                ui.add_space(4.0);
-            }
-        }
+        Self::render_pack_directory_tab(
+            ui,
+            &tokens,
+            &packs_dir,
+            "Ресурспаки",
+            "Открыть resourcepacks/",
+            "Ресурспаки не установлены. Поместите .zip файлы в папку resourcepacks/ или установите из Каталога.",
+            &mut self.pack_search_query,
+        );
     }
 
     fn render_shaderpacks_tab(
@@ -2394,68 +2849,20 @@ impl InstancesView {
         state: &mut UiState,
         inst_id: &mq_core::InstanceId,
     ) {
+        let tokens = Tokens::from_config(&state.config.theme);
         let shaders_dir = state
             .paths
             .instance_dir(inst_id.as_str())
             .join("shaderpacks");
-        let _ = std::fs::create_dir_all(&shaders_dir);
-        let shaders = list_packs_in_dir(&shaders_dir);
-
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-            ui.label(
-                RichText::new(format!("Шейдерпаки: {}", shaders.len()))
-                    .strong()
-                    .size(14.0),
-            );
-            if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть shaderpacks/")
-                .clicked()
-            {
-                let _ = crate::opener::open_that(&shaders_dir);
-            }
-        });
-
-        ui.add_space(6.0);
-        if shaders.is_empty() {
-            ui.add_space(20.0);
-            ui.label(RichText::new("Шейдеры не установлены. Поместите шейдерпаки в папку shaderpacks/! Для их работы требуется Iris или OptiFine.").color(TEXT_MUTED));
-        } else {
-            for (name, enabled, size) in shaders {
-                let card = egui::Frame::new()
-                    .fill(CARD_SURFACE)
-                    .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-                    .corner_radius(RADIUS_CARD)
-                    .inner_margin(egui::Margin::same(8));
-
-                card.show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let toggle_lbl = if enabled { "Вкл" } else { "Выкл" };
-                        let toggle_col = if enabled { ACCENT_EMERALD } else { TEXT_MUTED };
-                        if ui
-                            .button(RichText::new(toggle_lbl).color(toggle_col).strong())
-                            .clicked()
-                        {
-                            toggle_pack_file(&shaders_dir, &name);
-                        }
-                        let name_w = (ui.available_width() - 80.0).max(60.0);
-                        ui.add_sized(
-                            [name_w, 18.0],
-                            egui::Label::new(RichText::new(&name).color(TEXT_PRIMARY).strong())
-                                .truncate(),
-                        );
-                        if size > 0 {
-                            let mib = (size as f64) / (1024.0 * 1024.0);
-                            ui.label(
-                                RichText::new(format!("{mib:.1} МБ"))
-                                    .color(TEXT_MUTED)
-                                    .small(),
-                            );
-                        }
-                    });
-                });
-                ui.add_space(4.0);
-            }
-        }
+        Self::render_pack_directory_tab(
+            ui,
+            &tokens,
+            &shaders_dir,
+            "Шейдерпаки",
+            "Открыть shaderpacks/",
+            "Шейдеры не установлены. Поместите шейдерпаки в папку shaderpacks/ (для работы требуется Iris или OptiFine).",
+            &mut self.shader_search_query,
+        );
     }
 
     fn render_worlds_tab(
@@ -3042,6 +3449,15 @@ fn toggle_pack_file(dir: &std::path::Path, filename: &str) {
         dir.join(format!("{filename}.disabled"))
     };
     let _ = std::fs::rename(src, dst);
+}
+
+fn delete_pack_file(dir: &std::path::Path, filename: &str) {
+    let target = dir.join(filename);
+    if target.is_dir() {
+        let _ = std::fs::remove_dir_all(target);
+    } else {
+        let _ = std::fs::remove_file(target);
+    }
 }
 
 #[cfg(test)]

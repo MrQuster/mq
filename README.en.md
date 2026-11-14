@@ -1,210 +1,121 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo.svg">
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.svg">
-    <img alt="MQ Logo" src="docs/assets/logo.svg" width="96" height="96">
-  </picture>
-</p>
+<div align="center">
 
-<h1 align="center">MQ</h1>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.svg">
+  <img alt="MQ Launcher" src="docs/assets/logo.svg" width="104" height="104">
+</picture>
 
-<p align="center">Minecraft launcher for Linux and Windows built in Rust</p>
+# MQ Launcher
 
-<p align="center">
-  <a href="https://github.com/MrQuster/mq/releases/latest"><img src="https://img.shields.io/github/v/release/MrQuster/mq?style=flat-square&color=3DDC97" alt="Latest Release"></a>
-  <a href="https://github.com/MrQuster/mq/actions"><img src="https://img.shields.io/github/actions/workflow/status/MrQuster/mq/ci.yml?branch=main&style=flat-square" alt="CI Status"></a>
-  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue?style=flat-square" alt="Supported Platforms">
-</p>
+Cross-platform Minecraft launcher written in Rust with isolated instances, batch mod installation, and live UI customization.
 
-<p align="center">
-  <a href="README.md">Русский</a> · <b>English</b>
-</p>
+[![Release](https://img.shields.io/github/v/release/MrQuster/mq?style=flat-square&color=4C9A82&labelColor=1F242D)](https://github.com/MrQuster/mq/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/MrQuster/mq/ci.yml?style=flat-square&color=3A4659&labelColor=1F242D&label=CI)](https://github.com/MrQuster/mq/actions/workflows/ci.yml)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-3A4659?style=flat-square&labelColor=1F242D)](#installation)
+[![Rust](https://img.shields.io/badge/rust-1.80%2B-3A4659?style=flat-square&labelColor=1F242D)](#building-from-source)
 
-<p align="center">
-  <a href="#installation">Installation</a> ·
-  <a href="#features">Features</a> ·
-  <a href="#screenshots">Screenshots</a> ·
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#building-from-source">Building from Source</a> ·
-  <a href="#security--privacy">Security & Privacy</a> ·
-  <a href="docs/FAQ.md">FAQ</a>
-</p>
+[Русский](README.md) · **English**
 
----
+[Features](#features) · [Screenshots](#screenshots) · [Installation](#installation) · [Building from Source](#building-from-source) · [Security](#security--privacy)
 
-MQ is a modular launcher for Minecraft: Java Edition written in Rust. It focuses on stability, instance isolation, multi-threaded file integrity verification via Rayon, and functional parity across Linux (Wayland / X11) and Windows 10/11 x64.
-
-The launcher contains zero telemetry, analytics, or background user tracking.
+</div>
 
 ---
 
 ## Features
 
-| Category | Capabilities |
-|---|---|
-| **Platforms** | Linux (Wayland and X11, x86_64), Windows 10/11 x64, portable mode via `portable.flag`. |
-| **Mod Loaders** | Vanilla, Fabric, Quilt, Forge, NeoForge. In-place mod loader switching on existing instances. |
-| **Catalogs & Modpacks** | Unified Modrinth API v2 and CurseForge API v1 catalog: mods, resource packs, shaders, and modpacks. Dependency resolution, one-click updates with rollback, and `.mrpack` / CurseForge `.zip` / MultiMC/Prism import with Zip-Slip protection. Each user provides their own CurseForge API key (Modrinth works without a key). |
-| **Authentication** | Offline mode (deterministic UUID v3 `OfflinePlayer:<nickname>` per RFC 4122), Ely.by (browser-only OAuth2 + PKCE S256 with automated `authlib-injector` injection), Microsoft (Device Code Flow in external browser). |
-| **Java Management** | Automatic discovery of system OpenJDK installations, one-click automated download of Adoptium Temurin (Java 8, 17, 21), and manual Java binary path configuration. |
-| **CAS Storage** | Content-addressable storage for shared libraries and assets with hard link deduplication to minimize disk usage. |
-| **Graphics & Shaders** | Resource pack and shader pack management, GPU detection, automated configuration of `iris.properties` and `oculus.properties`. |
-| **User Interface** | Built with `egui` / `eframe` in a solid matte theme without window transparency (Opaque Window), clean vector Painter icons, and zero emojis. |
-| **CLI Tooling** | Command-line interface for automation and scripting: `mq launch`, `mq install`, `mq search`, `mq import`, `mq doctor`, `mq accounts`, `mq mods`, `mq self-update`. |
-
----
-
-## Modrinth & CurseForge Catalog
-
-* **Four content types:** mods, resource packs, shaders, and modpacks with Minecraft version, mod loader, category, and sort filters.
-* **Dependencies & updates:** automatic resolution of required and optional dependencies, source-aware lockfile (`mods/.mq-lock.json`), and one-click updates with automatic `.bak` rollback.
-* **Local import:** supports `.mrpack`, CurseForge `.zip`, and MultiMC/Prism archives (via **Import**, window drag-and-drop, or `mq import <file>`). Pre/post-launch commands in imported archives are ignored, and extraction enforces Zip-Slip, symlink, and zip-bomb protections.
-* **CurseForge API key policy:** no shared key is embedded in release builds. Modrinth works out of the box without a key; for CurseForge, each user enters their own personal key in **Settings → Catalog** (or sets `MQ_CURSEFORGE_API_KEY`).
-* **Author-restricted downloads:** if a CurseForge author disables third-party distribution (`downloadUrl == null`), MQ never bypasses the restriction — instead, it opens the official download page and watches your Downloads folder to pick up the file automatically.
+* **Isolated Instances** — separate directories (`mods/`, `resourcepacks/`, `shaderpacks/`, `config/`, `saves/`) per profile. Supports Minecraft `1.7.10` through `26.1` (`Releases`, `Snapshots`, `Beta`, `Alpha`), `Vanilla`, `Fabric`, `Quilt`, `Forge`, and `NeoForge` loaders, world backup/restore, and crash diagnostics.
+* **Modrinth & CurseForge Catalog** — browse and install mods, resource packs, shaders, and modpacks, import local `.mrpack` or `.zip` packs, check updates, and search, filter, enable/disable, or delete installed content inside each instance.
+* **Batch Install Queue** — queue multiple mods in the catalog, resolve and deduplicate shared required dependencies automatically, and install the entire set in one action.
+* **Live UI Customization** — 6 theme presets (`Matte Dark`, `Light Clean`, `Modrinth Emerald`, `Prism Classic Dark`, `Catppuccin Mocha`, `Nord`), calm accent swatches + custom RGB picker, procedural geometric backdrop, solid color, or custom background image with dimming, plus adjustable corner radius, card opacity, scale, and density without restarting.
+* **Authentication Modes** — Microsoft OAuth2 (Device Code Flow), Ely.by (OAuth2 + PKCE S256) with `authlib-injector`, and local offline profiles with skin rendering.
 
 ---
 
 ## Screenshots
 
-<p align="center">
-  <img src="docs/assets/screenshots/01-instances.png" alt="Instances View" width="48%">
-  <img src="docs/assets/screenshots/02-detail-mods.png" alt="Instance Details & Mods" width="48%">
-</p>
-<p align="center">
-  <img src="docs/assets/screenshots/04-catalog.png" alt="Mod and Modpack Catalog" width="48%">
-  <img src="docs/assets/screenshots/05-accounts.png" alt="Account Management" width="48%">
-</p>
-<p align="center">
-  <img src="docs/assets/screenshots/06-settings-matte.png" alt="Settings Screen (Dark Theme)" width="48%">
-  <img src="docs/assets/screenshots/07-settings-light.png" alt="Settings Screen (Light Theme)" width="48%">
-</p>
+<div align="center">
+
+| Instances | Instance Mods |
+| :---: | :---: |
+| ![Instances screen](docs/assets/screenshots/01-instances.png) | ![Instance mods management](docs/assets/screenshots/02-detail-mods.png) |
+
+| Catalog & Batch Queue | Theme Studio |
+| :---: | :---: |
+| ![Modrinth and CurseForge catalog](docs/assets/screenshots/04-catalog.png) | ![Customization studio](docs/assets/screenshots/06-settings-matte.png) |
+
+| Accounts | Light Theme |
+| :---: | :---: |
+| ![Accounts manager](docs/assets/screenshots/05-accounts.png) | ![Light Clean theme](docs/assets/screenshots/07-settings-light.png) |
+
+</div>
 
 ---
 
 ## Installation
 
-### Linux
+Prebuilt binaries and checksums (`SHA256SUMS` and Minisign signature `SHA256SUMS.minisig`) are published on [GitHub Releases](https://github.com/MrQuster/mq/releases).
 
-Install the latest release with a single command:
+### Windows (x64)
+
+* **Installer:** download and run `MQ-Setup-<version>-x64.exe` from Releases (or use `install.ps1` / `packaging/winget` / `packaging/scoop` manifests).
+* **Portable:** extract `mq-windows-x86_64-portable.zip` (includes `portable.flag` so configuration and instances live beside the executable).
+
+### Linux (x86_64)
+
+Install the latest release archive with SHA-256 verification and desktop entry setup:
 
 ```bash
-curl -fsSL https://github.com/MrQuster/mq/releases/latest/download/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/MrQuster/mq/main/install.sh | bash
 ```
 
-Portable execution without system integration:
-
-```bash
-curl -LO https://github.com/MrQuster/mq/releases/download/v2.4.0/mq-linux-x86_64.tar.gz
-tar -xzf mq-linux-x86_64.tar.gz
-./mq
-```
-
-### Windows 10 / 11 x64
-
-Install via PowerShell with a single command (no administrator privileges required):
-
-```powershell
-irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1 | iex
-```
-
-| Install Method | Command / File | Notes |
-|---|---|---|
-| **Inno Setup 6 Installer** | [`MQ-Setup-2.4.0-x64.exe`](https://github.com/MrQuster/mq/releases/download/v2.4.0/MQ-Setup-2.4.0-x64.exe) | Installs to `%LOCALAPPDATA%\Programs\MQ` without UAC, RU/UK/EN, `.mrpack` association |
-| **PowerShell Script** | `irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1 \| iex` | Verifies `SHA256SUMS` & Minisign, supports `-Portable`, `-Silent`, `-Uninstall` |
-| **Portable Archive** | [`mq-windows-x86_64-portable.zip`](https://github.com/MrQuster/mq/releases/download/v2.4.0/mq-windows-x86_64-portable.zip) | Includes `portable.flag`, stores all data in `data/` next to `mq.exe` |
-| **winget** | `winget install MrQuster.MQ` | Manifest in `packaging/winget/` |
-| **Scoop** | `scoop install packaging/scoop/mq.json` | Portable build with `persist: ["data"]` |
-
-For SHA-256 verification, Minisign signatures, and Windows SmartScreen guidance, see [docs/WINDOWS_SIGNING.md](docs/WINDOWS_SIGNING.md).
-
-For distribution-specific guides (Arch Linux, Ubuntu/Debian, Fedora), refer to [docs/INSTALL.md](docs/INSTALL.md).
-
----
-
-## Quick Start
-
-1. **Launch the application:**
-   ```bash
-   mq
-   ```
-2. **Add an account:**
-   Open the **Accounts** tab and choose your preferred sign-in method: Offline mode, Ely.by, or Microsoft.
-3. **Create an instance:**
-   Click **Create**, specify an instance name, Minecraft version, and mod loader (e.g., 1.21.1 + Fabric).
-4. **Install mods (optional):**
-   Navigate to the **Catalog** tab or drag and drop `.mrpack` / `.jar` files into the window.
-5. **Click Play:**
-   The launcher verifies game assets, libraries, and Java runtime, then starts the game client.
+Standalone binaries (`mq-linux-x86_64`), tarballs (`mq-linux-x86_64.tar.gz`), and Arch packaging (`packaging/PKGBUILD`) are also provided.
 
 ---
 
 ## Building from Source
 
-Prerequisites: a stable Rust toolchain (version 1.80+):
+Requires Rust toolchain `1.80+` (pinned in `rust-toolchain.toml`).
 
 ```bash
-# 1. Clone the repository
+# 1. Clone repository
 git clone https://github.com/MrQuster/mq.git
 cd mq
 
-# 2. Build release binary
-cargo build --release
+# 2. Run desktop UI
+cargo run -p mq-cli -- ui
 
-# 3. Run test suite
-cargo test --workspace
+# 3. Build release binary
+cargo build --release -p mq-cli
+
+# 4. Run verification suite
+./scripts/verify.sh
 ```
 
-The resulting binary will be placed at `target/release/mq` (or `target/release/mq.exe` on Windows).
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for build dependencies and developer guidelines.
+The release binary is emitted at `target/release/mq` (`target\release\mq.exe` on Windows). System dependencies and developer workflow details are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
 ## Security & Privacy
 
-| Feature | Implementation |
+| Area | Implementation |
 |---|---|
-| **Telemetry** | Zero telemetry (0 analytics endpoints, 0 user tracking, 0 crash reporting to remote hosts). |
-| **Credential Storage** | Linux Secret Service / Keyring API, Windows DPAPI / Credential Manager. Local credential file permissions restricted to `0600`. |
-| **Microsoft Auth** | Standard OAuth2 Device Code Flow in external default browser without collecting credentials inside the app. |
-| **Ely.by Auth** | OAuth2 + PKCE S256 in external browser via local loopback listener `127.0.0.1:<port>/callback`. |
-| **Archive Guardrails** | Zip-Slip path sanitization for modpack and mod extraction. Disables untrusted pre-launch commands. |
-| **Supply Chain Integrity** | Minisign Ed25519 digital signatures, GitHub OIDC Sigstore build provenance attestations, and SHA-256 checksums. |
+| **Telemetry** | Zero telemetry: no analytics, user tracking, or remote crash reporting. |
+| **Token Storage** | Linux Secret Service / Keyring and Windows DPAPI / Credential Manager, with `0600` local fallback file permissions. |
+| **Microsoft Auth** | OAuth2 Device Code Flow in the external system browser without handling passwords in-app. |
+| **Ely.by Auth** | OAuth2 + PKCE S256 via external browser and local loopback listener `127.0.0.1:<port>/callback`. |
+| **Archive Safety** | Zip-Slip path sanitization on extraction and automatic disabling of untrusted pre-launch commands. |
+| **Release Integrity** | Minisign Ed25519 signatures, GitHub OIDC build provenance attestations, and SHA-256 checksums. |
 
-For detailed policies:
-* [Security Policy (SECURITY.md)](docs/SECURITY.md)
-* [Privacy Policy (PRIVACY.md)](docs/PRIVACY.md)
-* [Threat Model (THREAT_MODEL.md)](docs/THREAT_MODEL.md)
+Further reading: [SECURITY.md](docs/SECURITY.md) · [PRIVACY.md](docs/PRIVACY.md) · [THREAT_MODEL.md](docs/THREAT_MODEL.md) · [FAQ.md](docs/FAQ.md)
 
 ---
 
-## FAQ
+## Acknowledgements & Legal Notice
 
-Detailed answers regarding data paths, custom Java runtimes, shader installation, SmartScreen prompts, and self-updates can be found in [docs/FAQ.md](docs/FAQ.md).
+MQ builds on open specifications and community tooling from [Modrinth](https://modrinth.com/), [Ely.by](https://ely.by/), [authlib-injector](https://github.com/yushijinhun/authlib-injector), [Fabric](https://fabricmc.net/), [Quilt](https://quiltmc.org/), and [NeoForge](https://neoforged.net/). Third-party crate licenses are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
----
+Author: [MrQuster](https://github.com/MrQuster).
 
-## Acknowledgements
-
-MQ relies on and thanks the following upstream projects and communities:
-* **[Modrinth](https://modrinth.com/)** — open mod platform and `.mrpack` format specification.
-* **[Ely.by](https://ely.by/)** — community skin system and authentication service.
-* **[authlib-injector](https://github.com/yushijinhun/authlib-injector)** — JVM agent for custom authentication servers.
-* **[Mojang Studios](https://www.minecraft.net/)** — creators of Minecraft.
-* **[Fabric](https://fabricmc.net/)** and **[Quilt](https://quiltmc.org/)** — modular mod loaders.
-
-Complete third-party crate and library licenses are listed in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
-
----
-
-## Author
-
-* **MrQuster** — [MrQuster](https://github.com/MrQuster)
-
----
-
-## Legal Disclaimer
-
-MQ is an unofficial, independent open-source project. It is not affiliated with, endorsed by, or associated with Mojang Studios, Microsoft Corporation, or any of their subsidiaries. Minecraft is a registered trademark of Mojang Studios.
-
-Playing on servers with online verification enabled (`online-mode=true`) requires an official Minecraft license. Ely.by is an independent community service. MQ does not distribute or use proprietary Minecraft textures, assets, or trademarks.
+MQ Launcher is an independent open-source project and is not affiliated with or endorsed by Mojang Studios or Microsoft Corporation. Playing on servers with `online-mode=true` requires an official Minecraft account.

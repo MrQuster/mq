@@ -422,12 +422,16 @@ pub struct ModpackPreview {
 /// Install dialog model.
 pub struct InstallDialog {
     pub hit: CatalogHit,
+    /// Additional queued projects for batch installation (excludes `hit`).
+    pub batch_hits: Vec<CatalogHit>,
     /// Chosen modpack version (content installs let the resolver pick the latest compatible one).
     pub version: Option<ProjectVersion>,
     pub target: InstallTarget,
     pub request_id: u64,
     /// Display titles for dependency project ids.
     pub titles: std::collections::HashMap<String, String>,
+    /// Source repository per project id for batch downloads.
+    pub sources: std::collections::HashMap<String, mq_mods::CatalogSource>,
     pub plan: Option<DependencyResolutionPlan>,
     pub preview: Option<ModpackPreview>,
     pub loading: bool,
@@ -440,10 +444,12 @@ impl InstallDialog {
     pub fn new(hit: CatalogHit, version: Option<ProjectVersion>, target: InstallTarget) -> Self {
         Self {
             hit,
+            batch_hits: Vec::new(),
             version,
             target,
             request_id: 0,
             titles: std::collections::HashMap::new(),
+            sources: std::collections::HashMap::new(),
             plan: None,
             preview: None,
             loading: false,
@@ -451,6 +457,49 @@ impl InstallDialog {
             selected_optionals: BTreeSet::new(),
             confirm_modpack: false,
         }
+    }
+
+    /// Creates a batch install dialog resolving all `hits` (and their dependencies) at once.
+    pub fn new_batch(mut hits: Vec<CatalogHit>, target: InstallTarget) -> Option<Self> {
+        if hits.is_empty() {
+            return None;
+        }
+        let primary = hits.remove(0);
+        let mut titles = std::collections::HashMap::new();
+        let mut sources = std::collections::HashMap::new();
+        titles.insert(primary.project_id.clone(), primary.title.clone());
+        sources.insert(primary.project_id.clone(), primary.source);
+        for extra in &hits {
+            titles.insert(extra.project_id.clone(), extra.title.clone());
+            sources.insert(extra.project_id.clone(), extra.source);
+        }
+        Some(Self {
+            hit: primary,
+            batch_hits: hits,
+            version: None,
+            target,
+            request_id: 0,
+            titles,
+            sources,
+            plan: None,
+            preview: None,
+            loading: false,
+            error: None,
+            selected_optionals: BTreeSet::new(),
+            confirm_modpack: false,
+        })
+    }
+
+    /// All requested projects (primary + extra batch items).
+    pub fn all_hits(&self) -> Vec<&CatalogHit> {
+        let mut out = Vec::with_capacity(1 + self.batch_hits.len());
+        out.push(&self.hit);
+        out.extend(self.batch_hits.iter());
+        out
+    }
+
+    pub fn is_batch(&self) -> bool {
+        !self.batch_hits.is_empty()
     }
 
     pub fn is_modpack(&self) -> bool {

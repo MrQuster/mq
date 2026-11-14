@@ -1,15 +1,15 @@
 #![deny(clippy::await_holding_lock)]
 //! Global application settings & Customization Studio. Zero emojis!
 
-use egui::{Color32, RichText, ScrollArea, Stroke, Ui, Vec2};
-use mq_core::{GuiBackend, LaunchAction, ThemeConfig, ThemePreset, UiDensity};
+use egui::{Color32, CornerRadius, Pos2, RichText, ScrollArea, Stroke, StrokeKind, Ui, Vec2};
+use mq_core::{BackgroundStyle, GuiBackend, LaunchAction, ThemeConfig, ThemePreset, UiDensity};
 use mq_meta::{find_mc_locale, search_mc_locales};
 
 use crate::i18n::{tr, Language};
 use crate::state::UiState;
 use crate::theme::{
-    apply_theme, rgb_to_c32, Tokens, ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE,
-    RADIUS_CARD, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY,
+    apply_theme, blend_color, rgb_to_c32, solid_card_frame_with_config, Tokens, ACCENT_COBALT,
+    CALM_ACCENT_PRESETS, RADIUS_TAG,
 };
 use crate::widgets::{
     accent_button, primary_emerald_button, secondary_glass_button, smooth_toggle, tag_pill,
@@ -152,78 +152,252 @@ impl SettingsView {
 
     fn render_customization_studio(&mut self, ui: &mut Ui, state: &mut UiState) {
         let tokens = Tokens::from_config(&state.config.theme);
-        let card = egui::Frame::new()
-            .fill(tokens.bg_surface)
-            .stroke(Stroke::new(1.0_f32, tokens.border))
-            .corner_radius(RADIUS_CARD)
-            .inner_margin(egui::Margin::same(14));
+        let card = solid_card_frame_with_config(&tokens, &state.config.theme)
+            .inner_margin(egui::Margin::same(16));
+
+        fn choice_chip(ui: &mut Ui, tokens: &Tokens, selected: bool, label: &str) -> bool {
+            let fill = if selected {
+                blend_color(
+                    tokens.bg_surface,
+                    tokens.accent,
+                    if tokens.is_light() { 0.16 } else { 0.22 },
+                )
+            } else {
+                tokens.bg_input
+            };
+            let stroke = if selected {
+                tokens.accent
+            } else {
+                tokens.border
+            };
+            let fg = if selected {
+                tokens.text
+            } else {
+                tokens.text_muted
+            };
+            ui.add(
+                egui::Button::new(RichText::new(label).color(fg).size(12.5))
+                    .fill(fill)
+                    .stroke(Stroke::new(1.0_f32, stroke))
+                    .corner_radius(RADIUS_TAG),
+            )
+            .clicked()
+        }
+
+        fn accent_swatch_chip(
+            ui: &mut Ui,
+            tokens: &Tokens,
+            name: &str,
+            primary: [u8; 3],
+            selected: bool,
+        ) -> bool {
+            let swatch = rgb_to_c32(primary);
+            let font_id = egui::FontId::proportional(12.5);
+            let fg = if selected {
+                tokens.text
+            } else {
+                tokens.text_muted
+            };
+            let galley = ui.painter().layout_no_wrap(name.to_owned(), font_id, fg);
+            let desired = Vec2::new(10.0 + 12.0 + 6.0 + galley.size().x + 10.0, 28.0);
+            let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::click());
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            if ui.is_rect_visible(rect) {
+                let p = ui.painter();
+                let fill = if selected {
+                    blend_color(tokens.bg_surface, swatch, 0.18)
+                } else if resp.hovered() {
+                    tokens.bg_surface_hover
+                } else {
+                    tokens.bg_input
+                };
+                let stroke_col = if selected {
+                    swatch
+                } else if resp.hovered() {
+                    tokens.border_strong
+                } else {
+                    tokens.border
+                };
+                p.rect_filled(rect, RADIUS_TAG, fill);
+                p.rect_stroke(
+                    rect,
+                    RADIUS_TAG,
+                    Stroke::new(if selected { 1.5_f32 } else { 1.0_f32 }, stroke_col),
+                    StrokeKind::Inside,
+                );
+                let dot_rect = egui::Rect::from_center_size(
+                    Pos2::new(rect.left() + 14.0, rect.center().y),
+                    Vec2::splat(12.0),
+                );
+                p.rect_filled(dot_rect, CornerRadius::same(3), swatch);
+                p.galley(
+                    Pos2::new(
+                        dot_rect.right() + 6.0,
+                        rect.center().y - galley.size().y * 0.5,
+                    ),
+                    galley,
+                    fg,
+                );
+            }
+            resp.clicked()
+        }
 
         card.show(ui, |ui| {
             ui.set_width(ui.available_width());
 
-            // 1. Presets Row
+            let mut style_dirty = false;
+            let mut should_save = false;
+
+            // 1. Presets & Accent Palette
             ui.label(
-                RichText::new("1. Готовые пресеты тем")
+                RichText::new("1. Тема и акцентный цвет")
                     .color(tokens.text)
                     .strong()
                     .size(14.0),
             );
-            ui.add_space(4.0);
+            ui.add_space(6.0);
 
-            let mut preset_changed = false;
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
                 for preset in ThemePreset::ALL {
                     let is_active = state.config.theme.preset == preset;
-                    if ui.selectable_label(is_active, preset.label()).clicked() {
+                    if choice_chip(ui, &tokens, is_active, preset.label()) {
                         state.config.theme.apply_preset(preset);
-                        preset_changed = true;
+                        style_dirty = true;
+                        should_save = true;
                     }
                 }
             });
 
-            if preset_changed {
-                apply_theme(ui.ctx(), &state.config.theme);
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Спокойные акценты:")
+                    .color(tokens.text_muted)
+                    .small(),
+            );
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                for swatch in CALM_ACCENT_PRESETS {
+                    let is_sel = state.config.theme.accent_primary == swatch.primary;
+                    if accent_swatch_chip(ui, &tokens, swatch.name, swatch.primary, is_sel) {
+                        state.config.theme.accent_primary = swatch.primary;
+                        state.config.theme.accent_secondary = swatch.secondary;
+                        state.config.theme.status_success = swatch.primary;
+                        style_dirty = true;
+                        should_save = true;
+                    }
+                }
+            });
+
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Свой цвет акцента:").color(tokens.text));
+                if ui
+                    .color_edit_button_srgb(&mut state.config.theme.accent_primary)
+                    .changed()
+                {
+                    let pri = state.config.theme.accent_primary;
+                    let sec = blend_color(
+                        rgb_to_c32(pri),
+                        Color32::BLACK,
+                        if tokens.is_light() { 0.18 } else { 0.14 },
+                    );
+                    state.config.theme.accent_secondary = [sec.r(), sec.g(), sec.b()];
+                    state.config.theme.status_success = pri;
+                    style_dirty = true;
+                    should_save = true;
+                }
+            });
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(10.0);
+
+            // 2. Background Style & Custom Backdrop
+            ui.label(
+                RichText::new("2. Фон лаунчера")
+                    .color(tokens.text)
+                    .strong()
+                    .size(14.0),
+            );
+            ui.add_space(6.0);
+
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                for mode in BackgroundStyle::ALL {
+                    let is_sel = state.config.theme.background_style == mode;
+                    if choice_chip(ui, &tokens, is_sel, mode.label()) {
+                        state.config.theme.background_style = mode;
+                        should_save = true;
+                    }
+                }
+            });
+
+            if state.config.theme.background_style == BackgroundStyle::CustomImage {
+                ui.add_space(6.0);
+                let mut bg_path = state.config.theme.backdrop_path.clone().unwrap_or_default();
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Изображение:").color(tokens.text));
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut bg_path)
+                                .hint_text("Путь к .png / .jpg / .webp")
+                                .desired_width((ui.available_width() - 100.0).max(160.0)),
+                        )
+                        .changed()
+                    {
+                        state.config.theme.backdrop_path = if bg_path.trim().is_empty() {
+                            None
+                        } else {
+                            Some(bg_path.trim().to_string())
+                        };
+                        should_save = true;
+                    }
+                    if state.config.theme.backdrop_path.is_some()
+                        && secondary_glass_button(ui, None, "Очистить").clicked()
+                    {
+                        state.config.theme.backdrop_path = None;
+                        should_save = true;
+                    }
+                });
+
+                let dim_resp = ui.horizontal(|ui| {
+                    ui.label(RichText::new("Затемнение подложки:").color(tokens.text));
+                    ui.add(
+                        egui::Slider::new(&mut state.config.theme.backdrop_dim, 0.0..=0.90)
+                            .step_by(0.05),
+                    )
+                });
+                if dim_resp.inner.drag_stopped() {
+                    should_save = true;
+                }
             }
 
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(10.0);
 
-            // 2. Live Preview Card
+            // 3. Live Preview Card
             ui.label(
-                RichText::new("Живое превью стиля темы")
+                RichText::new("Живое превью")
                     .color(tokens.text)
                     .strong()
                     .size(13.0),
             );
             ui.add_space(4.0);
 
-            let preview_card = egui::Frame::new()
-                .fill(Color32::from_rgba_unmultiplied(
-                    state.config.theme.bg_card[0],
-                    state.config.theme.bg_card[1],
-                    state.config.theme.bg_card[2],
-                    (state.config.theme.card_opacity * 255.0) as u8,
-                ))
-                .stroke(Stroke::new(
-                    1.0_f32,
-                    Color32::from_rgba_unmultiplied(
-                        255,
-                        255,
-                        255,
-                        (25.0 * state.config.theme.border_glow) as u8,
-                    ),
-                ))
-                .corner_radius(egui::CornerRadius::same(
-                    state.config.theme.corner_radius as u8,
-                ))
+            let live_tokens = Tokens::from_config(&state.config.theme);
+            let preview_card = solid_card_frame_with_config(&live_tokens, &state.config.theme)
                 .inner_margin(egui::Margin::same(12));
 
             preview_card.show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let pri_col = rgb_to_c32(state.config.theme.accent_primary);
                     let sec_col = rgb_to_c32(state.config.theme.accent_secondary);
-                    let _ = accent_button(ui, Some(VectorIcon::Play), "Кнопка действия", pri_col);
+                    let _ = accent_button(ui, Some(VectorIcon::Play), "Основная кнопка", pri_col);
                     let _ = secondary_glass_button(ui, Some(VectorIcon::Folder), "Вторичная");
                     tag_pill(ui, "Fabric", sec_col);
                     let mut sample_toggle = true;
@@ -231,384 +405,205 @@ impl SettingsView {
                 });
             });
 
-            ui.add_space(12.0);
+            ui.add_space(10.0);
             ui.separator();
             ui.add_space(10.0);
 
-            // 3. Opacity & Glow Sliders
+            // 4. Surfaces, Radius, Density & Scale
             ui.label(
-                RichText::new("2. Прозрачность и стеклянный блик")
+                RichText::new("3. Карточки, скругления и масштаб")
                     .color(tokens.text)
                     .strong()
                     .size(14.0),
             );
             ui.add_space(6.0);
 
-            let slider_w = 180.0_f32.max((ui.available_width() - 20.0).min(360.0));
-            let mut style_dirty = false;
+            ui.add_space(4.0);
+            egui::Grid::new("customization_sliders_grid")
+                .num_columns(2)
+                .spacing(Vec2::new(20.0, 8.0))
+                .show(ui, |ui| {
+                    let mut slider_row = |label: &str, slider: egui::Slider<'_>| {
+                        ui.label(RichText::new(label).color(tokens.text));
+                        ui.scope(|ui| {
+                            ui.spacing_mut().slider_width = 210.0;
+                            let r = ui.add(slider);
+                            if r.changed() {
+                                style_dirty = true;
+                            }
+                            if r.drag_stopped() {
+                                should_save = true;
+                            }
+                        });
+                        ui.end_row();
+                    };
 
-            ui.vertical(|ui| {
-                ui.label(RichText::new("Прозрачность окна (Window Opacity):").color(tokens.text));
-                ui.add_space(2.0);
-                if ui
-                    .add_sized(
-                        [slider_w, 20.0],
-                        egui::Slider::new(&mut state.config.theme.window_opacity, 0.25..=1.00)
-                            .step_by(0.01)
-                            .trailing_fill(true),
-                    )
-                    .changed()
-                {
-                    state.config.theme.preset = ThemePreset::Custom;
-                    style_dirty = true;
-                }
-            });
-
-            ui.add_space(6.0);
-
-            ui.vertical(|ui| {
-                ui.label(RichText::new("Прозрачность карточек (Card Opacity):").color(tokens.text));
-                ui.add_space(2.0);
-                if ui
-                    .add_sized(
-                        [slider_w, 20.0],
-                        egui::Slider::new(&mut state.config.theme.card_opacity, 0.35..=1.00)
+                    slider_row(
+                        "Прозрачность карточек:",
+                        egui::Slider::new(&mut state.config.theme.card_opacity, 0.45..=1.00)
                             .step_by(0.01),
-                    )
-                    .changed()
-                {
-                    state.config.theme.preset = ThemePreset::Custom;
-                    style_dirty = true;
-                }
-            });
-
-            ui.add_space(6.0);
-
-            ui.vertical(|ui| {
-                ui.label(
-                    RichText::new("Стеклянный блик обводки (Glass Border Glow):")
-                        .color(tokens.text),
-                );
-                ui.add_space(2.0);
-                if ui
-                    .add_sized(
-                        [slider_w, 20.0],
+                    );
+                    slider_row(
+                        "Акцентная обводка карточек:",
                         egui::Slider::new(&mut state.config.theme.border_glow, 0.00..=1.00)
                             .step_by(0.05),
-                    )
-                    .changed()
-                {
-                    state.config.theme.preset = ThemePreset::Custom;
-                    style_dirty = true;
-                }
-            });
-
-            ui.add_space(10.0);
-            ui.separator();
-            ui.add_space(10.0);
-
-            // 4. Geometry & Scale
-            ui.label(
-                RichText::new("3. Геометрия, масштаб и плотность")
-                    .color(tokens.text)
-                    .strong()
-                    .size(14.0),
-            );
-            ui.add_space(6.0);
-
-            ui.vertical(|ui| {
-                ui.label(
-                    RichText::new("Радиус скругления углов (Corner Radius):").color(tokens.text),
-                );
-                ui.add_space(2.0);
-                if ui
-                    .add_sized(
-                        [slider_w, 20.0],
-                        egui::Slider::new(&mut state.config.theme.corner_radius, 0.0..=20.0)
+                    );
+                    slider_row(
+                        "Скругление углов:",
+                        egui::Slider::new(&mut state.config.theme.corner_radius, 0.0..=16.0)
+                            .step_by(1.0)
                             .suffix(" px"),
-                    )
-                    .changed()
-                {
-                    state.config.theme.preset = ThemePreset::Custom;
-                    style_dirty = true;
-                }
-            });
-
-            ui.add_space(6.0);
-
-            ui.vertical(|ui| {
-                ui.label(RichText::new("Масштаб интерфейса (UI Scale):").color(tokens.text));
-                ui.add_space(2.0);
-                if ui
-                    .add_sized(
-                        [slider_w, 20.0],
+                    );
+                    slider_row(
+                        "Масштаб интерфейса:",
                         egui::Slider::new(&mut state.config.theme.ui_scale, 0.80..=1.50)
                             .step_by(0.05),
-                    )
-                    .changed()
-                {
-                    style_dirty = true;
-                }
-            });
-
-            ui.add_space(6.0);
-
-            ui.vertical(|ui| {
-                ui.label(RichText::new("Размер шрифта:").color(tokens.text));
-                ui.add_space(2.0);
-                if ui
-                    .add_sized(
-                        [slider_w, 20.0],
+                    );
+                    slider_row(
+                        "Размер шрифта:",
                         egui::Slider::new(&mut state.config.theme.font_size, 12.0..=18.0)
+                            .step_by(0.5)
                             .suffix(" px"),
-                    )
-                    .changed()
-                {
-                    style_dirty = true;
-                }
-            });
+                    );
+                });
 
             ui.add_space(6.0);
-
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
-                ui.label("Плотность компоновки (Density):");
-                if ui
-                    .selectable_label(
-                        state.config.theme.density == UiDensity::Compact,
-                        "Компактная",
-                    )
-                    .clicked()
-                {
-                    state.config.theme.density = UiDensity::Compact;
-                    style_dirty = true;
-                }
-                if ui
-                    .selectable_label(
-                        state.config.theme.density == UiDensity::Comfortable,
-                        "Комфортная",
-                    )
-                    .clicked()
-                {
-                    state.config.theme.density = UiDensity::Comfortable;
-                    style_dirty = true;
-                }
-                if ui
-                    .selectable_label(
-                        state.config.theme.density == UiDensity::Spacious,
-                        "Просторная",
-                    )
-                    .clicked()
-                {
-                    state.config.theme.density = UiDensity::Spacious;
-                    style_dirty = true;
-                }
-            });
-
-            ui.add_space(10.0);
-            ui.separator();
-            ui.add_space(10.0);
-
-            // 5. Color Pickers
-            ui.label(
-                RichText::new("4. Палитра цветов (Color Pickers)")
-                    .strong()
-                    .size(14.0),
-            );
-            ui.add_space(6.0);
-
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Акцентный цвет:");
-                if ui
-                    .color_edit_button_srgb(&mut state.config.theme.accent_primary)
-                    .changed()
-                {
-                    state.config.theme.preset = ThemePreset::Custom;
-                    style_dirty = true;
-                }
-
-                ui.add_space(10.0);
-                ui.label("Вторичный акцент:");
-                if ui
-                    .color_edit_button_srgb(&mut state.config.theme.accent_secondary)
-                    .changed()
-                {
-                    state.config.theme.preset = ThemePreset::Custom;
-                    style_dirty = true;
-                }
-
-                ui.add_space(10.0);
-                ui.label("Фон окна:");
-                if ui
-                    .color_edit_button_srgb(&mut state.config.theme.bg_window)
-                    .changed()
-                {
-                    state.config.theme.preset = ThemePreset::Custom;
-                    style_dirty = true;
-                }
-
-                ui.add_space(10.0);
-                ui.label("Фон карточек:");
-                if ui
-                    .color_edit_button_srgb(&mut state.config.theme.bg_card)
-                    .changed()
-                {
-                    state.config.theme.preset = ThemePreset::Custom;
-                    style_dirty = true;
-                }
-            });
-
-            ui.add_space(6.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Основной текст:");
-                if ui
-                    .color_edit_button_srgb(&mut state.config.theme.text_primary)
-                    .changed()
-                {
-                    state.config.theme.preset = ThemePreset::Custom;
-                    style_dirty = true;
-                }
-
-                ui.add_space(10.0);
-                ui.label("Приглушённый текст:");
-                if ui
-                    .color_edit_button_srgb(&mut state.config.theme.text_muted)
-                    .changed()
-                {
-                    state.config.theme.preset = ThemePreset::Custom;
-                    style_dirty = true;
-                }
-
-                ui.add_space(10.0);
-                ui.label("Успех:");
-                if ui
-                    .color_edit_button_srgb(&mut state.config.theme.status_success)
-                    .changed()
-                {
-                    state.config.theme.preset = ThemePreset::Custom;
-                    style_dirty = true;
-                }
-
-                ui.add_space(10.0);
-                ui.label("Ошибка:");
-                if ui
-                    .color_edit_button_srgb(&mut state.config.theme.status_error)
-                    .changed()
-                {
-                    state.config.theme.preset = ThemePreset::Custom;
-                    style_dirty = true;
-                }
-            });
-
-            ui.add_space(10.0);
-            ui.separator();
-            ui.add_space(10.0);
-
-            // 6. Backdrop Image
-            ui.label(
-                RichText::new("5. Фоновое изображение (Backdrop)")
-                    .strong()
-                    .size(14.0),
-            );
-            ui.add_space(4.0);
-
-            let mut bg_path = state.config.theme.backdrop_path.clone().unwrap_or_default();
-            ui.horizontal(|ui| {
-                ui.label("Путь к фоновой картинке (.png / .jpg):");
-                if ui.text_edit_singleline(&mut bg_path).changed() {
-                    state.config.theme.backdrop_path = if bg_path.trim().is_empty() {
-                        None
-                    } else {
-                        Some(bg_path.trim().to_string())
-                    };
-                }
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("Затемнение подложки (Backdrop Dimming):");
-                ui.add(
-                    egui::Slider::new(&mut state.config.theme.backdrop_dim, 0.0..=1.0)
-                        .step_by(0.05),
-                );
-            });
-
-            ui.add_space(10.0);
-            ui.separator();
-            ui.add_space(10.0);
-
-            // 7. Export / Import Theme
-            ui.label(
-                RichText::new("6. Экспорт и Импорт темы")
-                    .strong()
-                    .size(14.0),
-            );
-            ui.add_space(6.0);
-
-            ui.horizontal(|ui| {
-                ui.label("Файл для экспорта/импорта:");
-                ui.text_edit_singleline(&mut self.theme_export_path);
-            });
-
-            ui.horizontal(|ui| {
-                if secondary_glass_button(
-                    ui,
-                    Some(VectorIcon::Download),
-                    "Экспортировать тему в файл",
-                )
-                .clicked()
-                {
-                    let target_path = if self.theme_export_path.trim().is_empty() {
-                        state.paths.theme_file()
-                    } else {
-                        std::path::PathBuf::from(self.theme_export_path.trim())
-                    };
-                    if state.config.theme.save_to_file(&target_path).is_ok() {
-                        state.status_message = Some((
-                            format!("Тема успешно экспортирована в {}", target_path.display()),
-                            false,
-                        ));
+                ui.label(RichText::new("Плотность:").color(tokens.text));
+                for (density, label) in [
+                    (UiDensity::Compact, "Компактная"),
+                    (UiDensity::Comfortable, "Комфортная"),
+                    (UiDensity::Spacious, "Просторная"),
+                ] {
+                    if choice_chip(ui, &tokens, state.config.theme.density == density, label) {
+                        state.config.theme.density = density;
+                        style_dirty = true;
+                        should_save = true;
                     }
                 }
+            });
 
-                if secondary_glass_button(
-                    ui,
-                    Some(VectorIcon::Folder),
-                    "Импортировать тему из файла",
-                )
-                .clicked()
-                {
-                    let target_path = if self.theme_export_path.trim().is_empty() {
-                        state.paths.theme_file()
-                    } else {
-                        std::path::PathBuf::from(self.theme_export_path.trim())
-                    };
-                    if let Ok(loaded) = ThemeConfig::load_from_file(&target_path) {
-                        state.config.theme = loaded;
-                        apply_theme(ui.ctx(), &state.config.theme);
-                        state.status_message = Some((
-                            format!("Тема успешно загружена из {}", target_path.display()),
-                            false,
-                        ));
-                    } else {
-                        state.status_message = Some((
-                            format!("Не удалось прочитать файл темы {}", target_path.display()),
-                            true,
-                        ));
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(8.0);
+
+            egui::CollapsingHeader::new(
+                RichText::new("Тонкая настройка цветов и экспорт").color(tokens.text),
+            )
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("Фон окна:").color(tokens.text));
+                    if ui
+                        .color_edit_button_srgb(&mut state.config.theme.bg_window)
+                        .changed()
+                    {
+                        state.config.theme.preset = ThemePreset::Custom;
+                        style_dirty = true;
+                        should_save = true;
                     }
-                }
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Фон карточек:").color(tokens.text));
+                    if ui
+                        .color_edit_button_srgb(&mut state.config.theme.bg_card)
+                        .changed()
+                    {
+                        state.config.theme.preset = ThemePreset::Custom;
+                        style_dirty = true;
+                        should_save = true;
+                    }
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Текст:").color(tokens.text));
+                    if ui
+                        .color_edit_button_srgb(&mut state.config.theme.text_primary)
+                        .changed()
+                    {
+                        state.config.theme.preset = ThemePreset::Custom;
+                        style_dirty = true;
+                        should_save = true;
+                    }
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Приглушённый:").color(tokens.text));
+                    if ui
+                        .color_edit_button_srgb(&mut state.config.theme.text_muted)
+                        .changed()
+                    {
+                        state.config.theme.preset = ThemePreset::Custom;
+                        style_dirty = true;
+                        should_save = true;
+                    }
+                });
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Файл темы:").color(tokens.text));
+                    ui.text_edit_singleline(&mut self.theme_export_path);
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if secondary_glass_button(
+                        ui,
+                        Some(VectorIcon::Download),
+                        "Экспортировать тему в файл",
+                    )
+                    .clicked()
+                    {
+                        let target_path = if self.theme_export_path.trim().is_empty() {
+                            state.paths.theme_file()
+                        } else {
+                            std::path::PathBuf::from(self.theme_export_path.trim())
+                        };
+                        if state.config.theme.save_to_file(&target_path).is_ok() {
+                            state.status_message = Some((
+                                format!("Тема успешно экспортирована в {}", target_path.display()),
+                                false,
+                            ));
+                        }
+                    }
+
+                    if secondary_glass_button(
+                        ui,
+                        Some(VectorIcon::Folder),
+                        "Импортировать тему из файла",
+                    )
+                    .clicked()
+                    {
+                        let target_path = if self.theme_export_path.trim().is_empty() {
+                            state.paths.theme_file()
+                        } else {
+                            std::path::PathBuf::from(self.theme_export_path.trim())
+                        };
+                        if let Ok(loaded) = ThemeConfig::load_from_file(&target_path) {
+                            state.config.theme = loaded;
+                            apply_theme(ui.ctx(), &state.config.theme);
+                            let _ = state.config.save(&state.paths);
+                            state.status_message = Some((
+                                format!("Тема успешно загружена из {}", target_path.display()),
+                                false,
+                            ));
+                        } else {
+                            state.status_message = Some((
+                                format!("Не удалось прочитать файл темы {}", target_path.display()),
+                                true,
+                            ));
+                        }
+                    }
+                });
             });
 
             if style_dirty {
                 apply_theme(ui.ctx(), &state.config.theme);
             }
+            if should_save {
+                let _ = state.config.save(&state.paths);
+            }
         });
     }
 
     fn render_launch_settings(&mut self, ui: &mut Ui, state: &mut UiState) {
-        let card = egui::Frame::new()
-            .fill(CARD_SURFACE)
-            .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-            .corner_radius(RADIUS_CARD)
+        let tokens = Tokens::from_config(&state.config.theme);
+        let card = solid_card_frame_with_config(&tokens, &state.config.theme)
             .inner_margin(egui::Margin::same(14));
 
         card.show(ui, |ui| {
@@ -805,16 +800,17 @@ impl SettingsView {
             );
             ui.add_space(4.0);
 
+            let tokens = Tokens::from_config(&state.config.theme);
             let runtimes = mq_launch::discover_java_runtimes();
             if runtimes.is_empty() {
                 ui.label(
                     RichText::new("Установленные версии Java не найдены в системе")
-                        .color(TEXT_MUTED),
+                        .color(tokens.text_muted),
                 );
             } else {
                 ui.label(
                     RichText::new(format!("Найдено JVM в системе: {}", runtimes.len()))
-                        .color(TEXT_MUTED)
+                        .color(tokens.text_muted)
                         .small(),
                 );
                 for rt in runtimes.iter().take(5) {
@@ -824,10 +820,10 @@ impl SettingsView {
                             &format!("Java {}", rt.major_version),
                             crate::theme::ACCENT_COBALT,
                         );
-                        ui.label(RichText::new(&rt.vendor).color(TEXT_PRIMARY).strong());
+                        ui.label(RichText::new(&rt.vendor).color(tokens.text).strong());
                         ui.label(
                             RichText::new(rt.path.display().to_string())
-                                .color(TEXT_MUTED)
+                                .color(tokens.text_muted)
                                 .small(),
                         );
                     });
@@ -882,17 +878,15 @@ impl SettingsView {
     }
 
     fn render_localization_settings(&mut self, ui: &mut Ui, state: &mut UiState) {
-        let card = egui::Frame::new()
-            .fill(CARD_SURFACE)
-            .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-            .corner_radius(RADIUS_CARD)
+        let tokens = Tokens::from_config(&state.config.theme);
+        let card = solid_card_frame_with_config(&tokens, &state.config.theme)
             .inner_margin(egui::Margin::same(14));
 
         card.show(ui, |ui| {
             ui.set_width(ui.available_width());
 
             // 1. Launcher Interface Language
-            ui.label(RichText::new("1. Язык интерфейса лаунчера (11 языков)").strong().size(14.0));
+            ui.label(RichText::new("1. Язык интерфейса лаунчера (11 языков)").color(tokens.text).strong().size(14.0));
             ui.add_space(4.0);
 
             ui.horizontal_wrapped(|ui| {
@@ -911,8 +905,8 @@ impl SettingsView {
             ui.add_space(12.0);
 
             // 2. Default Minecraft Game Locale (80+ locales)
-            ui.label(RichText::new("2. Язык Minecraft по умолчанию (80+ языков)").strong().size(14.0));
-            ui.label(RichText::new("Применяется автоматически ко всем новым инстансам и синхронизируется в options.txt перед запуском.").color(TEXT_MUTED).small());
+            ui.label(RichText::new("2. Язык Minecraft по умолчанию (80+ языков)").color(tokens.text).strong().size(14.0));
+            ui.label(RichText::new("Применяется автоматически ко всем новым инстансам и синхронизируется в options.txt перед запуском.").color(tokens.text_muted).small());
             ui.add_space(6.0);
 
             let current_info = find_mc_locale(&state.config.default_mc_locale);
@@ -921,8 +915,8 @@ impl SettingsView {
                 .unwrap_or_else(|| state.config.default_mc_locale.clone());
 
             ui.horizontal(|ui| {
-                ui.label("Выбранная локаль Minecraft:");
-                version_badge(ui, &current_title, Color32::from_rgb(0x10, 0xB9, 0x81));
+                ui.label(RichText::new("Выбранная локаль Minecraft:").color(tokens.text));
+                version_badge(ui, &current_title, tokens.accent);
             });
 
             ui.add_space(6.0);
@@ -949,7 +943,8 @@ impl SettingsView {
     }
 
     fn render_catalog_settings(&mut self, ui: &mut Ui, state: &mut UiState) {
-        ui.label(RichText::new("Ключ CurseForge").strong());
+        let tokens = Tokens::from_config(&state.config.theme);
+        ui.label(RichText::new("Ключ CurseForge").color(tokens.text).strong());
         ui.add_space(4.0);
         let from_env = std::env::var("MQ_CURSEFORGE_API_KEY").is_ok_and(|v| !v.trim().is_empty());
         let saved = state.config.curseforge_api_key.is_some();
@@ -960,14 +955,14 @@ impl SettingsView {
         } else {
             "Ключ не задан: CurseForge отключён, Modrinth работает полностью."
         };
-        ui.label(RichText::new(status).color(crate::theme::TEXT_MUTED));
+        ui.label(RichText::new(status).color(tokens.text_muted));
         ui.add_space(4.0);
         ui.label(
             RichText::new(
                 "Получите бесплатный личный ключ в консоли CurseForge и вставьте его ниже. \
                  Общий ключ в лаунчер не вшит.",
             )
-            .color(crate::theme::TEXT_MUTED),
+            .color(tokens.text_muted),
         );
         ui.add_space(8.0);
         ui.horizontal(|ui| {
@@ -1005,10 +1000,8 @@ impl SettingsView {
     }
 
     fn render_network_api_settings(&mut self, ui: &mut Ui, state: &mut UiState) {
-        let card = egui::Frame::new()
-            .fill(CARD_SURFACE)
-            .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-            .corner_radius(RADIUS_CARD)
+        let tokens = Tokens::from_config(&state.config.theme);
+        let card = solid_card_frame_with_config(&tokens, &state.config.theme)
             .inner_margin(egui::Margin::same(14));
 
         card.show(ui, |ui| {
@@ -1086,58 +1079,57 @@ impl SettingsView {
     }
 
     fn render_updates_settings(&mut self, ui: &mut Ui, state: &mut UiState) {
+        let tokens = Tokens::from_config(&state.config.theme);
         let max_w = ui.available_width().min(640.0);
         ui.allocate_ui_with_layout(
             Vec2::new(max_w, 0.0),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
-                let card = egui::Frame::new()
-                    .fill(CARD_SURFACE)
-                    .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-                    .corner_radius(RADIUS_CARD)
+                let card = solid_card_frame_with_config(&tokens, &state.config.theme)
                     .inner_margin(egui::Margin::same(14));
 
                 card.show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(RichText::new("Обновления лаунчера").strong().size(15.0));
+                    ui.label(RichText::new("Обновления лаунчера").color(tokens.text).strong().size(15.0));
                     ui.add_space(8.0);
 
                     let is_packaged = mq_update::UpdateManager::is_packaged_install();
                     if is_packaged {
-                        ui.label(RichText::new("Лаунчер установлен через системный пакетный менеджер (/usr/). Для обновления используйте пакетный менеджер вашей системы.").color(STATUS_WARN));
+                        ui.label(RichText::new("Лаунчер установлен через системный пакетный менеджер (/usr/). Для обновления используйте пакетный менеджер вашей системы.").color(tokens.warning));
                         ui.add_space(8.0);
                         if secondary_glass_button(ui, Some(VectorIcon::Globe), "Открыть страницу релизов на GitHub").clicked() {
                             let _ = crate::opener::open_that("https://github.com/MrQuster/mq/releases");
                         }
                     } else {
-                        ui.label(RichText::new(format!("Текущая версия: v{}", env!("CARGO_PKG_VERSION"))).color(TEXT_MUTED));
+                        ui.label(RichText::new(format!("Текущая версия: v{}", env!("CARGO_PKG_VERSION"))).color(tokens.text_muted));
                         ui.add_space(6.0);
 
                         if let Some(ref status) = self.update_check_result {
-                            ui.label(RichText::new(status).color(TEXT_PRIMARY));
+                            ui.label(RichText::new(status).color(tokens.text));
                             ui.add_space(6.0);
                         }
 
                         if self.is_checking_update {
                             ui.label(RichText::new("Проверка наличия обновлений...").color(ACCENT_COBALT));
                         } else if let Some(ref asset) = self.available_update.clone() {
-                            ui.label(RichText::new(format!("Доступна новая версия: v{}", asset.version)).color(ACCENT_EMERALD).strong());
+                            ui.label(RichText::new(format!("Доступна новая версия: v{}", asset.version)).color(tokens.accent).strong());
                             if !asset.release_notes.is_empty() {
                                 ui.add_space(4.0);
-                                ui.label(RichText::new("Список изменений:").small().color(TEXT_MUTED));
+                                ui.label(RichText::new("Список изменений:").small().color(tokens.text_muted));
                                 egui::Frame::new()
-                                    .fill(Color32::from_rgb(0x10, 0x12, 0x16))
-                                    .corner_radius(RADIUS_CARD)
+                                    .fill(tokens.bg_input)
+                                    .stroke(Stroke::new(1.0_f32, tokens.border))
+                                    .corner_radius(crate::theme::RADIUS_CARD)
                                     .inner_margin(egui::Margin::same(8))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new(&asset.release_notes).color(TEXT_PRIMARY).small());
+                                        ui.label(RichText::new(&asset.release_notes).color(tokens.text).small());
                                     });
                             }
                             ui.add_space(8.0);
 
                             if self.is_downloading_update {
                                 ui.label(RichText::new("Загрузка и установка обновления...").color(ACCENT_COBALT));
-                                crate::components::render_progress_bar(ui, &crate::theme::Tokens::matte_dark(), self.update_progress, 6.0_f32);
+                                crate::components::render_progress_bar(ui, &tokens, self.update_progress, 6.0_f32);
                             } else if primary_emerald_button(ui, Some(VectorIcon::Download), "Обновить лаунчер сейчас").clicked() {
                                 self.is_downloading_update = true;
                                 let mgr = mq_update::UpdateManager::new("MrQuster", "mq");
@@ -1191,7 +1183,7 @@ impl SettingsView {
                                 ui.add_space(8.0);
                                 ui.separator();
                                 ui.add_space(8.0);
-                                ui.label(RichText::new("Доступна предыдущая сохранённая версия.").color(TEXT_MUTED).small());
+                                ui.label(RichText::new("Доступна предыдущая сохранённая версия.").color(tokens.text_muted).small());
                                 if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Откатить до предыдущей версии").clicked() {
                                     if let Ok(()) = mq_update::UpdateManager::rollback() {
                                         state.status_message = Some(("Успешный откат к предыдущей версии. Перезапустите лаунчер.".to_string(), false));
@@ -1208,26 +1200,24 @@ impl SettingsView {
     }
 
     fn render_about_settings(&mut self, ui: &mut Ui, state: &mut UiState) {
+        let tokens = Tokens::from_config(&state.config.theme);
         let max_w = ui.available_width().min(640.0);
         ui.allocate_ui_with_layout(
             Vec2::new(max_w, 0.0),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
-                let card = egui::Frame::new()
-                    .fill(CARD_SURFACE)
-                    .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-                    .corner_radius(RADIUS_CARD)
+                let card = solid_card_frame_with_config(&tokens, &state.config.theme)
                     .inner_margin(egui::Margin::same(16));
 
                 card.show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         let (rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), egui::Sense::hover());
-                        crate::sidebar::paint_mq_emblem(ui.painter(), rect, &crate::theme::Tokens::matte_dark());
+                        crate::sidebar::paint_mq_emblem(ui.painter(), rect, &tokens);
                         ui.add_space(8.0);
                         ui.vertical(|ui| {
-                            ui.label(RichText::new("MQ Launcher").strong().size(18.0).color(TEXT_PRIMARY));
-                            ui.label(RichText::new(format!("Версия {} Solid Edition", env!("CARGO_PKG_VERSION"))).color(TEXT_MUTED).small());
+                            ui.label(RichText::new("MQ Launcher").strong().size(18.0).color(tokens.text));
+                            ui.label(RichText::new(format!("Версия {} Solid Edition", env!("CARGO_PKG_VERSION"))).color(tokens.text_muted).small());
                         });
                     });
 
@@ -1235,15 +1225,15 @@ impl SettingsView {
                     ui.separator();
                     ui.add_space(8.0);
 
-                    ui.label(RichText::new("Автор: MrQuster").strong().color(TEXT_PRIMARY));
-                    ui.label(RichText::new("Быстрый и модульный Minecraft-лаунчер нового поколения на Rust/egui.").color(TEXT_MUTED));
-                    ui.label(RichText::new("Лицензия: MIT License (MrQuster)").color(TEXT_MUTED).small());
+                    ui.label(RichText::new("Автор: MrQuster").strong().color(tokens.text));
+                    ui.label(RichText::new("Быстрый и модульный Minecraft-лаунчер нового поколения на Rust/egui.").color(tokens.text_muted));
+                    ui.label(RichText::new("Лицензия: MIT License (MrQuster)").color(tokens.text_muted).small());
 
                     ui.add_space(12.0);
                     ui.separator();
                     ui.add_space(8.0);
 
-                    ui.label(RichText::new("Ссылки и сообщество:").strong().color(TEXT_PRIMARY).small());
+                    ui.label(RichText::new("Ссылки и сообщество:").strong().color(tokens.text).small());
                     ui.add_space(6.0);
 
                     ui.horizontal_wrapped(|ui| {

@@ -459,6 +459,7 @@ impl UiState {
                                 Ok(o) => {
                                     d.error = None;
                                     d.titles.extend(o.titles);
+                                    d.sources.extend(o.sources);
                                     d.plan = Some(o.plan);
                                 }
                                 Err(e) => {

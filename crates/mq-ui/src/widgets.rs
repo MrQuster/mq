@@ -10,9 +10,8 @@ use egui::{
 use mq_auth::{generate_offline_geometric_avatar, SkinHeadAvatar};
 
 use crate::theme::{
-    ACCENT_COBALT, ACCENT_EMERALD, ACCENT_EMERALD_HOVER, BG_DEEP_GRAPHITE, BORDER_HOVER,
-    BORDER_SUBTLE, BUTTON_PADDING, CARD_SURFACE, CARD_SURFACE_HOVER, RADIUS_BUTTON, RADIUS_TAG,
-    STATUS_DANGER, TEXT_PRIMARY,
+    blend_color, contrast_text_for, Tokens, ACCENT_COBALT, ACCENT_EMERALD, BG_DEEP_GRAPHITE,
+    BORDER_SUBTLE, BUTTON_PADDING, CARD_SURFACE, RADIUS_BUTTON, RADIUS_TAG, TEXT_PRIMARY,
 };
 
 /// Crisp vector icons drawn procedurally via [`egui::Painter`] (strict zero-emoji policy).
@@ -511,45 +510,48 @@ fn render_styled_button(
     response
 }
 
-/// Primary emerald action button (`#10B981` fill, `#0D0F14` dark text/icon, `6px` rounding).
+/// Primary accent action button (`tokens.accent` fill, high-contrast ink text/icon, `6px` rounding).
 pub fn primary_emerald_button(ui: &mut Ui, icon: Option<VectorIcon>, label: &str) -> Response {
+    let tokens = Tokens::active(ui.ctx());
     render_styled_button(
         ui,
         icon,
         label,
-        ACCENT_EMERALD,
-        ACCENT_EMERALD_HOVER,
-        ACCENT_EMERALD,
-        Color32::WHITE,
-        BG_DEEP_GRAPHITE,
+        tokens.accent,
+        tokens.accent_hover,
+        tokens.accent,
+        tokens.text,
+        tokens.accent_text,
     )
 }
 
-/// Secondary Dark Glass button (`#151821` fill, `1px` `#252A36` stroke, `#F3F4F6` text, `6px` rounding).
+/// Secondary surface button matching active theme tokens (`6px` rounding).
 pub fn secondary_glass_button(ui: &mut Ui, icon: Option<VectorIcon>, label: &str) -> Response {
+    let tokens = Tokens::active(ui.ctx());
     render_styled_button(
         ui,
         icon,
         label,
-        CARD_SURFACE,
-        CARD_SURFACE_HOVER,
-        BORDER_SUBTLE,
-        BORDER_HOVER,
-        TEXT_PRIMARY,
+        tokens.bg_surface,
+        tokens.bg_surface_hover,
+        tokens.border,
+        tokens.border_strong,
+        tokens.text,
     )
 }
 
-/// Danger / destructive action button (`#EF4444` border/accent, `6px` rounding).
+/// Danger / destructive action button (`tokens.danger` border/accent, `6px` rounding).
 pub fn danger_button(ui: &mut Ui, icon: Option<VectorIcon>, label: &str) -> Response {
+    let tokens = Tokens::active(ui.ctx());
     render_styled_button(
         ui,
         icon,
         label,
-        CARD_SURFACE,
-        STATUS_DANGER.gamma_multiply(0.22),
-        STATUS_DANGER.gamma_multiply(0.65),
-        STATUS_DANGER,
-        STATUS_DANGER,
+        tokens.bg_surface,
+        blend_color(tokens.bg_surface, tokens.danger, 0.18),
+        tokens.danger.gamma_multiply(0.65),
+        tokens.danger,
+        tokens.danger,
     )
 }
 
@@ -560,10 +562,9 @@ pub fn accent_button(
     label: &str,
     accent_color: Color32,
 ) -> Response {
+    let fg = contrast_text_for(accent_color);
     let font_id = FontId::proportional(13.5);
-    let galley = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), font_id, Color32::WHITE);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font_id, fg);
     let icon_w = if icon.is_some() { 16.0 + 8.0 } else { 0.0 };
     let desired_w = galley.size().x + icon_w + BUTTON_PADDING.x * 2.0;
     let desired_h = (galley.size().y + BUTTON_PADDING.y * 2.0).max(34.0);
@@ -575,16 +576,8 @@ pub fn accent_button(
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-        let bg_fill = Color32::from_rgba_unmultiplied(
-            accent_color.r(),
-            accent_color.g(),
-            accent_color.b(),
-            (180.0 + 75.0 * t) as u8,
-        );
-        let border_stroke = Stroke::new(
-            1.0_f32,
-            Color32::from_rgba_unmultiplied(255, 255, 255, (30.0 + 40.0 * t) as u8),
-        );
+        let bg_fill = blend_color(accent_color, fg, 0.12 * t);
+        let border_stroke = Stroke::new(1.0_f32, blend_color(accent_color, fg, 0.25 + 0.2 * t));
         painter.rect_filled(rect, RADIUS_BUTTON, bg_fill);
         painter.rect_stroke(rect, RADIUS_BUTTON, border_stroke, StrokeKind::Inside);
 
@@ -596,12 +589,12 @@ pub fn accent_button(
                 Pos2::new(cursor_x + 8.0, rect.center().y),
                 Vec2::splat(16.0),
             );
-            paint_vector_icon(painter, icon_rect, ic, Color32::WHITE);
+            paint_vector_icon(painter, icon_rect, ic, fg);
             cursor_x += 16.0 + 8.0;
         }
 
         let text_pos = Pos2::new(cursor_x, rect.center().y - galley.size().y * 0.5);
-        painter.galley(text_pos, galley, Color32::WHITE);
+        painter.galley(text_pos, galley, fg);
     }
 
     response
@@ -609,6 +602,7 @@ pub fn accent_button(
 
 /// Animated smooth toggle switch with sliding knob.
 pub fn smooth_toggle(ui: &mut Ui, on: &mut bool) -> Response {
+    let tokens = Tokens::active(ui.ctx());
     let desired_size = Vec2::new(40.0, 22.0);
     let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click());
     if response.clicked() {
@@ -620,22 +614,26 @@ pub fn smooth_toggle(ui: &mut Ui, on: &mut bool) -> Response {
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-        let r = (0x15 as f32 + (0x10 as f32 - 0x15 as f32) * t) as u8;
-        let g = (0x18 as f32 + (0xB9 as f32 - 0x18 as f32) * t) as u8;
-        let b = (0x21 as f32 + (0x81 as f32 - 0x21 as f32) * t) as u8;
-        let bg = Color32::from_rgb(r, g, b);
+        let bg = blend_color(tokens.bg_input, tokens.accent, t);
 
         painter.rect_filled(rect, CornerRadius::same(11), bg);
         painter.rect_stroke(
             rect,
             CornerRadius::same(11),
-            Stroke::new(1.0_f32, BORDER_SUBTLE),
+            Stroke::new(1.0_f32, tokens.border_strong),
             StrokeKind::Inside,
         );
 
         let knob_x = rect.left() + 11.0 + t * (rect.width() - 22.0);
         let knob_center = Pos2::new(knob_x, rect.center().y);
-        painter.circle_filled(knob_center, 7.5, Color32::WHITE);
+        let knob_col = if *on {
+            tokens.accent_text
+        } else if tokens.is_light() {
+            tokens.text_muted
+        } else {
+            Color32::from_rgb(0xE6, 0xE8, 0xEE)
+        };
+        painter.circle_filled(knob_center, 7.5, knob_col);
     }
 
     response
@@ -658,16 +656,32 @@ pub fn search_field(ui: &mut Ui, query: &mut String, hint: &str) -> Response {
 
 /// Renders a compact `4px` rounded badge (`RADIUS_TAG`) for versions, loaders, or account kinds.
 pub fn version_badge(ui: &mut Ui, text: &str, color: Color32) {
+    let tokens = Tokens::active(ui.ctx());
+    let text_col = if tokens.is_light() {
+        blend_color(color, tokens.text, 0.35)
+    } else {
+        color
+    };
     let font_id = FontId::monospace(11.5);
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font_id, color);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font_id, text_col);
     let pad = Vec2::new(7.0, 3.0);
     let size = galley.size() + pad * 2.0;
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
-        let bg = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 32);
-        let border = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 110);
+        let bg = if tokens.is_light() {
+            blend_color(tokens.bg_surface, color, 0.14)
+        } else {
+            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 32)
+        };
+        let border = if tokens.is_light() {
+            blend_color(tokens.border, color, 0.45)
+        } else {
+            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 110)
+        };
         painter.rect_filled(rect, RADIUS_TAG, bg);
         painter.rect_stroke(
             rect,
@@ -675,12 +689,13 @@ pub fn version_badge(ui: &mut Ui, text: &str, color: Color32) {
             Stroke::new(1.0_f32, border),
             StrokeKind::Inside,
         );
-        painter.galley(rect.min + pad, galley, color);
+        painter.galley(rect.min + pad, galley, text_col);
     }
 }
 
 /// Renders a crisp colored status circle followed by a text label.
 pub fn status_dot(ui: &mut Ui, color: Color32, label: &str) {
+    let tokens = Tokens::active(ui.ctx());
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let (dot_rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
@@ -690,7 +705,7 @@ pub fn status_dot(ui: &mut Ui, color: Color32, label: &str) {
                 .circle_filled(center, 4.5, color.gamma_multiply(0.28));
             ui.painter().circle_filled(center, 3.0, color);
         }
-        ui.label(egui::RichText::new(label).color(TEXT_PRIMARY).size(13.0));
+        ui.label(egui::RichText::new(label).color(tokens.text).size(13.0));
     });
 }
 

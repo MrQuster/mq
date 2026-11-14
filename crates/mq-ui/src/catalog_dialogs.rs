@@ -8,26 +8,24 @@ use mq_mods::ProjectKind;
 use crate::catalog_flow::{format_size, InstallTarget, JobStatus, MdBlock};
 use crate::catalog_view::{format_downloads, source_color, source_name};
 use crate::state::{UiState, UiWorkerCommand};
-use crate::theme::{
-    ACCENT_COBALT, ACCENT_EMERALD, BORDER_SUBTLE, CARD_SURFACE, RADIUS_CARD, STATUS_DANGER,
-    STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY,
-};
+use crate::theme::{Tokens, ACCENT_COBALT, RADIUS_CARD};
 use crate::widgets::{
     danger_button, primary_emerald_button, secondary_glass_button, version_badge, VectorIcon,
 };
 
-fn window(title: &str) -> egui::Window<'_> {
+fn window<'a>(ctx: &Context, title: &'a str) -> egui::Window<'a> {
+    let tokens = Tokens::active(ctx);
     egui::Window::new(title)
         .collapsible(false)
         .resizable(true)
         .fade_in(false)
         .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-        .default_width(560.0)
-        .max_width(760.0)
+        .default_width(580.0)
+        .max_width(780.0)
         .frame(
             egui::Frame::window(&egui::Style::default())
-                .fill(CARD_SURFACE)
-                .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+                .fill(tokens.bg_surface)
+                .stroke(Stroke::new(1.2_f32, tokens.border_strong))
                 .corner_radius(RADIUS_CARD)
                 .inner_margin(egui::Margin::same(16)),
         )
@@ -47,12 +45,13 @@ fn project_window(ctx: &Context, state: &mut UiState) {
     let Some(hit) = state.project.open.clone() else {
         return;
     };
+    let tokens = Tokens::active(ctx);
     let mut close = false;
     let mut install_hit = false;
     let mut modpack_version: Option<usize> = None;
     let mut open = true;
 
-    window(&hit.title).open(&mut open).show(ctx, |ui| {
+    window(ctx, &hit.title).open(&mut open).show(ctx, |ui| {
         ui.horizontal_wrapped(|ui| {
             version_badge(ui, source_name(hit.source), source_color(hit.source));
             ui.label(
@@ -61,7 +60,7 @@ fn project_window(ctx: &Context, state: &mut UiState) {
                     hit.author,
                     format_downloads(hit.downloads)
                 ))
-                .color(TEXT_MUTED)
+                .color(tokens.text_muted)
                 .small(),
             );
         });
@@ -75,7 +74,7 @@ fn project_window(ctx: &Context, state: &mut UiState) {
             return;
         }
         if let Some(err) = &state.project.error {
-            ui.label(RichText::new(err).color(STATUS_DANGER));
+            ui.label(RichText::new(err).color(tokens.danger));
             return;
         }
 
@@ -88,28 +87,28 @@ fn project_window(ctx: &Context, state: &mut UiState) {
 
         ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
             for block in &state.project.blocks {
-                render_block(ui, block);
+                render_block(ui, block, &tokens);
             }
             ui.add_space(12.0);
-            ui.label(RichText::new("Версии").color(TEXT_PRIMARY).strong());
+            ui.label(RichText::new("Версии").color(tokens.text).strong());
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Версия MC:").color(TEXT_MUTED).small());
+                ui.label(RichText::new("Версия MC:").color(tokens.text_muted).small());
                 ui.add(
                     egui::TextEdit::singleline(&mut state.project.filter_mc).desired_width(80.0),
                 );
             });
             let indices = state.project.filtered_versions();
             if indices.is_empty() {
-                ui.label(RichText::new("Нет подходящих версий").color(TEXT_MUTED));
+                ui.label(RichText::new("Нет подходящих версий").color(tokens.text_muted));
             }
             if let Some(page) = &state.project.page {
                 for i in indices.into_iter().take(50) {
                     let v = &page.versions[i];
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(&v.version_number).color(TEXT_PRIMARY));
+                        ui.label(RichText::new(&v.version_number).color(tokens.text));
                         ui.label(
                             RichText::new(v.game_versions.join(", "))
-                                .color(TEXT_MUTED)
+                                .color(tokens.text_muted)
                                 .small(),
                         );
                         if is_pack
@@ -145,26 +144,26 @@ fn project_window(ctx: &Context, state: &mut UiState) {
     }
 }
 
-fn render_block(ui: &mut Ui, block: &MdBlock) {
+fn render_block(ui: &mut Ui, block: &MdBlock, tokens: &Tokens) {
     match block {
         MdBlock::Heading { text, .. } => {
             ui.add_space(4.0);
-            ui.label(RichText::new(text).color(TEXT_PRIMARY).strong());
+            ui.label(RichText::new(text).color(tokens.text).strong());
         }
         MdBlock::Paragraph { text, links } => {
-            ui.label(RichText::new(text).color(TEXT_PRIMARY));
+            ui.label(RichText::new(text).color(tokens.text));
             for (label, url) in links {
                 ui.hyperlink_to(label, url);
             }
         }
         MdBlock::ListItem { text } => {
-            ui.label(RichText::new(format!("- {text}")).color(TEXT_PRIMARY));
+            ui.label(RichText::new(format!("- {text}")).color(tokens.text));
         }
         MdBlock::Quote { text } => {
-            ui.label(RichText::new(text).color(TEXT_MUTED).italics());
+            ui.label(RichText::new(text).color(tokens.text_muted).italics());
         }
         MdBlock::Code { text } => {
-            ui.label(RichText::new(text).monospace().color(TEXT_MUTED));
+            ui.label(RichText::new(text).monospace().color(tokens.text_muted));
         }
         MdBlock::Rule => {
             ui.separator();
@@ -186,6 +185,7 @@ fn install_window(ctx: &Context, state: &mut UiState) {
     if state.install.is_none() {
         return;
     }
+    let tokens = Tokens::active(ctx);
     let mut cancel = false;
     let mut confirm = false;
     let mut new_target = None;
@@ -202,26 +202,47 @@ fn install_window(ctx: &Context, state: &mut UiState) {
         .map(|d| {
             if d.is_modpack() {
                 "Создать инстанс из сборки"
+            } else if d.is_batch() {
+                "Пакетная установка"
             } else {
                 "Установка"
             }
         })
         .unwrap_or("Установка");
 
-    window(title).show(ctx, |ui| {
+    window(ctx, title).show(ctx, |ui| {
         let Some(d) = state.install.as_mut() else {
             return;
         };
-        ui.label(RichText::new(&d.hit.title).color(TEXT_PRIMARY).strong());
+        if d.is_batch() {
+            let count = 1 + d.batch_hits.len();
+            ui.label(
+                RichText::new(format!("Выбрано проектов: {count}"))
+                    .color(tokens.text)
+                    .strong(),
+            );
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                for h in d.all_hits() {
+                    version_badge(ui, &h.title, source_color(h.source));
+                }
+            });
+        } else {
+            ui.label(RichText::new(&d.hit.title).color(tokens.text).strong());
+        }
         ui.add_space(8.0);
 
         if d.is_modpack() {
             if let InstallTarget::NewInstance { name } = &mut d.target {
-                ui.label(RichText::new("Название инстанса").color(TEXT_MUTED).small());
+                ui.label(
+                    RichText::new("Название инстанса")
+                        .color(tokens.text_muted)
+                        .small(),
+                );
                 ui.text_edit_singleline(name);
             }
         } else if let InstallTarget::Existing(current) = d.target.clone() {
-            ui.label(RichText::new("Инстанс").color(TEXT_MUTED).small());
+            ui.label(RichText::new("Инстанс").color(tokens.text_muted).small());
             egui::ComboBox::from_id_salt("install_target")
                 .selected_text(
                     instances
@@ -243,7 +264,7 @@ fn install_window(ctx: &Context, state: &mut UiState) {
             crate::catalog_view::skeleton_card(ui);
         }
         if let Some(err) = &d.error {
-            ui.label(RichText::new(err).color(STATUS_DANGER));
+            ui.label(RichText::new(err).color(tokens.danger));
         }
 
         if let Some(p) = &d.preview {
@@ -257,7 +278,7 @@ fn install_window(ctx: &Context, state: &mut UiState) {
                         .map(|v| format!(" {v}"))
                         .unwrap_or_default()
                 ))
-                .color(TEXT_PRIMARY),
+                .color(tokens.text),
             );
             ui.label(
                 RichText::new(format!(
@@ -265,7 +286,7 @@ fn install_window(ctx: &Context, state: &mut UiState) {
                     p.file_count,
                     format_size(p.total_size)
                 ))
-                .color(TEXT_MUTED),
+                .color(tokens.text_muted),
             );
             if !p.blocked.is_empty() {
                 ui.label(
@@ -273,12 +294,12 @@ fn install_window(ctx: &Context, state: &mut UiState) {
                         "{} файл(ов) нужно будет скачать вручную",
                         p.blocked.len()
                     ))
-                    .color(STATUS_WARN),
+                    .color(tokens.warning),
                 );
             }
             ui.label(
                 RichText::new("Команды запуска из архива игнорируются.")
-                    .color(TEXT_MUTED)
+                    .color(tokens.text_muted)
                     .small(),
             );
             ui.checkbox(
@@ -288,54 +309,82 @@ fn install_window(ctx: &Context, state: &mut UiState) {
         }
 
         if let Some(plan) = d.plan.clone() {
-            ui.label(
-                RichText::new("Будет установлено")
-                    .color(TEXT_PRIMARY)
-                    .strong(),
-            );
-            for dl in &plan.downloads {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(&dl.filename).color(TEXT_PRIMARY));
+            let selected_count = plan.downloads.iter().filter(|dl| !dl.is_dependency).count();
+            let dep_count = plan.downloads.iter().filter(|dl| dl.is_dependency).count();
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new("Будет установлено")
+                        .color(tokens.text)
+                        .strong(),
+                );
+                if dep_count > 0 || d.is_batch() {
                     ui.label(
-                        RichText::new(format_size(dl.size))
-                            .color(TEXT_MUTED)
-                            .small(),
+                        RichText::new(format!(
+                            "Выбрано: {selected_count} · Обязательные зависимости: {dep_count}"
+                        ))
+                        .color(tokens.text_muted)
+                        .small(),
                     );
-                    if dl.is_dependency {
-                        version_badge(ui, "зависимость", ACCENT_COBALT);
+                }
+            });
+            ui.add_space(4.0);
+            ScrollArea::vertical()
+                .id_salt("install_plan_scroll")
+                .max_height(260.0)
+                .show(ui, |ui| {
+                    for dl in &plan.downloads {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&dl.filename).color(tokens.text));
+                            ui.label(
+                                RichText::new(format_size(dl.size))
+                                    .color(tokens.text_muted)
+                                    .small(),
+                            );
+                            if dl.is_dependency {
+                                version_badge(ui, "зависимость", ACCENT_COBALT);
+                            } else if d.is_batch() || dep_count > 0 {
+                                version_badge(ui, "выбран", tokens.accent);
+                            }
+                            if dl.is_download_blocked() {
+                                version_badge(ui, "вручную", tokens.warning);
+                            }
+                        });
                     }
-                    if dl.is_download_blocked() {
-                        version_badge(ui, "вручную", STATUS_WARN);
-                    }
-                });
-            }
-            if !plan.optional_dependencies.is_empty() {
-                ui.add_space(8.0);
-                ui.label(RichText::new("Необязательные зависимости").color(TEXT_MUTED));
-                for o in &plan.optional_dependencies {
-                    if let Some(pid) = &o.project_id {
-                        let mut on = d.selected_optionals.contains(pid);
-                        let label = d.titles.get(pid).cloned().unwrap_or_else(|| pid.clone());
-                        if ui.checkbox(&mut on, label).changed() {
-                            toggled = Some(pid.clone());
+                    if !plan.optional_dependencies.is_empty() {
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new("Необязательные зависимости").color(tokens.text_muted),
+                        );
+                        for o in &plan.optional_dependencies {
+                            if let Some(pid) = &o.project_id {
+                                let mut on = d.selected_optionals.contains(pid);
+                                let label =
+                                    d.titles.get(pid).cloned().unwrap_or_else(|| pid.clone());
+                                if ui.checkbox(&mut on, label).changed() {
+                                    toggled = Some(pid.clone());
+                                }
+                            }
                         }
                     }
-                }
-            }
-            for b in &plan.blocked_downloads {
-                ui.label(
-                    RichText::new(format!("Вручную: {}", b.filename))
-                        .color(STATUS_WARN)
-                        .small(),
-                );
-            }
+                    for b in &plan.blocked_downloads {
+                        ui.label(
+                            RichText::new(format!("Вручную: {}", b.filename))
+                                .color(tokens.warning)
+                                .small(),
+                        );
+                    }
+                });
         }
 
         ui.add_space(12.0);
+        let btn_label = if d.is_batch() {
+            "Установить все"
+        } else {
+            "Установить"
+        };
         ui.horizontal(|ui| {
             ui.add_enabled_ui(d.can_confirm(), |ui| {
-                if primary_emerald_button(ui, Some(VectorIcon::Plus), "Установить").clicked()
-                {
+                if primary_emerald_button(ui, Some(VectorIcon::Plus), btn_label).clicked() {
                     confirm = true;
                 }
             });
@@ -365,47 +414,48 @@ fn manual_window(ctx: &Context, state: &mut UiState) {
     if !state.manual.open {
         return;
     }
+    let tokens = Tokens::active(ctx);
     let mut close = false;
     let mut open_url: Option<String> = None;
-    window("Эти файлы нужно скачать вручную").show(ctx, |ui| {
+    window(ctx, "Эти файлы нужно скачать вручную").show(ctx, |ui| {
         ui.label(
             RichText::new(
                 "Автор проекта запретил автоматическую загрузку. Скачайте файлы в браузере: \
                  они будут найдены в папке загрузок и добавлены автоматически.",
             )
-            .color(TEXT_MUTED),
+            .color(tokens.text_muted),
         );
         ui.label(
             RichText::new(format!("Папка: {}", state.manual.watch_dir_label))
-                .color(TEXT_MUTED)
+                .color(tokens.text_muted)
                 .small(),
         );
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(format!("Осталось: {}", state.manual.remaining()))
-                    .color(TEXT_PRIMARY)
+                    .color(tokens.text)
                     .strong(),
             );
             ui.label(
                 RichText::new("Перетащите скачанный файл в окно лаунчера")
-                    .color(TEXT_MUTED)
+                    .color(tokens.text_muted)
                     .small(),
             );
         });
         ui.add_space(8.0);
         for b in &state.manual.pending {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(&b.filename).color(TEXT_PRIMARY));
+                ui.label(RichText::new(&b.filename).color(tokens.text));
                 if secondary_glass_button(ui, None, "Открыть страницу").clicked() {
                     open_url = Some(b.webpage_url.clone());
                 }
             });
         }
         for name in &state.manual.completed {
-            ui.label(RichText::new(format!("Получено: {name}")).color(ACCENT_EMERALD));
+            ui.label(RichText::new(format!("Получено: {name}")).color(tokens.accent));
         }
         if let Some(m) = &state.manual.message {
-            ui.label(RichText::new(m).color(ACCENT_EMERALD));
+            ui.label(RichText::new(m).color(tokens.accent));
         }
         ui.add_space(8.0);
         if secondary_glass_button(ui, None, "Закрыть").clicked() {
@@ -447,10 +497,11 @@ pub fn jobs_panel(ui: &mut Ui, state: &mut UiState) {
     if state.jobs.jobs.is_empty() {
         return;
     }
+    let tokens = Tokens::active(ui.ctx());
     ui.add_space(8.0);
     ui.separator();
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Загрузки").color(TEXT_PRIMARY).strong());
+        ui.label(RichText::new("Загрузки").color(tokens.text).strong());
         if secondary_glass_button(ui, None, "Очистить завершённые").clicked() {
             state.jobs.remove_finished();
         }
@@ -459,8 +510,12 @@ pub fn jobs_panel(ui: &mut Ui, state: &mut UiState) {
     let mut retry = None;
     for j in &state.jobs.jobs {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(&j.title).color(TEXT_PRIMARY));
-            ui.label(RichText::new(&j.target_label).color(TEXT_MUTED).small());
+            ui.label(RichText::new(&j.title).color(tokens.text));
+            ui.label(
+                RichText::new(&j.target_label)
+                    .color(tokens.text_muted)
+                    .small(),
+            );
             match &j.status {
                 JobStatus::Running => {
                     ui.add(
@@ -472,15 +527,15 @@ pub fn jobs_panel(ui: &mut Ui, state: &mut UiState) {
                         cancel = Some(j.id);
                     }
                 }
-                JobStatus::Done => version_badge(ui, "Готово", ACCENT_EMERALD),
+                JobStatus::Done => version_badge(ui, "Готово", tokens.accent),
                 JobStatus::Cancelled => {
-                    version_badge(ui, "Отменено", STATUS_WARN);
+                    version_badge(ui, "Отменено", tokens.warning);
                     if secondary_glass_button(ui, None, "Повторить").clicked() {
                         retry = Some(j.id);
                     }
                 }
                 JobStatus::Failed(e) => {
-                    ui.label(RichText::new(e).color(STATUS_DANGER).small());
+                    ui.label(RichText::new(e).color(tokens.danger).small());
                     if secondary_glass_button(ui, None, "Повторить").clicked() {
                         retry = Some(j.id);
                     }

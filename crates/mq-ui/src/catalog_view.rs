@@ -13,8 +13,8 @@ use crate::catalog_state::{
 };
 use crate::state::{UiState, UiWorkerCommand};
 use crate::theme::{
-    ACCENT_COBALT, ACCENT_EMERALD, BG_RECESSED, BORDER_STRONG, BORDER_SUBTLE, CARD_SURFACE,
-    CARD_SURFACE_HOVER, RADIUS_BUTTON, RADIUS_CARD, STATUS_WARN, TEXT_MUTED, TEXT_PRIMARY,
+    blend_color, solid_card_frame_with_config, Tokens, ACCENT_COBALT, ACCENT_EMERALD,
+    RADIUS_BUTTON, RADIUS_CARD, RADIUS_TAG,
 };
 use crate::widgets::{
     paint_vector_icon, primary_emerald_button, secondary_glass_button, version_badge, VectorIcon,
@@ -122,29 +122,37 @@ pub struct CatalogView {
 impl CatalogView {
     pub fn ui(&mut self, ui: &mut Ui, state: &mut UiState) {
         let now = Instant::now();
+        let tokens = Tokens::from_config(&state.config.theme);
         let mut changed = false;
 
-        ui.heading(RichText::new("Каталог").color(TEXT_PRIMARY).strong());
+        ui.horizontal(|ui| {
+            ui.heading(RichText::new("Каталог").color(tokens.text).strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.instance_target_selector(ui, state, &tokens);
+            });
+        });
         ui.add_space(8.0);
 
-        changed |= self.tabs_row(ui, &mut state.catalog);
+        changed |= self.tabs_row(ui, &mut state.catalog, &tokens);
         ui.add_space(8.0);
-        changed |= self.source_row(ui, &mut state.catalog);
+        changed |= self.source_row(ui, &mut state.catalog, &tokens);
         ui.add_space(8.0);
-        self.import_row(ui, state);
+        self.import_row(ui, state, &tokens);
 
         let has_key = state.config.effective_cf_api_key().is_some();
         let cf_selected = state.catalog.source == CatalogSourceFilter::CurseForge;
         if !has_key && cf_selected {
             ui.add_space(8.0);
-            self.key_panel(ui, state);
+            self.key_panel(ui, state, &tokens);
         }
 
         ui.add_space(8.0);
-        changed |= self.search_row(ui, &mut state.catalog);
+        changed |= self.search_row(ui, &mut state.catalog, &tokens);
         ui.add_space(8.0);
-        changed |= self.filters_row(ui, &mut state.catalog);
+        changed |= self.filters_row(ui, &mut state.catalog, &tokens);
         ui.add_space(8.0);
+
+        self.batch_queue_bar(ui, state, &tokens);
 
         if changed {
             state.catalog.mark_dirty(now);
@@ -154,6 +162,8 @@ impl CatalogView {
         if state.catalog.source == CatalogSourceFilter::All && !has_key {
             self.inline_notice(
                 ui,
+                state,
+                &tokens,
                 "CurseForge отключён: не задан API-ключ. Показаны результаты Modrinth.",
             );
         }
@@ -169,38 +179,154 @@ impl CatalogView {
                 text.push(' ');
                 text.push_str(&err.message);
             }
-            self.inline_notice(ui, &text);
+            self.inline_notice(ui, state, &tokens, &text);
         }
 
         crate::catalog_dialogs::jobs_panel(ui, state);
         ui.separator();
-        self.results(ui, state);
+        self.results(ui, state, &tokens);
         crate::catalog_dialogs::show_overlays(ui.ctx(), state);
     }
 
-    fn tabs_row(&self, ui: &mut Ui, cat: &mut CatalogState) -> bool {
+    fn instance_target_selector(&self, ui: &mut Ui, state: &mut UiState, tokens: &Tokens) {
+        if state.instances.is_empty() {
+            ui.label(
+                RichText::new("Нет инстансов для установки")
+                    .color(tokens.text_muted)
+                    .small(),
+            );
+            return;
+        }
+        let current_id = state.selected_instance_id.clone();
+        let current_label = state
+            .selected_instance()
+            .map(|i| format!("{} ({} · {})", i.name, i.mc_version, i.loader.as_str()))
+            .unwrap_or_else(|| "Выберите инстанс".to_string());
+        let mut next_id = None;
+        egui::ComboBox::from_id_salt("catalog_target_instance")
+            .selected_text(current_label)
+            .show_ui(ui, |ui| {
+                for inst in &state.instances {
+                    let selected = current_id.as_ref() == Some(&inst.id);
+                    let label = format!(
+                        "{} ({} · {})",
+                        inst.name,
+                        inst.mc_version,
+                        inst.loader.as_str()
+                    );
+                    if ui.selectable_label(selected, label).clicked() && !selected {
+                        next_id = Some(inst.id.clone());
+                    }
+                }
+            });
+        ui.label(RichText::new("Инстанс:").color(tokens.text_muted).small());
+        if let Some(id) = next_id {
+            state.selected_instance_id = Some(id.clone());
+            state.installed_mods.clear();
+            let _ = state
+                .cmd_sender
+                .send(UiWorkerCommand::ScanInstanceMods { instance_id: id });
+        }
+    }
+
+    fn batch_queue_bar(&self, ui: &mut Ui, state: &mut UiState, tokens: &Tokens) {
+        if state.catalog.batch_queue.is_empty() {
+            return;
+        }
+        let count = state.catalog.batch_queue.len();
+        let mut remove_item: Option<(CatalogSource, String)> = None;
+        let mut open_batch = false;
+        let mut clear_all = false;
+
+        solid_card_frame_with_config(tokens, &state.config.theme)
+            .stroke(Stroke::new(
+                1.0_f32,
+                blend_color(tokens.border_strong, tokens.accent, 0.38),
+            ))
+            .inner_margin(egui::Margin::symmetric(12, 8))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!("Очередь пакетной установки: {count}"))
+                            .color(tokens.text)
+                            .strong(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
+                        if primary_emerald_button(
+                            ui,
+                            Some(VectorIcon::Plus),
+                            &format!("Установить выбранные ({count}) с зависимостями"),
+                        )
+                        .clicked()
+                        {
+                            open_batch = true;
+                        }
+                        if secondary_glass_button(ui, None, "Очистить").clicked() {
+                            clear_all = true;
+                        }
+                    });
+                });
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                    for entry in &state.catalog.batch_queue {
+                        let chip_bg = blend_color(tokens.bg_surface_hover, tokens.accent, 0.14);
+                        let chip_btn = egui::Button::new(
+                            RichText::new(format!("{}  [x]", entry.title))
+                                .color(tokens.text)
+                                .small(),
+                        )
+                        .fill(chip_bg)
+                        .stroke(Stroke::new(1.0_f32, tokens.border))
+                        .corner_radius(RADIUS_TAG);
+                        if ui
+                            .add(chip_btn)
+                            .on_hover_text("Нажмите, чтобы убрать из очереди")
+                            .clicked()
+                        {
+                            remove_item = Some((entry.source, entry.project_id.clone()));
+                        }
+                    }
+                });
+            });
+        ui.add_space(8.0);
+
+        if let Some((src, pid)) = remove_item {
+            state.catalog.remove_queued([(src, pid.as_str())]);
+        }
+        if clear_all {
+            state.catalog.clear_queue();
+        }
+        if open_batch {
+            state.open_batch_install();
+        }
+    }
+
+    fn tabs_row(&self, ui: &mut Ui, cat: &mut CatalogState, tokens: &Tokens) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
             for tab in CatalogTab::ALL {
                 let selected = cat.tab == tab;
                 let text = RichText::new(tab.label()).color(if selected {
-                    TEXT_PRIMARY
+                    tokens.text
                 } else {
-                    TEXT_MUTED
+                    tokens.text_muted
                 });
                 let btn = egui::Button::new(if selected { text.strong() } else { text })
                     .fill(if selected {
-                        CARD_SURFACE_HOVER
+                        tokens.bg_surface_hover
                     } else {
-                        CARD_SURFACE
+                        tokens.bg_surface
                     })
                     .stroke(Stroke::new(
                         1.0_f32,
                         if selected {
-                            ACCENT_EMERALD
+                            tokens.accent
                         } else {
-                            BORDER_SUBTLE
+                            tokens.border
                         },
                     ))
                     .corner_radius(RADIUS_BUTTON)
@@ -216,7 +342,7 @@ impl CatalogView {
     }
 
     /// Local import: path field plus drag-and-drop of `.mrpack` / `.zip` onto the window.
-    fn import_row(&mut self, ui: &mut Ui, state: &mut UiState) {
+    fn import_row(&mut self, ui: &mut Ui, state: &mut UiState, tokens: &Tokens) {
         let dropped: Vec<std::path::PathBuf> = ui.ctx().input(|i| {
             i.raw
                 .dropped_files
@@ -229,7 +355,7 @@ impl CatalogView {
         }
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
-            ui.label(RichText::new("Импорт").color(TEXT_MUTED));
+            ui.label(RichText::new("Импорт").color(tokens.text_muted));
             ui.add(
                 egui::TextEdit::singleline(&mut self.import_path)
                     .hint_text("Путь к .mrpack / .zip или перетащите файл в окно")
@@ -244,11 +370,11 @@ impl CatalogView {
         });
     }
 
-    fn source_row(&self, ui: &mut Ui, cat: &mut CatalogState) -> bool {
+    fn source_row(&self, ui: &mut Ui, cat: &mut CatalogState, tokens: &Tokens) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
-            ui.label(RichText::new("Источник").color(TEXT_MUTED));
+            ui.label(RichText::new("Источник").color(tokens.text_muted));
             for (filter, label) in [
                 (CatalogSourceFilter::All, "Все"),
                 (CatalogSourceFilter::Modrinth, "Modrinth"),
@@ -265,7 +391,7 @@ impl CatalogView {
         changed
     }
 
-    fn search_row(&self, ui: &mut Ui, cat: &mut CatalogState) -> bool {
+    fn search_row(&self, ui: &mut Ui, cat: &mut CatalogState, _tokens: &Tokens) -> bool {
         let mut changed = false;
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::hover());
@@ -280,11 +406,11 @@ impl CatalogView {
         changed
     }
 
-    fn filters_row(&self, ui: &mut Ui, cat: &mut CatalogState) -> bool {
+    fn filters_row(&self, ui: &mut Ui, cat: &mut CatalogState, tokens: &Tokens) -> bool {
         let mut changed = false;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
-            ui.label(RichText::new("Версия MC").color(TEXT_MUTED));
+            ui.label(RichText::new("Версия MC").color(tokens.text_muted));
             changed |= ui
                 .add(
                     egui::TextEdit::singleline(&mut cat.filters.mc_version)
@@ -294,7 +420,7 @@ impl CatalogView {
                 .changed();
 
             if matches!(cat.tab, CatalogTab::Mods | CatalogTab::Modpacks) {
-                ui.label(RichText::new("Загрузчик").color(TEXT_MUTED));
+                ui.label(RichText::new("Загрузчик").color(tokens.text_muted));
                 egui::ComboBox::from_id_salt("cat_loader_combo")
                     .selected_text(cat.filters.loader.map_or("Любой", |l| l.as_str()))
                     .show_ui(ui, |ui| {
@@ -309,7 +435,7 @@ impl CatalogView {
                     });
             }
 
-            ui.label(RichText::new("Сортировка").color(TEXT_MUTED));
+            ui.label(RichText::new("Сортировка").color(tokens.text_muted));
             let current = SORTS
                 .iter()
                 .find(|(s, _)| *s == cat.filters.sort)
@@ -328,7 +454,7 @@ impl CatalogView {
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
-            ui.label(RichText::new("Категории").color(TEXT_MUTED));
+            ui.label(RichText::new("Категории").color(tokens.text_muted));
             for (slug, label) in categories_for(cat.tab) {
                 let on = cat.filters.categories.iter().any(|c| c == slug);
                 if ui.selectable_label(on, *label).clicked() {
@@ -363,31 +489,27 @@ impl CatalogView {
         }
     }
 
-    fn inline_notice(&self, ui: &mut Ui, text: &str) {
-        egui::Frame::new()
-            .fill(CARD_SURFACE)
-            .stroke(Stroke::new(1.0_f32, STATUS_WARN))
-            .corner_radius(RADIUS_CARD)
+    fn inline_notice(&self, ui: &mut Ui, state: &UiState, tokens: &Tokens, text: &str) {
+        solid_card_frame_with_config(tokens, &state.config.theme)
+            .stroke(Stroke::new(1.0_f32, tokens.warning))
             .inner_margin(egui::Margin::same(8))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(RichText::new(text).color(STATUS_WARN));
+                ui.label(RichText::new(text).color(tokens.warning));
             });
         ui.add_space(4.0);
     }
 
     /// Panel shown when CurseForge is selected without a key: instruction, link and input.
-    fn key_panel(&mut self, ui: &mut Ui, state: &mut UiState) {
-        egui::Frame::new()
-            .fill(CARD_SURFACE)
-            .stroke(Stroke::new(1.0_f32, STATUS_WARN))
-            .corner_radius(RADIUS_CARD)
+    fn key_panel(&mut self, ui: &mut Ui, state: &mut UiState, tokens: &Tokens) {
+        solid_card_frame_with_config(tokens, &state.config.theme)
+            .stroke(Stroke::new(1.0_f32, tokens.warning))
             .inner_margin(egui::Margin::same(12))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.label(
                     RichText::new("Для CurseForge нужен API-ключ")
-                        .color(TEXT_PRIMARY)
+                        .color(tokens.text)
                         .strong(),
                 );
                 ui.add_space(4.0);
@@ -398,7 +520,7 @@ impl CatalogView {
                          Ключ можно также задать переменной окружения MQ_CURSEFORGE_API_KEY.\n\
                          Modrinth работает без ключа.",
                     )
-                    .color(TEXT_MUTED),
+                    .color(tokens.text_muted),
                 );
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -429,7 +551,7 @@ impl CatalogView {
             });
     }
 
-    fn results(&mut self, ui: &mut Ui, state: &mut UiState) {
+    fn results(&mut self, ui: &mut Ui, state: &mut UiState, tokens: &Tokens) {
         let has_key = state.config.effective_cf_api_key().is_some();
         let mut go_prev = false;
         let mut go_next = false;
@@ -454,12 +576,14 @@ impl CatalogView {
                         if cat.all_sources_failed() {
                             empty_state(
                                 ui,
+                                tokens,
                                 "Не удалось загрузить каталог",
                                 "Проверьте сообщение выше и повторите поиск.",
                             );
                         } else {
                             empty_state(
                                 ui,
+                                tokens,
                                 "Ничего не найдено",
                                 "Измените запрос или сбросьте фильтры.",
                             );
@@ -477,7 +601,7 @@ impl CatalogView {
                     });
                 }
                 for hit in &hits {
-                    self.hit_card(ui, state, hit);
+                    self.hit_card(ui, state, hit, tokens);
                     ui.add_space(8.0);
                 }
 
@@ -489,18 +613,20 @@ impl CatalogView {
                             go_prev = true;
                         }
                     });
-                    ui.label(RichText::new(format!("Страница {}", page + 1)).color(TEXT_MUTED));
+                    ui.label(
+                        RichText::new(format!("Страница {}", page + 1)).color(tokens.text_muted),
+                    );
                     ui.add_enabled_ui(state.catalog.has_next && !state.catalog.loading, |ui| {
                         if secondary_glass_button(ui, None, "Вперёд").clicked() {
                             go_next = true;
                         }
                     });
                     if state.catalog.loading {
-                        ui.label(RichText::new("Загрузка").color(TEXT_MUTED));
+                        ui.label(RichText::new("Загрузка").color(tokens.text_muted));
                     }
                     ui.label(
                         RichText::new(format!("до {CATALOG_PAGE_SIZE} на источник"))
-                            .color(TEXT_MUTED)
+                            .color(tokens.text_muted)
                             .small(),
                     );
                 });
@@ -538,7 +664,7 @@ impl CatalogView {
         self.textures.get(url).cloned()
     }
 
-    fn hit_card(&mut self, ui: &mut Ui, state: &mut UiState, hit: &CatalogHit) {
+    fn hit_card(&mut self, ui: &mut Ui, state: &mut UiState, hit: &CatalogHit, tokens: &Tokens) {
         let installed = state.installed_mods.iter().any(|m| {
             let slug = hit.slug.to_lowercase();
             let title = hit.title.to_lowercase();
@@ -549,122 +675,167 @@ impl CatalogView {
                 || name.contains(&title)
                 || name.contains(&slug)
         });
+        let queued = state.catalog.is_queued(hit.source, &hit.project_id);
         let texture = hit
             .icon_url
             .as_deref()
             .and_then(|u| self.icon_texture(ui, &mut state.catalog, u));
 
-        egui::Frame::new()
-            .fill(CARD_SURFACE)
-            .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-            .corner_radius(RADIUS_CARD)
-            .inner_margin(egui::Margin::same(12))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(12.0, 4.0);
-                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(ICON_SIZE), Sense::hover());
-                    match &texture {
-                        Some(tex) => {
-                            egui::Image::new(tex)
-                                .corner_radius(RADIUS_BUTTON)
-                                .fit_to_exact_size(Vec2::splat(ICON_SIZE))
-                                .paint_at(ui, rect);
-                        }
-                        None => {
-                            ui.painter().rect_filled(rect, RADIUS_BUTTON, BG_RECESSED);
-                            let icon = match hit.project_kind {
-                                ProjectKind::Mod => VectorIcon::Layers,
-                                ProjectKind::Modpack => VectorIcon::Catalog,
-                                ProjectKind::Shader => VectorIcon::Shield,
-                                ProjectKind::ResourcePack => VectorIcon::Folder,
-                            };
-                            paint_vector_icon(ui.painter(), rect.shrink(12.0), icon, TEXT_MUTED);
-                        }
+        let mut frame = solid_card_frame_with_config(tokens, &state.config.theme)
+            .inner_margin(egui::Margin::same(12));
+        if queued {
+            frame = frame.stroke(Stroke::new(1.2_f32, tokens.accent));
+        }
+        frame.show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(12.0, 4.0);
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(ICON_SIZE), Sense::hover());
+                match &texture {
+                    Some(tex) => {
+                        egui::Image::new(tex)
+                            .corner_radius(RADIUS_BUTTON)
+                            .fit_to_exact_size(Vec2::splat(ICON_SIZE))
+                            .paint_at(ui, rect);
                     }
+                    None => {
+                        ui.painter()
+                            .rect_filled(rect, RADIUS_BUTTON, tokens.bg_input);
+                        let icon = match hit.project_kind {
+                            ProjectKind::Mod => VectorIcon::Layers,
+                            ProjectKind::Modpack => VectorIcon::Catalog,
+                            ProjectKind::Shader => VectorIcon::Shield,
+                            ProjectKind::ResourcePack => VectorIcon::Folder,
+                        };
+                        paint_vector_icon(ui.painter(), rect.shrink(12.0), icon, tokens.text_muted);
+                    }
+                }
 
-                    let right_w = 148.0;
-                    let mid_w = (ui.available_width() - right_w - 12.0).max(120.0);
-                    ui.allocate_ui_with_layout(
-                        Vec2::new(mid_w, ICON_SIZE),
-                        egui::Layout::top_down(egui::Align::Min),
-                        |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(&hit.title).color(TEXT_PRIMARY).strong(),
-                                    )
-                                    .truncate(),
-                                );
-                            });
+                let right_w = 248.0;
+                let mid_w = (ui.available_width() - right_w - 12.0).max(120.0);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(mid_w, ICON_SIZE),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
                             ui.add(
                                 egui::Label::new(
-                                    RichText::new(format!(
-                                        "{}  |  {} загрузок",
-                                        hit.author,
-                                        format_downloads(hit.downloads)
-                                    ))
-                                    .color(TEXT_MUTED)
+                                    RichText::new(&hit.title).color(tokens.text).strong(),
+                                )
+                                .truncate(),
+                            );
+                        });
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(format!(
+                                    "{}  |  {} загрузок",
+                                    hit.author,
+                                    format_downloads(hit.downloads)
+                                ))
+                                .color(tokens.text_muted)
+                                .small(),
+                            )
+                            .truncate(),
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&hit.description)
+                                    .color(tokens.text_muted)
                                     .small(),
-                                )
-                                .truncate(),
-                            );
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(&hit.description).color(TEXT_MUTED).small(),
-                                )
-                                .truncate(),
-                            );
-                        },
-                    );
+                            )
+                            .truncate(),
+                        );
+                    },
+                );
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 8.0);
-                        self.card_actions(ui, state, hit, installed);
-                    });
-                });
-                ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
-                    version_badge(ui, source_name(hit.source), source_color(hit.source));
-                    for l in hit.loaders.iter().take(4) {
-                        version_badge(ui, l, ACCENT_COBALT);
-                    }
-                    if installed {
-                        version_badge(ui, "Установлен", ACCENT_EMERALD);
-                    }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+                    self.card_actions(ui, state, hit, installed, queued, tokens);
                 });
             });
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+                version_badge(ui, source_name(hit.source), source_color(hit.source));
+                for l in hit.loaders.iter().take(4) {
+                    version_badge(ui, l, ACCENT_COBALT);
+                }
+                if installed {
+                    version_badge(ui, "Установлен", tokens.accent);
+                }
+                if queued {
+                    version_badge(ui, "В очереди", tokens.accent);
+                }
+            });
+        });
     }
 
-    fn card_actions(&self, ui: &mut Ui, state: &mut UiState, hit: &CatalogHit, installed: bool) {
-        if secondary_glass_button(ui, None, "Подробнее").clicked() {
-            state.open_project(hit.clone());
-        }
+    fn card_actions(
+        &self,
+        ui: &mut Ui,
+        state: &mut UiState,
+        hit: &CatalogHit,
+        installed: bool,
+        queued: bool,
+        tokens: &Tokens,
+    ) {
         if hit.project_kind == ProjectKind::Modpack {
             if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать сборку").clicked()
             {
                 state.open_project(hit.clone());
             }
         } else if installed {
-            version_badge(ui, "Уже добавлен", ACCENT_EMERALD);
-        } else if state.selected_instance().is_some() {
-            if primary_emerald_button(ui, Some(VectorIcon::Plus), "Установить").clicked()
-            {
-                state.open_install_content(hit.clone());
-            }
+            version_badge(ui, "Уже добавлен", tokens.accent);
         } else {
-            ui.label(RichText::new("Выберите инстанс").color(TEXT_MUTED).small());
+            if state.selected_instance().is_some() {
+                if primary_emerald_button(ui, Some(VectorIcon::Plus), "Установить").clicked()
+                {
+                    state.open_install_content(hit.clone());
+                }
+            } else {
+                ui.label(
+                    RichText::new("Выберите инстанс")
+                        .color(tokens.text_muted)
+                        .small(),
+                );
+            }
+            let queue_label = if queued {
+                "В очереди"
+            } else {
+                "+ В очередь"
+            };
+            let queue_btn = egui::Button::new(
+                RichText::new(queue_label)
+                    .color(if queued { tokens.accent } else { tokens.text })
+                    .small(),
+            )
+            .fill(if queued {
+                blend_color(tokens.bg_surface_hover, tokens.accent, 0.16)
+            } else {
+                tokens.bg_surface
+            })
+            .stroke(Stroke::new(
+                1.0_f32,
+                if queued { tokens.accent } else { tokens.border },
+            ))
+            .corner_radius(RADIUS_BUTTON);
+            if ui.add(queue_btn).clicked() {
+                state.catalog.toggle_queue(hit.clone());
+            }
+        }
+        if secondary_glass_button(ui, None, "Подробнее").clicked() {
+            state.open_project(hit.clone());
         }
     }
 }
 
 /// Placeholder card (matte rectangles, no spinner) shown while the first page loads.
 pub fn skeleton_card(ui: &mut Ui) {
+    let tokens = Tokens::active(ui.ctx());
     egui::Frame::new()
-        .fill(CARD_SURFACE)
-        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
+        .fill(tokens.bg_surface)
+        .stroke(Stroke::new(1.0_f32, tokens.border))
         .corner_radius(RADIUS_CARD)
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
@@ -673,7 +844,7 @@ pub fn skeleton_card(ui: &mut Ui) {
                 ui.allocate_exact_size(Vec2::new(ui.available_width(), ICON_SIZE), Sense::hover());
             let p = ui.painter();
             let icon = egui::Rect::from_min_size(rect.min, Vec2::splat(ICON_SIZE));
-            p.rect_filled(icon, RADIUS_BUTTON, BG_RECESSED);
+            p.rect_filled(icon, RADIUS_BUTTON, tokens.bg_input);
             let x = icon.max.x + 12.0;
             let w = (rect.max.x - x).max(40.0);
             for (dy, frac, h) in [(4.0, 0.35, 12.0), (22.0, 0.55, 8.0), (36.0, 0.8, 8.0)] {
@@ -681,23 +852,23 @@ pub fn skeleton_card(ui: &mut Ui) {
                     egui::pos2(x, rect.min.y + dy),
                     Vec2::new(w * frac, h),
                 );
-                p.rect_filled(r, 4.0, BG_RECESSED);
+                p.rect_filled(r, 4.0, tokens.bg_input);
             }
         });
 }
 
-fn empty_state(ui: &mut Ui, title: &str, hint: &str) {
+fn empty_state(ui: &mut Ui, tokens: &Tokens, title: &str, hint: &str) {
     ui.add_space(32.0);
     ui.vertical_centered(|ui| {
         egui::Frame::new()
-            .fill(CARD_SURFACE)
-            .stroke(Stroke::new(1.0_f32, BORDER_STRONG))
+            .fill(tokens.bg_surface)
+            .stroke(Stroke::new(1.0_f32, tokens.border_strong))
             .corner_radius(RADIUS_CARD)
             .inner_margin(egui::Margin::same(24))
             .show(ui, |ui| {
-                ui.label(RichText::new(title).color(TEXT_PRIMARY).strong());
+                ui.label(RichText::new(title).color(tokens.text).strong());
                 ui.add_space(4.0);
-                ui.label(RichText::new(hint).color(TEXT_MUTED));
+                ui.label(RichText::new(hint).color(tokens.text_muted));
             });
     });
 }
