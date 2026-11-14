@@ -23,6 +23,34 @@ pub struct ModrinthBatchIdsQuery {
 }
 
 #[derive(Debug, Default, Deserialize)]
+pub struct ModrinthHashRequest {
+    #[serde(default)]
+    pub hashes: Vec<String>,
+    #[serde(default)]
+    pub algorithm: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurseForgeBatchModsRequest {
+    #[serde(default)]
+    pub mod_ids: Vec<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurseForgeBatchFilesRequest {
+    #[serde(default)]
+    pub file_ids: Vec<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct CurseForgeFingerprintsRequest {
+    #[serde(default)]
+    pub fingerprints: Vec<u32>,
+}
+
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CurseForgeSearchQuery {
     pub search_filter: Option<String>,
@@ -48,7 +76,7 @@ struct MockCatalogItem {
     downloads: u64,
 }
 
-const MODRINTH_ITEMS: [MockCatalogItem; 4] = [
+const MODRINTH_ITEMS: [MockCatalogItem; 5] = [
     MockCatalogItem {
         project_id: "AANobbMI",
         slug: "sodium",
@@ -108,6 +136,21 @@ const MODRINTH_ITEMS: [MockCatalogItem; 4] = [
         version_id: "ver-mq-ultra-pack-1211",
         version_number: "1.0.0",
         downloads: 120_000,
+    },
+    MockCatalogItem {
+        project_id: "MQCorrupt",
+        slug: "corrupt-mod",
+        title: "Corrupt Hash Mod",
+        description: "Fixture project whose advertised hashes never match the served artifact",
+        project_type: "mod",
+        categories: &["fabric"],
+        loaders: &["fabric"],
+        game_versions: &["1.21.1"],
+        client_side: "required",
+        server_side: "optional",
+        version_id: "ver-corrupt-1211",
+        version_number: "1.0.0",
+        downloads: 1,
     },
 ];
 
@@ -314,6 +357,65 @@ pub(crate) fn modrinth_versions_batch(world: &MockWorld, q: &ModrinthBatchIdsQue
     Json(list).into_response()
 }
 
+/// `POST /v2/version_files` — maps each known SHA-1 / SHA-512 hash to its project version.
+pub(crate) fn modrinth_version_files(world: &MockWorld, req: &ModrinthHashRequest) -> Response {
+    let mut out = serde_json::Map::new();
+    for hash in &req.hashes {
+        if let Some(item) = MODRINTH_ITEMS
+            .iter()
+            .find(|item| item_meta(world, item).is_some_and(|meta| hash_matches_meta(hash, meta)))
+        {
+            out.insert(hash.clone(), render_modrinth_version(world, item));
+        }
+    }
+    Json(Value::Object(out)).into_response()
+}
+
+/// `POST /v2/version_files/update` — maps an outdated hash to the latest compatible version.
+///
+/// The only intentionally outdated artifact is `sodium-0.5.0.jar`, which resolves to the
+/// current Sodium release so `mq mods update --all` can be tested end to end.
+pub(crate) fn modrinth_version_files_update(
+    world: &MockWorld,
+    req: &ModrinthHashRequest,
+) -> Response {
+    let sodium = MODRINTH_ITEMS
+        .iter()
+        .find(|item| item.slug == "sodium")
+        .expect("sodium fixture exists");
+    let mut out = serde_json::Map::new();
+    for hash in &req.hashes {
+        if hash_matches_meta(hash, &world.catalog.sodium_old) {
+            out.insert(hash.clone(), render_modrinth_version(world, sodium));
+            continue;
+        }
+        if let Some(item) = MODRINTH_ITEMS
+            .iter()
+            .find(|item| item_meta(world, item).is_some_and(|meta| hash_matches_meta(hash, meta)))
+        {
+            out.insert(hash.clone(), render_modrinth_version(world, item));
+        }
+    }
+    Json(Value::Object(out)).into_response()
+}
+
+fn item_meta<'a>(
+    world: &'a MockWorld,
+    item: &MockCatalogItem,
+) -> Option<&'a crate::world::BlobDualHashMeta> {
+    match item.slug {
+        "sodium" => Some(&world.catalog.sodium),
+        "lithium" => Some(&world.catalog.lithium),
+        "fabric-api" => Some(&world.catalog.fabric_api),
+        _ => None,
+    }
+}
+
+fn hash_matches_meta(hash: &str, meta: &crate::world::BlobDualHashMeta) -> bool {
+    let hash = hash.trim().to_ascii_lowercase();
+    hash == sha1_hex(&meta.sha1) || hash == sha512_hex(&meta.sha512)
+}
+
 fn find_modrinth_item(id_or_slug: &str) -> Option<&'static MockCatalogItem> {
     MODRINTH_ITEMS
         .iter()
@@ -344,6 +446,13 @@ fn render_modrinth_version(world: &MockWorld, item: &MockCatalogItem) -> Value {
         "lithium" => (
             "lithium-0.13.0.jar",
             "download/catalog/lithium-0.13.0.jar",
+            world.catalog.lithium,
+            json!([]),
+        ),
+        "corrupt-mod" => (
+            "corrupt-mod-1.0.0.jar",
+            "download/catalog/corrupt-mod.jar",
+            // Metadata intentionally describes different bytes than the served artifact.
             world.catalog.lithium,
             json!([]),
         ),
@@ -432,6 +541,7 @@ pub(crate) fn curseforge_search(
         render_cf_mod(world, 394468),
         render_cf_mod(world, 306612),
         render_cf_mod(world, 900001),
+        render_cf_mod(world, 900002),
     ];
 
     let filtered: Vec<Value> = all_mods
@@ -572,6 +682,151 @@ pub(crate) fn curseforge_mod_file_download_url(
     Json(json!({ "data": url })).into_response()
 }
 
+/// `POST /v1/mods` — batch project lookup by numeric mod IDs.
+pub(crate) fn curseforge_mods_batch(
+    world: &MockWorld,
+    headers: &HeaderMap,
+    req: &CurseForgeBatchModsRequest,
+) -> Response {
+    if let Some(resp) = check_curseforge_api_key(headers) {
+        return resp;
+    }
+    let data: Vec<Value> = req
+        .mod_ids
+        .iter()
+        .filter_map(|id| render_cf_mod(world, u32::try_from(*id).ok()?))
+        .collect();
+    Json(json!({ "data": data })).into_response()
+}
+
+/// `POST /v1/mods/files` — batch file lookup by numeric file IDs.
+pub(crate) fn curseforge_files_batch(
+    world: &MockWorld,
+    headers: &HeaderMap,
+    req: &CurseForgeBatchFilesRequest,
+) -> Response {
+    if let Some(resp) = check_curseforge_api_key(headers) {
+        return resp;
+    }
+    let data: Vec<Value> = req
+        .file_ids
+        .iter()
+        .filter_map(|id| {
+            let mod_id = cf_mod_id_for_file(u32::try_from(*id).ok()?)?;
+            render_cf_file_for_mod(world, mod_id)
+        })
+        .collect();
+    Json(json!({ "data": data })).into_response()
+}
+
+/// `POST /v1/fingerprints/432` — MurmurHash2 fingerprint lookup for synthetic artifacts.
+pub(crate) fn curseforge_fingerprints(
+    world: &MockWorld,
+    headers: &HeaderMap,
+    req: &CurseForgeFingerprintsRequest,
+) -> Response {
+    if let Some(resp) = check_curseforge_api_key(headers) {
+        return resp;
+    }
+    let known = [
+        (394468u32, &world.catalog.sodium),
+        (306612, &world.catalog.fabric_api),
+        (238222, &world.catalog.jei),
+    ];
+    let mut exact_matches = Vec::new();
+    let mut exact_fingerprints = Vec::new();
+    for fingerprint in &req.fingerprints {
+        let Some((mod_id, _meta)) = known.iter().find(|(_, meta)| {
+            let bytes = cf_artifact_bytes(world, meta);
+            cf_fingerprint(&bytes) == *fingerprint
+        }) else {
+            continue;
+        };
+        let Some(file) = render_cf_file_for_mod(world, *mod_id) else {
+            continue;
+        };
+        exact_matches.push(json!({
+            "id": mod_id,
+            "file": file,
+            "latestFiles": [file],
+        }));
+        exact_fingerprints.push(*fingerprint);
+    }
+    Json(json!({
+        "data": {
+            "exactMatches": exact_matches,
+            "exactFingerprints": exact_fingerprints
+        }
+    }))
+    .into_response()
+}
+
+fn cf_mod_id_for_file(file_id: u32) -> Option<u32> {
+    match file_id {
+        5001 => Some(238222),
+        5002 => Some(394468),
+        5003 => Some(306612),
+        5004 => Some(900001),
+        5005 => Some(900002),
+        _ => None,
+    }
+}
+
+fn cf_artifact_bytes(world: &MockWorld, meta: &crate::world::BlobDualHashMeta) -> Vec<u8> {
+    if meta.sha1 == world.catalog.sodium.sha1 {
+        crate::payload::build_synthetic_mod_jar(&crate::world::sodium_spec())
+    } else if meta.sha1 == world.catalog.fabric_api.sha1 {
+        crate::payload::build_synthetic_mod_jar(&crate::world::fabric_api_spec())
+    } else if meta.sha1 == world.catalog.jei.sha1 {
+        crate::payload::build_synthetic_mod_jar(&crate::world::jei_spec())
+    } else {
+        Vec::new()
+    }
+}
+
+/// CurseForge MurmurHash2 (seed `1`) with whitespace bytes stripped, matching the client.
+fn cf_fingerprint(bytes: &[u8]) -> u32 {
+    const M: u32 = 0x5bd1_e995;
+    const R: u32 = 24;
+    let filtered: Vec<u8> = bytes
+        .iter()
+        .copied()
+        .filter(|b| !matches!(*b, 9 | 10 | 13 | 32))
+        .collect();
+    let mut h = 1u32 ^ (filtered.len() as u32);
+    let (chunks, remainder) = filtered.as_chunks::<4>();
+    for chunk in chunks {
+        let mut k = u32::from_le_bytes(*chunk);
+        k = k.wrapping_mul(M);
+        k ^= k >> R;
+        k = k.wrapping_mul(M);
+        h = h.wrapping_mul(M);
+        h ^= k;
+    }
+    match remainder {
+        [a, b, c] => {
+            h ^= (*c as u32) << 16;
+            h ^= (*b as u32) << 8;
+            h ^= *a as u32;
+            h = h.wrapping_mul(M);
+        }
+        [a, b] => {
+            h ^= (*b as u32) << 8;
+            h ^= *a as u32;
+            h = h.wrapping_mul(M);
+        }
+        [a] => {
+            h ^= *a as u32;
+            h = h.wrapping_mul(M);
+        }
+        _ => {}
+    }
+    h ^= h >> 13;
+    h = h.wrapping_mul(M);
+    h ^= h >> 15;
+    h
+}
+
 fn render_cf_mod(world: &MockWorld, mod_id: u32) -> Option<Value> {
     let (name, slug, summary, class_id, file_id) = match mod_id {
         238222 => (
@@ -601,6 +856,13 @@ fn render_cf_mod(world: &MockWorld, mod_id: u32) -> Option<Value> {
             "Synthetic CurseForge modpack for MQ tests",
             4471,
             5004,
+        ),
+        900002 => (
+            "MQ Manual Download Mod",
+            "mq-manual-mod",
+            "Synthetic CurseForge mod with author-blocked automatic distribution",
+            6,
+            5005,
         ),
         _ => return None,
     };
@@ -651,12 +913,13 @@ fn render_cf_mod(world: &MockWorld, mod_id: u32) -> Option<Value> {
 }
 
 fn render_cf_file_for_mod(world: &MockWorld, mod_id: u32) -> Option<Value> {
-    let (file_id, file_name, meta, deps) = match mod_id {
+    let (file_id, file_name, meta, deps, blocked) = match mod_id {
         238222 => (
             5001u32,
             "jei-1.21.1-19.8.0.jar",
             world.catalog.jei,
             json!([]),
+            false,
         ),
         394468 => (
             5002u32,
@@ -664,12 +927,14 @@ fn render_cf_file_for_mod(world: &MockWorld, mod_id: u32) -> Option<Value> {
             world.catalog.sodium,
             // relationType 3 = RequiredDependency in CurseForge API v1.
             json!([{ "modId": 306612, "relationType": 3 }]),
+            false,
         ),
         306612 => (
             5003u32,
             "fabric-api-0.102.0.jar",
             world.catalog.fabric_api,
             json!([]),
+            false,
         ),
         900001 => (
             5004u32,
@@ -679,6 +944,14 @@ fn render_cf_file_for_mod(world: &MockWorld, mod_id: u32) -> Option<Value> {
                 { "modId": 394468, "relationType": 3 },
                 { "modId": 306612, "relationType": 3 }
             ]),
+            false,
+        ),
+        900002 => (
+            5005u32,
+            "mq-manual-1.0.0.jar",
+            world.catalog.lithium,
+            json!([]),
+            true,
         ),
         _ => return None,
     };
@@ -707,7 +980,7 @@ fn render_cf_file_for_mod(world: &MockWorld, mod_id: u32) -> Option<Value> {
         "fileDate": "2024-09-01T00:00:00Z",
         "fileLength": meta.size,
         "downloadCount": 500_000,
-        "downloadUrl": download_url,
+        "downloadUrl": if blocked { Value::Null } else { Value::String(download_url) },
         "gameVersions": ["1.21.1", "1.20.4", "Fabric"],
         "dependencies": deps
     }))

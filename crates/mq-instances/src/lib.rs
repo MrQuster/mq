@@ -16,7 +16,8 @@ pub use manifest::{
     INSTANCE_SUBDIRS, RESOLVED_VERSION_FILE,
 };
 pub use package::{
-    export_instance_to_zip, import_instance_from_zip, list_screenshots, ScreenshotInfo,
+    export_instance_to_zip, import_instance_archive_detailed, import_instance_from_zip,
+    list_screenshots, ImportedArchiveFormat, ImportedInstanceOutcome, ScreenshotInfo,
 };
 pub use servers::{load_servers_dat, ping_server, save_servers_dat, ServerEntry, ServerPingResult};
 pub use worlds::{

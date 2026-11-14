@@ -88,6 +88,7 @@ pub(crate) struct LibraryMeta {
 #[derive(Debug, Clone)]
 pub(crate) struct CatalogArtifacts {
     pub sodium: BlobDualHashMeta,
+    pub sodium_old: BlobDualHashMeta,
     pub fabric_api: BlobDualHashMeta,
     pub lithium: BlobDualHashMeta,
     pub jei: BlobDualHashMeta,
@@ -209,6 +210,7 @@ impl MockWorld {
 
         // 5. Precompute catalog & authlib-injector compact metadata.
         let sodium = dual_hash_meta(&build_synthetic_mod_jar(&sodium_spec()));
+        let sodium_old = dual_hash_meta(&build_synthetic_mod_jar(&sodium_old_spec()));
         let fabric_api = dual_hash_meta(&build_synthetic_mod_jar(&fabric_api_spec()));
         let lithium = dual_hash_meta(&build_synthetic_mod_jar(&lithium_spec()));
         let jei = dual_hash_meta(&build_synthetic_mod_jar(&jei_spec()));
@@ -220,6 +222,7 @@ impl MockWorld {
 
         let catalog = CatalogArtifacts {
             sodium,
+            sodium_old,
             fabric_api,
             lithium,
             jei,
@@ -853,6 +856,12 @@ impl MockWorld {
                 "application/java-archive",
             ));
         }
+        if rel == "catalog/sodium-0.5.0.jar" {
+            return Some((
+                Bytes::from(build_synthetic_mod_jar(&sodium_old_spec())),
+                "application/java-archive",
+            ));
+        }
         if rel == "catalog/fabric-api-0.102.0.jar"
             || rel == "curseforge/306612/5003/fabric-api-0.102.0.jar"
         {
@@ -1017,6 +1026,23 @@ pub(crate) fn sodium_spec() -> SyntheticModSpec {
         format: ModMetadataFormat::Fabric,
         seed_index: 50_001,
         class_payload_size: 24 * 1024,
+    }
+}
+
+/// Previous Sodium release used to exercise `mq mods update` end to end.
+pub(crate) fn sodium_old_spec() -> SyntheticModSpec {
+    SyntheticModSpec {
+        id: "sodium".to_string(),
+        name: "Sodium".to_string(),
+        version: "0.5.0+mc1.21.1".to_string(),
+        authors: vec!["JellySquid".to_string()],
+        depends: vec![
+            ("minecraft".to_string(), "1.21.1".to_string()),
+            ("fabricloader".to_string(), ">=0.16.0".to_string()),
+        ],
+        format: ModMetadataFormat::Fabric,
+        seed_index: 50_005,
+        class_payload_size: 20 * 1024,
     }
 }
 

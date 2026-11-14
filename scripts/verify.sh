@@ -41,8 +41,25 @@ run_check "cargo clippy --workspace --all-targets --locked -- -D warnings" "carg
 # 3. Workspace test suite
 run_check "cargo test --workspace --locked" "cargo test --workspace --locked" "3"
 
-# 4. Forbidden stubs check (todo!() / unimplemented!())
-run_check "No todo!() or unimplemented!() in crates/" "! rg -n '\b(todo!|unimplemented!)\(' crates/" "4"
+# 4. Forbidden stubs and placeholder markers
+run_check "No todo!/unimplemented!/TODO/FIXME/Coming soon in crates/" "! rg -n '\b(todo!|unimplemented!)\(|\bTODO\b|\bFIXME\b|Coming soon' crates/" "4"
+
+# 5. The real CurseForge key must never be committed. Read it from the local
+#    0600 env file (or environment) so the secret itself is not stored here.
+CF_KEY=""
+if [ -f "${HOME}/.config/mq/dev.env" ]; then
+    CF_KEY="$(bash -c 'set -a; . "$1" >/dev/null 2>&1; printf %s "${MQ_CURSEFORGE_API_KEY:-${MQ_CF_API_KEY:-}}"' _ "${HOME}/.config/mq/dev.env")"
+fi
+if [ -z "${CF_KEY}" ]; then
+    CF_KEY="${MQ_CURSEFORGE_API_KEY:-${MQ_CF_API_KEY:-}}"
+fi
+if [ -z "${CF_KEY}" ]; then
+    run_check "CurseForge key not committed (key unavailable, checked patterns only)" "! rg -n 'x-api-key[[:space:]]*[:=][[:space:]]*[A-Za-z0-9]{8,}' crates/ docs/ README* CHANGELOG.md" "5"
+else
+    CF_KEY_FILE="${TMP_DIR}/cf_key"
+    (umask 077; printf '%s' "${CF_KEY}" > "${CF_KEY_FILE}")
+    run_check "CurseForge key not committed (working tree)" "! rg -nF -f '${CF_KEY_FILE}' crates/ docs/ README* CHANGELOG.md testsupport/ scripts/" "5"
+fi
 
 # Print Table
 echo ""

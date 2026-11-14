@@ -16,10 +16,13 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::catalog::{
-    curseforge_mod_by_id, curseforge_mod_file_by_id, curseforge_mod_file_download_url,
-    curseforge_mod_files, curseforge_search, modrinth_project, modrinth_project_versions,
-    modrinth_projects_batch, modrinth_search, modrinth_version_by_id, modrinth_versions_batch,
-    CurseForgeSearchQuery, ModrinthBatchIdsQuery, ModrinthSearchQuery,
+    curseforge_files_batch, curseforge_fingerprints, curseforge_mod_by_id,
+    curseforge_mod_file_by_id, curseforge_mod_file_download_url, curseforge_mod_files,
+    curseforge_mods_batch, curseforge_search, modrinth_project, modrinth_project_versions,
+    modrinth_projects_batch, modrinth_search, modrinth_version_by_id, modrinth_version_files,
+    modrinth_version_files_update, modrinth_versions_batch, CurseForgeBatchFilesRequest,
+    CurseForgeBatchModsRequest, CurseForgeFingerprintsRequest, CurseForgeSearchQuery,
+    ModrinthBatchIdsQuery, ModrinthHashRequest, ModrinthSearchQuery,
 };
 use crate::ely::{
     serve_authlib_latest_json, serve_ely_yggdrasil_meta, serve_skin_png, AuthenticateRequest,
@@ -326,6 +329,14 @@ fn build_router(state: Arc<ServerState>) -> Router {
         .route("/modrinth/v2/projects", get(handle_modrinth_projects_batch))
         .route("/modrinth/v2/versions", get(handle_modrinth_versions_batch))
         .route(
+            "/modrinth/v2/version_files",
+            post(handle_modrinth_version_files),
+        )
+        .route(
+            "/modrinth/v2/version_files/update",
+            post(handle_modrinth_version_files_update),
+        )
+        .route(
             "/modrinth/v2/project/{id_or_slug}",
             get(handle_modrinth_project),
         )
@@ -340,6 +351,11 @@ fn build_router(state: Arc<ServerState>) -> Router {
         .route("/v2/search", get(handle_modrinth_search))
         .route("/v2/projects", get(handle_modrinth_projects_batch))
         .route("/v2/versions", get(handle_modrinth_versions_batch))
+        .route("/v2/version_files", post(handle_modrinth_version_files))
+        .route(
+            "/v2/version_files/update",
+            post(handle_modrinth_version_files_update),
+        )
         .route("/v2/project/{id_or_slug}", get(handle_modrinth_project))
         .route(
             "/v2/project/{id_or_slug}/version",
@@ -351,6 +367,12 @@ fn build_router(state: Arc<ServerState>) -> Router {
         )
         // CurseForge API v1 endpoints (+ root aliases)
         .route("/curseforge/v1/mods/search", get(handle_cf_search))
+        .route("/curseforge/v1/mods", post(handle_cf_mods_batch))
+        .route("/curseforge/v1/mods/files", post(handle_cf_files_batch))
+        .route(
+            "/curseforge/v1/fingerprints/432",
+            post(handle_cf_fingerprints),
+        )
         .route("/curseforge/v1/mods/{mod_id}", get(handle_cf_mod_by_id))
         .route(
             "/curseforge/v1/mods/{mod_id}/files",
@@ -365,6 +387,9 @@ fn build_router(state: Arc<ServerState>) -> Router {
             get(handle_cf_mod_file_download_url),
         )
         .route("/v1/mods/search", get(handle_cf_search))
+        .route("/v1/mods", post(handle_cf_mods_batch))
+        .route("/v1/mods/files", post(handle_cf_files_batch))
+        .route("/v1/fingerprints/432", post(handle_cf_fingerprints))
         .route("/v1/mods/{mod_id}", get(handle_cf_mod_by_id))
         .route("/v1/mods/{mod_id}/files", get(handle_cf_mod_files))
         .route(
@@ -391,6 +416,9 @@ fn build_router(state: Arc<ServerState>) -> Router {
             get(handle_authlib_latest),
         )
         .route("/artifact/latest.json", get(handle_authlib_latest))
+        // Malformed-JSON fixtures for graceful-degradation tests
+        .route("/broken/v2/search", get(handle_broken_json))
+        .route("/broken/v1/mods/search", get(handle_broken_json))
         // Binary download routes with HTTP Range (`206 Partial Content`) support
         .route("/download/{*rel_path}", get(handle_download))
         .layer(middleware::from_fn_with_state(
@@ -557,6 +585,20 @@ async fn handle_modrinth_versions_batch(
     modrinth_versions_batch(&state.world, &query)
 }
 
+async fn handle_modrinth_version_files(
+    State(state): State<Arc<ServerState>>,
+    Json(req): Json<ModrinthHashRequest>,
+) -> Response {
+    modrinth_version_files(&state.world, &req)
+}
+
+async fn handle_modrinth_version_files_update(
+    State(state): State<Arc<ServerState>>,
+    Json(req): Json<ModrinthHashRequest>,
+) -> Response {
+    modrinth_version_files_update(&state.world, &req)
+}
+
 async fn handle_modrinth_project(
     State(state): State<Arc<ServerState>>,
     Path(id_or_slug): Path<String>,
@@ -616,6 +658,39 @@ async fn handle_cf_mod_file_download_url(
     Path((mod_id, file_id)): Path<(u32, u32)>,
 ) -> Response {
     curseforge_mod_file_download_url(&state.world, &headers, mod_id, file_id)
+}
+
+async fn handle_cf_mods_batch(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(req): Json<CurseForgeBatchModsRequest>,
+) -> Response {
+    curseforge_mods_batch(&state.world, &headers, &req)
+}
+
+async fn handle_cf_files_batch(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(req): Json<CurseForgeBatchFilesRequest>,
+) -> Response {
+    curseforge_files_batch(&state.world, &headers, &req)
+}
+
+async fn handle_cf_fingerprints(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Json(req): Json<CurseForgeFingerprintsRequest>,
+) -> Response {
+    curseforge_fingerprints(&state.world, &headers, &req)
+}
+
+async fn handle_broken_json() -> Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        "{ this is not valid JSON",
+    )
+        .into_response()
 }
 
 async fn handle_ely_authenticate(

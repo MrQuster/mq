@@ -44,13 +44,23 @@ The launcher contains zero telemetry, analytics, or background user tracking.
 |---|---|
 | **Platforms** | Linux (Wayland and X11, x86_64), Windows 10/11 x64, portable mode via `portable.flag`. |
 | **Mod Loaders** | Vanilla, Fabric, Quilt, Forge, NeoForge. In-place mod loader switching on existing instances. |
-| **Catalogs & Modpacks** | Integrated search and installation via Modrinth API v2 and CurseForge API v1. Import and export for `.mrpack` and CurseForge `.zip`. Built-in Zip-Slip protection during archive extraction. |
+| **Catalogs & Modpacks** | Unified Modrinth API v2 and CurseForge API v1 catalog: mods, resource packs, shaders, and modpacks. Dependency resolution, one-click updates with rollback, and `.mrpack` / CurseForge `.zip` / MultiMC/Prism import with Zip-Slip protection. Each user provides their own CurseForge API key (Modrinth works without a key). |
 | **Authentication** | Offline mode (deterministic UUID v3 `OfflinePlayer:<nickname>` per RFC 4122), Ely.by (browser-only OAuth2 + PKCE S256 with automated `authlib-injector` injection), Microsoft (Device Code Flow in external browser). |
 | **Java Management** | Automatic discovery of system OpenJDK installations, one-click automated download of Adoptium Temurin (Java 8, 17, 21), and manual Java binary path configuration. |
 | **CAS Storage** | Content-addressable storage for shared libraries and assets with hard link deduplication to minimize disk usage. |
 | **Graphics & Shaders** | Resource pack and shader pack management, GPU detection, automated configuration of `iris.properties` and `oculus.properties`. |
 | **User Interface** | Built with `egui` / `eframe` in a solid matte theme without window transparency (Opaque Window), clean vector Painter icons, and zero emojis. |
-| **CLI Tooling** | Command-line interface for automation and scripting: `mq launch`, `mq install`, `mq doctor`, `mq accounts`, `mq mods`, `mq self-update`. |
+| **CLI Tooling** | Command-line interface for automation and scripting: `mq launch`, `mq install`, `mq search`, `mq import`, `mq doctor`, `mq accounts`, `mq mods`, `mq self-update`. |
+
+---
+
+## Modrinth & CurseForge Catalog
+
+* **Four content types:** mods, resource packs, shaders, and modpacks with Minecraft version, mod loader, category, and sort filters.
+* **Dependencies & updates:** automatic resolution of required and optional dependencies, source-aware lockfile (`mods/.mq-lock.json`), and one-click updates with automatic `.bak` rollback.
+* **Local import:** supports `.mrpack`, CurseForge `.zip`, and MultiMC/Prism archives (via **Import**, window drag-and-drop, or `mq import <file>`). Pre/post-launch commands in imported archives are ignored, and extraction enforces Zip-Slip, symlink, and zip-bomb protections.
+* **CurseForge API key policy:** no shared key is embedded in release builds. Modrinth works out of the box without a key; for CurseForge, each user enters their own personal key in **Settings → Catalog** (or sets `MQ_CURSEFORGE_API_KEY`).
+* **Author-restricted downloads:** if a CurseForge author disables third-party distribution (`downloadUrl == null`), MQ never bypasses the restriction — instead, it opens the official download page and watches your Downloads folder to pick up the file automatically.
 
 ---
 

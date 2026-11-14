@@ -37,9 +37,11 @@ use mq_launch::{
     sync_minecraft_options_lang, LaunchContext,
 };
 use mq_mods::{
-    delete_mod, install_curseforge_zip, install_mrpack, resolve_mod_with_dependencies,
-    scan_mods_directory, toggle_mod, CatalogHit, CurseForgeClient, InstalledModEntry, ModConflict,
-    ModrinthClient, ProjectKind, SearchQuery,
+    delete_mod, install_curseforge_zip, install_mrpack, resolve_dependency_plan,
+    resolve_mod_with_dependencies, scan_mods_directory, toggle_mod, CatalogHit, CatalogSource,
+    CatalogSourceFilter, ContentProvider, CurseForgeClient, DependencyResolutionPlan,
+    InstalledModEntry, LockSource, ModConflict, ModrinthClient, ProjectKind, ProjectVersion,
+    ResolveOptions, ResolvedModDownload, SearchQuery,
 };
 use mq_net::{DownloadSpec, NetConfig, NetEngine};
 use mq_sched::{
@@ -92,8 +94,14 @@ enum Commands {
     /// Launch the game or inspect launch arguments without starting the process.
     Launch(LaunchArgs),
 
-    /// Install Minecraft version and loader into an instance.
+    /// Install Minecraft version and loader, or catalog content via `modrinth:<slug>`.
     Install(InstallArgs),
+
+    /// Search Modrinth and CurseForge catalogs (mods, resource packs, shaders, modpacks).
+    Search(SearchArgs),
+
+    /// Import a `.mrpack`, CurseForge `.zip`, MultiMC/Prism `.zip`, or MQ instance archive.
+    Import(ImportArgs),
 
     /// Worker process for isolated instance installation with JSON progress output.
     #[command(name = "install-worker")]
@@ -174,7 +182,7 @@ struct LaunchArgs {
 
 #[derive(Args, Debug)]
 struct InstallArgs {
-    /// Minecraft Java Edition version (e.g. "1.21.1", "1.20.1", "1.16.5").
+    /// Minecraft version (e.g. "1.21.1") or catalog spec (`modrinth:sodium`, `curseforge:238222`).
     version: String,
 
     /// Mod loader kind (vanilla, fabric, quilt, forge, neoforge).
@@ -186,6 +194,63 @@ struct InstallArgs {
     loader_version: Option<String>,
 
     /// Custom instance name (defaults to "<version> <loader>").
+    #[arg(long)]
+    name: Option<String>,
+
+    /// Target instance for catalog content (defaults to the only instance when unambiguous).
+    #[arg(long)]
+    instance: Option<String>,
+
+    /// Catalog source for content installs (`modrinth` or `curseforge`).
+    #[arg(long)]
+    source: Option<String>,
+
+    /// Catalog content type: mod, resourcepack, shader, or modpack.
+    #[arg(long = "type", default_value = "mod")]
+    content_type: String,
+
+    /// Minecraft version filter for catalog content (defaults to the instance version).
+    #[arg(long)]
+    mc: Option<String>,
+
+    /// Explicit catalog version/file ID for content installs.
+    #[arg(long = "project-version")]
+    project_version: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct SearchArgs {
+    /// Search query (empty lists the most popular projects).
+    #[arg(default_value = "")]
+    query: String,
+
+    /// Content type: mod, resourcepack, shader, or modpack.
+    #[arg(long = "type", default_value = "mod")]
+    content_type: String,
+
+    /// Catalog source: modrinth, curseforge, or all.
+    #[arg(long, default_value = "all")]
+    source: String,
+
+    /// Minecraft version filter (e.g. 1.21.1 or 26.1).
+    #[arg(long)]
+    mc: Option<String>,
+
+    /// Mod loader filter (fabric, quilt, forge, neoforge).
+    #[arg(long)]
+    loader: Option<String>,
+
+    /// Maximum number of results (1-50).
+    #[arg(long, default_value_t = 10)]
+    limit: u32,
+}
+
+#[derive(Args, Debug)]
+struct ImportArgs {
+    /// Path to `.mrpack`, CurseForge `.zip`, MultiMC/Prism `.zip`, or MQ instance archive.
+    file: PathBuf,
+
+    /// Optional custom instance name.
     #[arg(long)]
     name: Option<String>,
 }
@@ -308,7 +373,8 @@ enum ModsSubcommand {
 
     /// Check and apply updates for installed mods via Modrinth.
     Update {
-        instance: String,
+        /// Instance name (optional when exactly one instance exists).
+        instance: Option<String>,
         /// Update all outdated mods automatically.
         #[arg(long)]
         all: bool,
@@ -471,7 +537,7 @@ struct ModpackArgs {
 
 #[derive(Subcommand, Debug)]
 enum ModpackSubcommand {
-    /// Install a .mrpack or CurseForge .zip modpack into an instance.
+    /// Install a .mrpack / CurseForge .zip, or a catalog modpack (`modrinth:<slug>`).
     Install {
         /// File path or catalog slug.
         path_or_slug: String,
@@ -483,6 +549,18 @@ enum ModpackSubcommand {
         /// Name for the new instance.
         #[arg(long)]
         name: Option<String>,
+
+        /// Minecraft version filter for catalog modpacks.
+        #[arg(long)]
+        mc: Option<String>,
+
+        /// Mod loader filter for catalog modpacks.
+        #[arg(long)]
+        loader: Option<String>,
+
+        /// Explicit catalog version/file ID.
+        #[arg(long)]
+        version: Option<String>,
     },
 }
 
@@ -564,6 +642,8 @@ async fn main() -> Result<()> {
         None => run_desktop_gui(cli.backend, cli.threads, paths),
         Some(Commands::Launch(args)) => cmd_launch(args, paths).await,
         Some(Commands::Install(args)) => cmd_install(args, paths, cli.threads).await,
+        Some(Commands::Search(args)) => cmd_search(args, paths).await,
+        Some(Commands::Import(args)) => cmd_import(args, paths).await,
         Some(Commands::InstallWorker(args)) => cmd_install_worker(args, paths, cli.threads).await,
         Some(Commands::Verify(args)) => cmd_verify(args, paths, cli.threads).await,
         Some(Commands::Plan(args)) => cmd_plan(args, paths).await,
@@ -817,6 +897,9 @@ async fn cmd_launch(args: LaunchArgs, paths: MqPaths) -> Result<()> {
 }
 
 async fn cmd_install(args: InstallArgs, paths: MqPaths, threads: Option<usize>) -> Result<()> {
+    if let Some((source, project)) = parse_catalog_spec(&args.version, args.source.as_deref())? {
+        return cmd_catalog_install(args, source, project, paths, threads).await;
+    }
     let loader = match args.loader.to_lowercase().as_str() {
         "fabric" => ModLoaderKind::Fabric,
         "quilt" => ModLoaderKind::Quilt,
@@ -888,6 +971,357 @@ async fn cmd_install(args: InstallArgs, paths: MqPaths, threads: Option<usize>) 
         summary.bytes_downloaded as f64 / (1024.0 * 1024.0)
     );
     println!("--------------------------------------------------------------------------------");
+    Ok(())
+}
+
+/// Parses `modrinth:<slug>` / `curseforge:<id>` and the `--source` fallback.
+fn parse_catalog_spec(
+    spec: &str,
+    source_flag: Option<&str>,
+) -> Result<Option<(CatalogSource, String)>> {
+    let trimmed = spec.trim();
+    if let Some(flag) = source_flag.map(str::trim).filter(|s| !s.is_empty()) {
+        if !flag.eq_ignore_ascii_case("file") {
+            let source = flag.parse::<CatalogSource>()?;
+            let project = trimmed
+                .split_once(':')
+                .map(|(_, rest)| rest)
+                .unwrap_or(trimmed)
+                .trim()
+                .to_owned();
+            if project.is_empty() {
+                bail!("Не указан slug или ID проекта каталога");
+            }
+            return Ok(Some((source, project)));
+        }
+    }
+    let Some((prefix, rest)) = trimmed.split_once(':') else {
+        return Ok(None);
+    };
+    if rest.trim().is_empty() {
+        return Ok(None);
+    }
+    match prefix.trim().to_ascii_lowercase().as_str() {
+        "modrinth" | "mr" => Ok(Some((CatalogSource::Modrinth, rest.trim().to_owned()))),
+        "curseforge" | "cf" => Ok(Some((CatalogSource::CurseForge, rest.trim().to_owned()))),
+        _ => Ok(None),
+    }
+}
+
+fn parse_content_kind(raw: &str) -> Result<ProjectKind> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "mod" | "mods" => Ok(ProjectKind::Mod),
+        "resourcepack" | "resource-pack" | "resourcepacks" | "resource_pack" => {
+            Ok(ProjectKind::ResourcePack)
+        }
+        "shader" | "shaders" | "shaderpack" | "shaderpacks" => Ok(ProjectKind::Shader),
+        "modpack" | "modpacks" | "pack" => Ok(ProjectKind::Modpack),
+        other => bail!(
+            "Неизвестный тип контента '{other}'. Доступные: mod, resourcepack, shader, modpack"
+        ),
+    }
+}
+
+fn parse_source_filter(raw: &str) -> Result<CatalogSourceFilter> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "all" | "все" => Ok(CatalogSourceFilter::All),
+        "modrinth" | "mr" => Ok(CatalogSourceFilter::Modrinth),
+        "curseforge" | "cf" => Ok(CatalogSourceFilter::CurseForge),
+        other => bail!("Неизвестный источник '{other}'. Доступные: modrinth, curseforge, all"),
+    }
+}
+
+fn parse_loader_filter(raw: &str) -> Option<ModLoaderKind> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "fabric" => Some(ModLoaderKind::Fabric),
+        "quilt" => Some(ModLoaderKind::Quilt),
+        "forge" => Some(ModLoaderKind::Forge),
+        "neoforge" => Some(ModLoaderKind::NeoForge),
+        _ => None,
+    }
+}
+
+/// Resolves the target instance for a catalog install. Without `--instance` the only
+/// configured instance is used, which keeps the CLI convenient for single-instance setups.
+fn resolve_catalog_instance(
+    paths: &MqPaths,
+    requested: Option<&str>,
+) -> Result<(InstanceManifest, String, ModLoaderKind)> {
+    let mgr = InstanceManager::new(paths.clone());
+    let instances = mgr.list_instances()?;
+    let inst = match requested {
+        Some(name) => mgr
+            .load_instance(name)
+            .with_context(|| format!("Инстанс '{name}' не найден"))?,
+        None => match instances.as_slice() {
+            [only] => only.clone(),
+            [] => bail!("Нет инстансов. Создайте инстанс: mq install <версия>"),
+            _ => {
+                let names = instances
+                    .iter()
+                    .map(|i| i.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                bail!("Укажите инстанс через --instance. Доступные: {names}");
+            }
+        },
+    };
+    let mc = inst.mc_version.clone();
+    let loader = inst.loader;
+    Ok((inst, mc, loader))
+}
+
+async fn search_provider(
+    config: &AppConfig,
+    source: CatalogSource,
+    query: &SearchQuery,
+) -> Result<Vec<CatalogHit>> {
+    match source {
+        CatalogSource::Modrinth => Ok(ModrinthClient::from_config(config)?.search(query).await?),
+        CatalogSource::CurseForge => {
+            Ok(CurseForgeClient::from_config(config)?.search(query).await?)
+        }
+    }
+}
+
+async fn resolve_plan_for(
+    config: &AppConfig,
+    source: CatalogSource,
+    project: &str,
+    mc_version: &str,
+    loader: ModLoaderKind,
+    kind: ProjectKind,
+    version_id: Option<&str>,
+) -> Result<DependencyResolutionPlan> {
+    let opts = ResolveOptions::new().with_kind(kind);
+    let mut plan = match source {
+        CatalogSource::Modrinth => {
+            let client = ModrinthClient::from_config(config)?;
+            resolve_dependency_plan(&client, project, mc_version, loader, &opts).await?
+        }
+        CatalogSource::CurseForge => {
+            let client = CurseForgeClient::from_config(config)?;
+            resolve_dependency_plan(&client, project, mc_version, loader, &opts).await?
+        }
+    };
+    if let Some(version_id) = version_id.map(str::trim).filter(|s| !s.is_empty()) {
+        let chosen = match source {
+            CatalogSource::Modrinth => {
+                let client = ModrinthClient::from_config(config)?;
+                client.get_version(version_id).await?
+            }
+            CatalogSource::CurseForge => {
+                let client = CurseForgeClient::from_config(config)?;
+                let file_id = version_id
+                    .parse::<u64>()
+                    .with_context(|| format!("Некорректный ID файла CurseForge: {version_id}"))?;
+                let mod_id = project
+                    .parse::<u64>()
+                    .with_context(|| format!("Некорректный ID проекта CurseForge: {project}"))?;
+                client.get_mod_file(mod_id, file_id).await?
+            }
+        };
+        if let Some(file) = chosen.primary_file() {
+            let root = ResolvedModDownload {
+                project_id: chosen.project_id.clone(),
+                version_id: chosen.id.clone(),
+                filename: file.filename.clone(),
+                url: file.download_url().unwrap_or("").to_owned(),
+                size: file.size,
+                sha1: file.sha1,
+                sha512: file.sha512,
+                is_dependency: false,
+            };
+            if let Some(existing) = plan
+                .downloads
+                .iter_mut()
+                .rev()
+                .find(|d| d.project_id == chosen.project_id || d.project_id == project)
+            {
+                *existing = root;
+            } else {
+                plan.downloads.push(root);
+            }
+        }
+    }
+    Ok(plan)
+}
+
+async fn cmd_catalog_install(
+    args: InstallArgs,
+    source: CatalogSource,
+    project: String,
+    paths: MqPaths,
+    threads: Option<usize>,
+) -> Result<()> {
+    let kind = parse_content_kind(&args.content_type)?;
+    if kind == ProjectKind::Modpack {
+        bail!("Для сборок используйте: mq modpack install {source}:{project}");
+    }
+    let (inst, default_mc, default_loader) =
+        resolve_catalog_instance(&paths, args.instance.as_deref())?;
+    let mc_version = args.mc.clone().unwrap_or(default_mc);
+    let loader = parse_loader_filter(&args.loader).unwrap_or(default_loader);
+    let config = AppConfig::load_or_default(&paths)?;
+
+    println!(
+        "[MQ] Поиск '{}' в {} (MC {}, загрузчик {:?})...",
+        project, source, mc_version, loader
+    );
+    let plan = resolve_plan_for(
+        &config,
+        source,
+        &project,
+        &mc_version,
+        loader,
+        kind,
+        args.project_version.as_deref(),
+    )
+    .await?;
+
+    let downloadable: Vec<ResolvedModDownload> = plan
+        .downloads
+        .iter()
+        .filter(|d| !d.is_download_blocked())
+        .cloned()
+        .collect();
+    if !plan.optional_dependencies.is_empty() {
+        println!("Необязательные зависимости (не выбраны):");
+        for opt in &plan.optional_dependencies {
+            println!(
+                "  - {} (требуется проектом {})",
+                opt.project_id.as_deref().unwrap_or("?"),
+                opt.required_by_project_id
+            );
+        }
+    }
+    if !plan.blocked_downloads.is_empty() {
+        println!(
+            "Файлов, требующих ручной загрузки: {}",
+            plan.blocked_downloads.len()
+        );
+        for b in &plan.blocked_downloads {
+            println!("  - {} -> {}", b.filename, b.webpage_url);
+        }
+    }
+    if downloadable.is_empty() {
+        bail!("Нет доступных для автоматической загрузки файлов");
+    }
+
+    let num_t = threads.unwrap_or_else(default_cpu_threads);
+    let pool = Arc::new(ComputePool::new(num_t));
+    let cancel = Arc::new(CancelEpoch::new());
+    let bus = EventBus::new();
+    let net = Arc::new(NetEngine::with_components(
+        NetConfig::default(),
+        Arc::new(BufferPool::new()),
+        cancel.clone(),
+        Some(bus),
+    )?);
+    let _ = pool;
+    let source_lock = match source {
+        CatalogSource::Modrinth => LockSource::Modrinth,
+        CatalogSource::CurseForge => LockSource::CurseForge,
+    };
+    let installed = mq_mods::install_resolved_content(
+        &downloadable,
+        &paths.instance_dir(inst.id.as_str()),
+        kind,
+        source_lock,
+        &paths,
+        &net,
+        &cancel.snapshot(),
+    )
+    .await?;
+    println!(
+        "[MQ] Установлено файлов: {} в инстанс '{}'",
+        installed.len(),
+        inst.name
+    );
+    for path in &installed {
+        println!("  + {}", path.display());
+    }
+    Ok(())
+}
+
+async fn cmd_search(args: SearchArgs, paths: MqPaths) -> Result<()> {
+    let kind = parse_content_kind(&args.content_type)?;
+    let filter = parse_source_filter(&args.source)?;
+    let config = AppConfig::load_or_default(&paths)?;
+    let limit = args.limit.clamp(1, 50);
+    let mut query = SearchQuery::new(&args.query)
+        .with_project_kind(kind)
+        .with_limit(limit);
+    if let Some(mc) = args.mc.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        query = query.with_mc_version(mc);
+    }
+    if let Some(loader) = args.loader.as_deref().and_then(parse_loader_filter) {
+        query = query.with_loader(loader);
+    }
+
+    let mut hits = Vec::new();
+    if matches!(
+        filter,
+        CatalogSourceFilter::All | CatalogSourceFilter::Modrinth
+    ) {
+        match search_provider(&config, CatalogSource::Modrinth, &query).await {
+            Ok(mut h) => hits.append(&mut h),
+            Err(e) if filter == CatalogSourceFilter::All => {
+                eprintln!("[MQ] Modrinth недоступен: {e}");
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    if matches!(
+        filter,
+        CatalogSourceFilter::All | CatalogSourceFilter::CurseForge
+    ) {
+        match search_provider(&config, CatalogSource::CurseForge, &query).await {
+            Ok(mut h) => hits.append(&mut h),
+            Err(e) if filter == CatalogSourceFilter::All => {
+                eprintln!("[MQ] CurseForge недоступен (нужен личный ключ): {e}");
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    hits.sort_by_key(|a| std::cmp::Reverse(a.downloads));
+    hits.truncate(limit as usize);
+    if hits.is_empty() {
+        println!("[MQ] Ничего не найдено.");
+        return Ok(());
+    }
+    println!("--------------------------------------------------------------------------------");
+    for hit in hits {
+        println!(
+            "* {} [{}] ({}) — загрузок: {}",
+            hit.title, hit.source, hit.slug, hit.downloads
+        );
+        println!("  ID: {} | Автор: {}", hit.project_id, hit.author);
+        println!("  {}", hit.description);
+    }
+    println!("--------------------------------------------------------------------------------");
+    println!("Установка: mq install <source>:<slug> --instance <имя>");
+    Ok(())
+}
+
+async fn cmd_import(args: ImportArgs, paths: MqPaths) -> Result<()> {
+    let outcome = mq_instances::import_instance_archive_detailed(
+        &args.file,
+        &paths.instances_dir(),
+        args.name.as_deref(),
+    )?;
+    println!(
+        "[MQ] Импортирован инстанс '{}' (ID: {}, формат: {:?})",
+        outcome.manifest.name,
+        outcome.manifest.id.as_str(),
+        outcome.format
+    );
+    if !outcome.ignored_dangerous_hooks.is_empty() {
+        println!(
+            "[MQ] Внимание: опасные hook-команды проигнорированы: {}",
+            outcome.ignored_dangerous_hooks.join(", ")
+        );
+    }
     Ok(())
 }
 
@@ -1438,8 +1872,7 @@ async fn cmd_mods(args: ModsArgs, paths: MqPaths, threads: Option<usize>) -> Res
             .await;
         }
         ModsSubcommand::Update { instance, all } => {
-            let mgr = InstanceManager::new(paths.clone());
-            let inst = mgr.load_instance(&instance)?;
+            let (inst, _, _) = resolve_catalog_instance(&paths, instance.as_deref())?;
             let mods_dir = paths.instance_dir(inst.id.as_str()).join("mods");
             if !mods_dir.exists() {
                 println!("Папка mods/ отсутствует в инстансе '{}'.", inst.name);
@@ -1468,7 +1901,8 @@ async fn cmd_mods(args: ModsArgs, paths: MqPaths, threads: Option<usize>) -> Res
                 return Ok(());
             }
 
-            let client = ModrinthClient::new()?;
+            let config = AppConfig::load_or_default(&paths)?;
+            let client = ModrinthClient::from_config(&config)?;
             let updates = client
                 .check_version_updates(&jar_hashes, inst.loader, &inst.mc_version)
                 .await?;
@@ -1527,6 +1961,67 @@ async fn cmd_mods(args: ModsArgs, paths: MqPaths, threads: Option<usize>) -> Res
     Ok(())
 }
 
+/// Downloads a catalog modpack archive (`.mrpack` / CurseForge `.zip`) into the temp dir.
+async fn download_catalog_modpack(
+    config: &AppConfig,
+    source: CatalogSource,
+    project: &str,
+    mc: Option<&str>,
+    loader: Option<ModLoaderKind>,
+    version_id: Option<&str>,
+    paths: &MqPaths,
+) -> Result<PathBuf> {
+    let versions: Vec<ProjectVersion> = match source {
+        CatalogSource::Modrinth => {
+            ModrinthClient::from_config(config)?
+                .get_versions(project, mc, loader)
+                .await?
+        }
+        CatalogSource::CurseForge => {
+            CurseForgeClient::from_config(config)?
+                .get_versions(project, mc, loader)
+                .await?
+        }
+    };
+    let version = match version_id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => versions
+            .into_iter()
+            .find(|v| v.id == id)
+            .with_context(|| format!("Версия сборки '{id}' не найдена"))?,
+        None => versions
+            .into_iter()
+            .next()
+            .context("У проекта нет версий, совместимых с фильтрами")?,
+    };
+    let file = version
+        .primary_file()
+        .context("У версии сборки нет файлов")?;
+    let url = file.download_url().with_context(|| {
+        format!(
+            "Автор запретил автоматическую загрузку сборки. Скачайте вручную: {}",
+            version.name
+        )
+    })?;
+    if !mq_mods::is_allowed_content_download_url(url) {
+        bail!("Адрес скачивания сборки не входит в список разрешённых: {url}");
+    }
+    if file.size > 512 * 1024 * 1024 {
+        bail!("Файл сборки слишком большой ({} байт)", file.size);
+    }
+    let name = std::path::Path::new(&file.filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .context("Недопустимое имя файла сборки")?
+        .to_owned();
+    let dir = paths.temp_dir().join("catalog-packs");
+    tokio::fs::create_dir_all(&dir).await?;
+    let dest = dir.join(&name);
+    println!("[MQ] Загрузка сборки '{}' ({})...", version.name, name);
+    let bytes = reqwest::get(url).await?.error_for_status()?.bytes().await?;
+    tokio::fs::write(&dest, &bytes).await?;
+    Ok(dest)
+}
+
 async fn cmd_modpack(args: ModpackArgs, paths: MqPaths, threads: Option<usize>) -> Result<()> {
     let num_t = threads.unwrap_or_else(default_cpu_threads);
     let pool = Arc::new(ComputePool::new(num_t));
@@ -1542,13 +2037,34 @@ async fn cmd_modpack(args: ModpackArgs, paths: MqPaths, threads: Option<usize>) 
     match args.action {
         ModpackSubcommand::Install {
             path_or_slug,
-            source: _,
+            source,
             name,
+            mc,
+            loader,
+            version,
         } => {
-            let pack_path = PathBuf::from(&path_or_slug);
-            if !pack_path.exists() {
-                bail!("Файл модпака не найден: {}", pack_path.display());
-            }
+            let config = AppConfig::load_or_default(&paths)?;
+            let pack_path = if let Some((catalog_source, project)) =
+                parse_catalog_spec(&path_or_slug, Some(&source))?
+            {
+                let loader = loader.as_deref().and_then(parse_loader_filter);
+                download_catalog_modpack(
+                    &config,
+                    catalog_source,
+                    &project,
+                    mc.as_deref(),
+                    loader,
+                    version.as_deref(),
+                    &paths,
+                )
+                .await?
+            } else {
+                let path = PathBuf::from(&path_or_slug);
+                if !path.exists() {
+                    bail!("Файл модпака не найден: {}", path.display());
+                }
+                path
+            };
 
             let inst_name = name.unwrap_or_else(|| {
                 pack_path
