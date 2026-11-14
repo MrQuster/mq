@@ -400,6 +400,7 @@ impl Drop for ScopedCpuProfiler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
     use std::fs::File;
 
     const SAMPLE_STAT_T0: &str = "\
@@ -475,6 +476,7 @@ Threads:\t4
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn live_linux_proc_stat_rss_and_fd_count() {
         let mut sampler = CpuSampler::new().expect("read /proc/stat baseline");
         let snap = sampler.sample().expect("sample /proc/stat");
@@ -505,6 +507,7 @@ Threads:\t4
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn scoped_cpu_profiler_tracks_multithreaded_busy_loop() {
         let profiler = ScopedCpuProfiler::start().expect("start profiler");
 
