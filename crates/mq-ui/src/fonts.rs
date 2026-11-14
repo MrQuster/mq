@@ -223,14 +223,16 @@ mod tests {
             assert!(mono_list.len() >= 2);
         }
 
-        // On this Arch Linux workstation at least one proportional and one monospace font exist.
-        assert!(
-            summary.has_system_proportional(),
-            "expected system proportional font on Linux host"
-        );
-        assert!(
-            summary.has_system_monospace(),
-            "expected system monospace font on Linux host"
-        );
+        // On desktop hosts (outside headless CI runners) at least one proportional and monospace font exist.
+        if std::env::var_os("CI").is_none() {
+            assert!(
+                summary.has_system_proportional(),
+                "expected system proportional font on Linux host"
+            );
+            assert!(
+                summary.has_system_monospace(),
+                "expected system monospace font on Linux host"
+            );
+        }
     }
 }

@@ -279,11 +279,7 @@ impl InstallState {
         }
 
         let natives_dir = instance_dir.join("natives");
-        if !natives_dir.is_dir() {
-            return false;
-        }
-
-        true
+        natives_dir.is_dir()
     }
 }
 
@@ -364,15 +360,26 @@ impl InstanceInstallLock {
             }
         };
 
-        // 2. Inter-process file locking via flock
+        // 2. Inter-process file locking via flock (Unix) / exclusive share mode (Windows)
         let lock_file_path = instance_dir.join(".install.lock");
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock_file_path)?;
+        let mut open_opts = std::fs::OpenOptions::new();
+        open_opts.read(true).write(true).create(true).truncate(false);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            open_opts.share_mode(0);
+        }
+        let file = match open_opts.open(&lock_file_path) {
+            Ok(f) => f,
+            Err(err) => {
+                drop(permit);
+                return Err(MqError::Internal(format!(
+                    "Установка инстанса '{instance_id}' уже выполняется другим процессом ({err})"
+                )));
+            }
+        };
 
+        #[cfg(unix)]
         match rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive) {
             Ok(()) => {}
             Err(err) => {
@@ -393,6 +400,7 @@ impl InstanceInstallLock {
 
 impl Drop for InstanceInstallLock {
     fn drop(&mut self) {
+        #[cfg(unix)]
         let _ = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::Unlock);
         let _ = remove_file_with_retry(&self.lock_file_path);
     }
