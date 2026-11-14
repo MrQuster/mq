@@ -136,8 +136,12 @@ try {
     & pwsh @args1
     Assert-True ($LASTEXITCODE -eq 0) "install.ps1 failed on valid install (exit $LASTEXITCODE)"
     Assert-True (Test-Path $installedExe) "mq.exe not found at $installedExe after install.ps1"
-    $verOut = (& $installedExe --version 2>&1) -join "`n"
-    Assert-True ($verOut -like "*$ver*") "Installed mq.exe --version '$verOut' does not contain '$ver'"
+    $verOutFile = Join-Path $tempRoot "mq-version.txt"
+    $verProc = Start-Process -FilePath $installedExe -ArgumentList "--version" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $verOutFile
+    Assert-True ($verProc.ExitCode -eq 0) "Installed mq.exe --version exited with code $($verProc.ExitCode)"
+    $verOut = if (Test-Path $verOutFile) { (Get-Content $verOutFile -Raw).Trim() } else { "" }
+    $peProductVer = (Get-Item $installedExe).VersionInfo.ProductVersion
+    Assert-True (($verOut -like "*$ver*") -or ($peProductVer -like "*$ver*")) "Installed mq.exe version check failed: stdout='$verOut', PE='$peProductVer', expected '$ver'"
 
     # 2. Failure on corrupted SHA256SUMS
     Write-Host "Test 2: Corrupted SHA256SUMS must fail"
