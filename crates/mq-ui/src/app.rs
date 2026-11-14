@@ -11,7 +11,9 @@ use crate::hud::{is_zero_viewport, render_bottom_hud, BottomHudData};
 use crate::instances_view::InstancesView;
 use crate::perf_view::PerfView;
 use crate::settings_view::SettingsView;
-use crate::sidebar::{render_sidebar, sidebar_width, NavTab, SidebarAction};
+use crate::sidebar::{
+    render_sidebar_with_state, sidebar_width, NavTab, SidebarAction, SidebarState,
+};
 use crate::state::{UiState, UiWorkerCommand, UiWorkerResponse};
 use crate::theme::{apply_theme, solid_sidebar_frame, Tokens};
 
@@ -1151,18 +1153,29 @@ impl MqApp {
         let launcher_locale = self.state.config.launcher_locale.clone();
         let tokens = Tokens::from_config(&self.state.config.theme);
 
+        let sidebar_state = SidebarState {
+            active_downloads: self
+                .state
+                .phase_progress
+                .as_ref()
+                .map(|p| p.active_tasks)
+                .unwrap_or(0),
+            update_available: self.settings_view.available_update.is_some(),
+        };
+
         SidePanel::left("mq_sidebar")
             .resizable(false)
             .exact_width(sidebar_width(ctx))
             .frame(solid_sidebar_frame(&tokens))
             .show(ctx, |ui| {
-                let _ = render_sidebar(
+                let _ = render_sidebar_with_state(
                     ui,
                     self.current_tab,
                     &accounts_list,
                     active_id.as_deref(),
                     &launcher_locale,
                     &tokens,
+                    sidebar_state,
                 );
             });
 
@@ -1203,7 +1216,7 @@ impl MqApp {
             NavTab::Instances => self.instances_view.ui(ui, &mut self.state),
             NavTab::Catalog => self.catalog_view.ui(ui, &mut self.state),
             NavTab::Accounts => self.accounts_view.ui(ui, &mut self.state),
-            NavTab::Performance => self.perf_view.ui(ui, &self.state),
+            NavTab::Downloads | NavTab::Performance => self.perf_view.ui(ui, &self.state),
             NavTab::Settings => self.settings_view.ui(ui, &mut self.state),
         });
     }
@@ -1483,18 +1496,28 @@ impl MqApp {
         let mut sidebar_action = None;
         let launcher_locale = self.state.config.launcher_locale.clone();
         let tokens = Tokens::from_config(&self.state.config.theme);
+        let sidebar_state = SidebarState {
+            active_downloads: self
+                .state
+                .phase_progress
+                .as_ref()
+                .map(|p| p.active_tasks)
+                .unwrap_or(0),
+            update_available: self.settings_view.available_update.is_some(),
+        };
         SidePanel::left("mq_sidebar")
             .resizable(false)
             .exact_width(sidebar_width(ctx))
             .frame(solid_sidebar_frame(&tokens))
             .show(ctx, |ui| {
-                sidebar_action = render_sidebar(
+                sidebar_action = render_sidebar_with_state(
                     ui,
                     self.current_tab,
                     &accounts_list,
                     active_id.as_deref(),
                     &launcher_locale,
                     &tokens,
+                    sidebar_state,
                 );
             });
 
@@ -1552,7 +1575,7 @@ impl MqApp {
             NavTab::Instances => self.instances_view.ui(ui, &mut self.state),
             NavTab::Catalog => self.catalog_view.ui(ui, &mut self.state),
             NavTab::Accounts => self.accounts_view.ui(ui, &mut self.state),
-            NavTab::Performance => self.perf_view.ui(ui, &self.state),
+            NavTab::Downloads | NavTab::Performance => self.perf_view.ui(ui, &self.state),
             NavTab::Settings => self.settings_view.ui(ui, &mut self.state),
         });
 
