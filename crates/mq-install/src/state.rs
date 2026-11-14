@@ -283,7 +283,7 @@ impl InstallState {
     }
 }
 
-/// Queries the filesystem for available unprivileged disk space using `rustix::fs::statvfs`.
+/// Queries the filesystem for available unprivileged disk space.
 pub fn available_disk_space(path: &Path) -> MqResult<u64> {
     let mut check_path = path;
     while !check_path.exists() {
@@ -296,20 +296,61 @@ pub fn available_disk_space(path: &Path) -> MqResult<u64> {
         }
     }
 
-    let stat = rustix::fs::statvfs(check_path).map_err(|e| {
-        MqError::Io(std::io::Error::other(format!(
-            "failed to query disk space for '{}': {e}",
-            check_path.display()
-        )))
-    })?;
+    #[cfg(unix)]
+    {
+        let stat = rustix::fs::statvfs(check_path).map_err(|e| {
+            MqError::Io(std::io::Error::other(format!(
+                "failed to query disk space for '{}': {e}",
+                check_path.display()
+            )))
+        })?;
 
-    let block_size = if stat.f_frsize > 0 {
-        stat.f_frsize as u64
-    } else {
-        stat.f_bsize as u64
-    };
+        let block_size = if stat.f_frsize > 0 {
+            stat.f_frsize as u64
+        } else {
+            stat.f_bsize as u64
+        };
 
-    Ok(stat.f_bavail as u64 * block_size)
+        Ok(stat.f_bavail as u64 * block_size)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetDiskFreeSpaceExW(
+                lp_directory_name: *const u16,
+                lp_free_bytes_available_to_caller: *mut u64,
+                lp_total_number_of_bytes: *mut u64,
+                lp_total_number_of_free_bytes: *mut u64,
+            ) -> i32;
+        }
+
+        let wide: Vec<u16> = check_path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut free_bytes: u64 = 0;
+        let ok = unsafe {
+            GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut free_bytes,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            let err = std::io::Error::last_os_error();
+            return Err(MqError::Io(std::io::Error::other(format!(
+                "failed to query disk space for '{}': {err}",
+                check_path.display()
+            ))));
+        }
+        Ok(free_bytes)
+    }
 }
 
 /// Checks that the filesystem hosting `path` has at least `required_bytes` free space available.
@@ -363,7 +404,11 @@ impl InstanceInstallLock {
         // 2. Inter-process file locking via flock (Unix) / exclusive share mode (Windows)
         let lock_file_path = instance_dir.join(".install.lock");
         let mut open_opts = std::fs::OpenOptions::new();
-        open_opts.read(true).write(true).create(true).truncate(false);
+        open_opts
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false);
         #[cfg(windows)]
         {
             use std::os::windows::fs::OpenOptionsExt;
