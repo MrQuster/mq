@@ -1258,13 +1258,13 @@ impl InstancesView {
 
         match self.sort_mode {
             InstanceSortMode::Playtime => {
-                list.sort_by(|a, b| b.playtime_secs.cmp(&a.playtime_secs));
+                list.sort_by_key(|inst| std::cmp::Reverse(inst.playtime_secs));
             }
             InstanceSortMode::Name => {
-                list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                list.sort_by_key(|inst| inst.name.to_lowercase());
             }
             InstanceSortMode::Created => {
-                list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                list.sort_by_key(|inst| std::cmp::Reverse(inst.created_at));
             }
         }
         list
