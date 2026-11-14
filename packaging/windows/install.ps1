@@ -5,7 +5,7 @@
 #  Advanced:
 #    & ([scriptblock]::Create((irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1))) -Portable
 #    & ([scriptblock]::Create((irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1))) -Uninstall
-#    & ([scriptblock]::Create((irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1))) -Version 2.6.0 -Silent
+#    & ([scriptblock]::Create((irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1))) -Version 2.6.5 -Silent
 # ==============================================================================
 
 [CmdletBinding()]
@@ -57,7 +57,7 @@ Usage:
   install.ps1 [-Version <tag>] [-Portable] [-Silent] [-Uninstall] [-InstallDir <path>] [-BaseUrl <url>] [-NoDesktopShortcut] [-Force]
 
 Parameters:
-  -Version <tag>       Specify version to install (e.g. '2.6.0' or 'latest'). Default: latest
+  -Version <tag>       Specify version to install (e.g. '2.6.5' or 'latest'). Default: latest
   -Portable            Install standalone portable package into %LOCALAPPDATA%\MQ-Portable
   -Silent              Run unattended installation (/VERYSILENT /SUPPRESSMSGBOXES /NORESTART)
   -Uninstall           Silently uninstall MQ Launcher (preserves %LOCALAPPDATA%\MQ user data)

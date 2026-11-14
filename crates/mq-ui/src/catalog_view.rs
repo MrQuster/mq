@@ -139,20 +139,85 @@ impl CatalogView {
         ui.add_space(8.0);
         self.import_row(ui, state, &tokens);
 
+        self.render_catalog_body(ui, state, &tokens, now, changed);
+    }
+
+    /// Renders the catalog browser embedded directly inside an instance's content tab
+    /// (`Mods`, `ResourcePacks`, or `Shaders`), locked to that target instance.
+    pub fn ui_for_instance_tab(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut UiState,
+        inst_id: &mq_core::InstanceId,
+        tab: CatalogTab,
+    ) {
+        let now = Instant::now();
+        let tokens = Tokens::from_config(&state.config.theme);
+        let mut changed = false;
+
+        state.selected_instance_id = Some(inst_id.clone());
+        let inst_info = state
+            .instances
+            .iter()
+            .find(|i| &i.id == inst_id)
+            .map(|i| (i.name.clone(), i.mc_version.clone(), i.loader));
+
+        if state.catalog.tab != tab {
+            state.catalog.tab = tab;
+            state.catalog.filters.categories.clear();
+            changed = true;
+        }
+
+        if let Some((inst_name, inst_mc, inst_loader)) = inst_info {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Целевой инстанс: {} ({} · {})",
+                        inst_name,
+                        inst_mc,
+                        inst_loader.as_str()
+                    ))
+                    .color(tokens.text_muted),
+                );
+                if secondary_glass_button(ui, Some(VectorIcon::Refresh), "Фильтр под инстанс")
+                    .clicked()
+                {
+                    state
+                        .catalog
+                        .sync_for_instance(tab, &inst_mc, inst_loader, now);
+                }
+            });
+            ui.add_space(4.0);
+        }
+
+        changed |= self.source_row(ui, &mut state.catalog, &tokens);
+
+        self.render_catalog_body(ui, state, &tokens, now, changed);
+    }
+
+    fn render_catalog_body(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut UiState,
+        tokens: &Tokens,
+        now: Instant,
+        mut changed: bool,
+    ) {
         let has_key = state.config.effective_cf_api_key().is_some();
         let cf_selected = state.catalog.source == CatalogSourceFilter::CurseForge;
         if !has_key && cf_selected {
             ui.add_space(8.0);
-            self.key_panel(ui, state, &tokens);
+            self.key_panel(ui, state, tokens);
         }
 
         ui.add_space(8.0);
-        changed |= self.search_row(ui, &mut state.catalog, &tokens);
+        changed |= self.search_row(ui, &mut state.catalog, tokens);
         ui.add_space(8.0);
-        changed |= self.filters_row(ui, &mut state.catalog, &tokens);
+        changed |= self.filters_row(ui, &mut state.catalog, tokens);
         ui.add_space(8.0);
 
-        self.batch_queue_bar(ui, state, &tokens);
+        self.batch_queue_bar(ui, state, tokens);
 
         if changed {
             state.catalog.mark_dirty(now);
@@ -163,7 +228,7 @@ impl CatalogView {
             self.inline_notice(
                 ui,
                 state,
-                &tokens,
+                tokens,
                 "CurseForge отключён: не задан API-ключ. Показаны результаты Modrinth.",
             );
         }
@@ -179,12 +244,12 @@ impl CatalogView {
                 text.push(' ');
                 text.push_str(&err.message);
             }
-            self.inline_notice(ui, state, &tokens, &text);
+            self.inline_notice(ui, state, tokens, &text);
         }
 
         crate::catalog_dialogs::jobs_panel(ui, state);
         ui.separator();
-        self.results(ui, state, &tokens);
+        self.results(ui, state, tokens);
         crate::catalog_dialogs::show_overlays(ui.ctx(), state);
     }
 

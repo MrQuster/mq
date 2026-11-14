@@ -247,6 +247,44 @@ impl CatalogState {
         self.debounce_remaining(now) == Some(Duration::ZERO)
     }
 
+    /// Synchronizes the catalog tab and filters to match an instance's Minecraft version,
+    /// mod loader, and requested content tab (`Mods`, `ResourcePacks`, or `Shaders`).
+    /// Returns `true` if any filter or tab changed (and schedules an immediate search).
+    pub fn sync_for_instance(
+        &mut self,
+        tab: CatalogTab,
+        mc_version: &str,
+        loader: ModLoaderKind,
+        now: Instant,
+    ) -> bool {
+        let target_loader = match tab {
+            CatalogTab::Mods | CatalogTab::Modpacks if loader != ModLoaderKind::Vanilla => {
+                Some(loader)
+            }
+            _ => None,
+        };
+        let mut changed = false;
+        if self.tab != tab {
+            self.tab = tab;
+            self.filters.categories.clear();
+            changed = true;
+        }
+        if self.filters.mc_version != mc_version {
+            self.filters.mc_version = mc_version.to_string();
+            changed = true;
+        }
+        if self.filters.loader != target_loader {
+            self.filters.loader = target_loader;
+            changed = true;
+        }
+        if changed || (!self.searched && !self.loading && self.dirty_since.is_none()) {
+            self.page = 0;
+            self.mark_page_changed(now, false);
+            return true;
+        }
+        false
+    }
+
     /// Builds the provider query for the current UI state.
     pub fn build_query(&self) -> SearchQuery {
         let mc = self.filters.mc_version.trim();
@@ -516,5 +554,23 @@ mod tests {
 
         s.remove_queued([(CatalogSource::CurseForge, "sodium")]);
         assert!(s.batch_queue.is_empty());
+    }
+
+    #[test]
+    fn sync_for_instance_updates_tab_version_and_loader_filter() {
+        let mut s = CatalogState::default();
+        let now = Instant::now();
+
+        assert!(s.sync_for_instance(CatalogTab::Mods, "1.21.4", ModLoaderKind::Fabric, now));
+        assert_eq!(s.tab, CatalogTab::Mods);
+        assert_eq!(s.filters.mc_version, "1.21.4");
+        assert_eq!(s.filters.loader, Some(ModLoaderKind::Fabric));
+        assert!(s.is_due(now));
+
+        // Resource packs & shaders do not restrict by mod loader.
+        assert!(s.sync_for_instance(CatalogTab::Shaders, "1.21.4", ModLoaderKind::Fabric, now));
+        assert_eq!(s.tab, CatalogTab::Shaders);
+        assert_eq!(s.filters.mc_version, "1.21.4");
+        assert_eq!(s.filters.loader, None);
     }
 }

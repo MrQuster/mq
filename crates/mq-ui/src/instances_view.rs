@@ -222,8 +222,20 @@ pub enum ModStatusFilter {
     Disabled,
 }
 
+/// Sub-mode inside an instance's content tabs (`Моды`, `Ресурспаки`, `Шейдеры`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContentSubMode {
+    #[default]
+    Installed,
+    Catalog,
+}
+
 pub struct InstancesView {
     pub current_tab: InstanceDetailTab,
+    pub content_sub_mode: ContentSubMode,
+    pub synced_catalog_context: Option<(mq_core::InstanceId, crate::catalog_state::CatalogTab)>,
+    pub local_file_input: String,
+    pub catalog_view: crate::catalog_view::CatalogView,
     pub view_mode: InstanceViewMode,
     pub sort_mode: InstanceSortMode,
     pub loader_filter: LoaderFilter,
@@ -258,6 +270,10 @@ impl Default for InstancesView {
     fn default() -> Self {
         Self {
             current_tab: InstanceDetailTab::Console,
+            content_sub_mode: ContentSubMode::Installed,
+            synced_catalog_context: None,
+            local_file_input: String::new(),
+            catalog_view: crate::catalog_view::CatalogView::default(),
             view_mode: InstanceViewMode::Grid,
             sort_mode: InstanceSortMode::Playtime,
             loader_filter: LoaderFilter::All,
@@ -1216,10 +1232,14 @@ impl InstancesView {
                         .show(ui, |ui| {
                             render_underline_tabs(ui, &tokens, &detail_tabs, &mut self.current_tab);
                         });
-                    if self.current_tab != prev_tab && self.current_tab == InstanceDetailTab::Mods {
-                        let _ = state.cmd_sender.send(UiWorkerCommand::ScanInstanceMods {
-                            instance_id: inst_id.clone(),
-                        });
+                    if self.current_tab != prev_tab {
+                        self.content_sub_mode = ContentSubMode::Installed;
+                        self.local_file_input.clear();
+                        if self.current_tab == InstanceDetailTab::Mods {
+                            let _ = state.cmd_sender.send(UiWorkerCommand::ScanInstanceMods {
+                                instance_id: inst_id.clone(),
+                            });
+                        }
                     }
 
                     ui.separator();
@@ -2210,11 +2230,228 @@ impl InstancesView {
         ui.add_space(4.0);
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn render_content_sub_mode_bar(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut UiState,
+        inst_id: &mq_core::InstanceId,
+        catalog_tab: crate::catalog_state::CatalogTab,
+        installed_count: usize,
+        download_cta: &str,
+        folder_label: &str,
+        folder_path: &std::path::Path,
+        tokens: &Tokens,
+    ) {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+            for (mode, label) in [
+                (
+                    ContentSubMode::Installed,
+                    format!("Установленные ({installed_count})"),
+                ),
+                (
+                    ContentSubMode::Catalog,
+                    "Каталог (Modrinth / CurseForge)".to_string(),
+                ),
+            ] {
+                let selected = self.content_sub_mode == mode;
+                let text = RichText::new(label).color(if selected {
+                    tokens.text
+                } else {
+                    tokens.text_muted
+                });
+                let fill = if selected {
+                    blend_color(tokens.bg_surface, tokens.accent, 0.18)
+                } else {
+                    tokens.bg_surface
+                };
+                let stroke_col = if selected {
+                    tokens.accent
+                } else {
+                    tokens.border
+                };
+                let btn = egui::Button::new(if selected { text.strong() } else { text })
+                    .fill(fill)
+                    .stroke(Stroke::new(1.0_f32, stroke_col))
+                    .corner_radius(RADIUS_TAG)
+                    .min_size(Vec2::new(96.0, 30.0));
+                if ui.add(btn).clicked() && self.content_sub_mode != mode {
+                    self.content_sub_mode = mode;
+                    if mode == ContentSubMode::Catalog {
+                        self.synced_catalog_context = None;
+                    } else if catalog_tab == crate::catalog_state::CatalogTab::Mods {
+                        let _ = state.cmd_sender.send(UiWorkerCommand::ScanInstanceMods {
+                            instance_id: inst_id.clone(),
+                        });
+                    }
+                }
+            }
+
+            match self.content_sub_mode {
+                ContentSubMode::Installed => {
+                    if primary_emerald_button(ui, Some(VectorIcon::Plus), download_cta).clicked() {
+                        self.content_sub_mode = ContentSubMode::Catalog;
+                        self.synced_catalog_context = None;
+                    }
+                }
+                ContentSubMode::Catalog => {
+                    if secondary_glass_button(
+                        ui,
+                        None,
+                        &format!("К установленным ({installed_count})"),
+                    )
+                    .clicked()
+                    {
+                        self.content_sub_mode = ContentSubMode::Installed;
+                        if catalog_tab == crate::catalog_state::CatalogTab::Mods {
+                            let _ = state.cmd_sender.send(UiWorkerCommand::ScanInstanceMods {
+                                instance_id: inst_id.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+
+            if secondary_glass_button(ui, Some(VectorIcon::Folder), folder_label).clicked() {
+                let _ = std::fs::create_dir_all(folder_path);
+                let _ = crate::opener::open_that(folder_path);
+            }
+        });
+        ui.add_space(6.0);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_local_file_import_bar(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut UiState,
+        inst_id: &mq_core::InstanceId,
+        target_dir: &std::path::Path,
+        allowed_exts: &[&str],
+        hint_text: &str,
+        scan_mods_on_success: bool,
+        tokens: &Tokens,
+    ) {
+        let mut candidates: Vec<std::path::PathBuf> = ui.ctx().input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+            ui.label(RichText::new("Локальный файл:").color(tokens.text_muted));
+            let input_w = (ui.available_width() - 250.0).clamp(180.0, 360.0);
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.local_file_input)
+                    .hint_text(hint_text)
+                    .desired_width(input_w),
+            );
+            let submitted = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let can_add = !self.local_file_input.trim().is_empty();
+            if (secondary_glass_button(ui, Some(VectorIcon::Plus), "Добавить файл").clicked()
+                || submitted)
+                && can_add
+            {
+                let trimmed = self
+                    .local_file_input
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'');
+                candidates.push(std::path::PathBuf::from(trimmed));
+                self.local_file_input.clear();
+            }
+        });
+
+        let mut added_names = Vec::new();
+        let mut first_error = None;
+        for path in candidates {
+            match install_local_content_file(target_dir, &path, allowed_exts) {
+                Ok(fname) => added_names.push(fname),
+                Err(err) => {
+                    if first_error.is_none() {
+                        first_error = Some(err);
+                    }
+                }
+            }
+        }
+
+        if !added_names.is_empty() {
+            let msg = if added_names.len() == 1 {
+                format!("Файл {} добавлен в инстанс", added_names[0])
+            } else {
+                format!("Добавлено файлов: {}", added_names.len())
+            };
+            state.status_message = Some((msg, false));
+            if scan_mods_on_success {
+                let _ = state.cmd_sender.send(UiWorkerCommand::ScanInstanceMods {
+                    instance_id: inst_id.clone(),
+                });
+            }
+        } else if let Some(err) = first_error {
+            state.status_message = Some((err, true));
+        }
+    }
+
+    fn sync_and_render_instance_catalog(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut UiState,
+        inst_id: &mq_core::InstanceId,
+        catalog_tab: crate::catalog_state::CatalogTab,
+    ) {
+        if self.synced_catalog_context.as_ref() != Some(&(inst_id.clone(), catalog_tab)) {
+            state.selected_instance_id = Some(inst_id.clone());
+            if let Some((mc_version, loader)) = state
+                .instances
+                .iter()
+                .find(|i| &i.id == inst_id)
+                .map(|i| (i.mc_version.clone(), i.loader))
+            {
+                state.catalog.sync_for_instance(
+                    catalog_tab,
+                    &mc_version,
+                    loader,
+                    std::time::Instant::now(),
+                );
+            }
+            self.synced_catalog_context = Some((inst_id.clone(), catalog_tab));
+        }
+        self.catalog_view
+            .ui_for_instance_tab(ui, state, inst_id, catalog_tab);
+    }
+
     fn render_mods_tab(&mut self, ui: &mut Ui, state: &mut UiState, inst_id: &mq_core::InstanceId) {
         let tokens = Tokens::from_config(&state.config.theme);
+        let mods_dir = state.paths.instance_dir(inst_id.as_str()).join("mods");
         let total_count = state.installed_mods.len();
         let enabled_count = state.installed_mods.iter().filter(|m| m.enabled).count();
         let disabled_count = total_count.saturating_sub(enabled_count);
+
+        self.render_content_sub_mode_bar(
+            ui,
+            state,
+            inst_id,
+            crate::catalog_state::CatalogTab::Mods,
+            total_count,
+            "Скачать моды",
+            "Открыть mods/",
+            &mods_dir,
+            &tokens,
+        );
+
+        if self.content_sub_mode == ContentSubMode::Catalog {
+            self.sync_and_render_instance_catalog(
+                ui,
+                state,
+                inst_id,
+                crate::catalog_state::CatalogTab::Mods,
+            );
+            return;
+        }
 
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
@@ -2236,12 +2473,19 @@ impl InstancesView {
                     instance_id: inst_id.clone(),
                 });
             }
-            if secondary_glass_button(ui, Some(VectorIcon::Folder), "Открыть mods/").clicked()
-            {
-                let mods_dir = state.paths.instance_dir(inst_id.as_str()).join("mods");
-                let _ = crate::opener::open_that(mods_dir);
-            }
         });
+
+        ui.add_space(6.0);
+        self.render_local_file_import_bar(
+            ui,
+            state,
+            inst_id,
+            &mods_dir,
+            &[".jar"],
+            "Путь к .jar файлу мода или перетащите .jar в окно...",
+            true,
+            &tokens,
+        );
 
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
@@ -2296,6 +2540,7 @@ impl InstancesView {
         });
 
         ui.add_space(4.0);
+        crate::catalog_dialogs::jobs_panel(ui, state);
         Self::updates_panel(ui, state, inst_id);
 
         if !state.mod_conflicts.is_empty() {
@@ -2365,6 +2610,7 @@ impl InstancesView {
             })
             .collect();
 
+        let mut open_catalog = false;
         ScrollArea::vertical()
             .id_salt("mods_table_scroll")
             .auto_shrink([false, false])
@@ -2373,10 +2619,20 @@ impl InstancesView {
                     ui.add_space(20.0);
                     ui.label(
                         RichText::new(
-                            "В этом инстансе пока нет модов. Откройте «Каталог» или поместите .jar в папку mods/.",
+                            "В этом инстансе пока нет модов. Скачайте их из Каталога или добавьте .jar файл выше.",
                         )
                         .color(tokens.text_muted),
                     );
+                    ui.add_space(8.0);
+                    if primary_emerald_button(
+                        ui,
+                        Some(VectorIcon::Plus),
+                        "Скачать моды из каталога (Modrinth / CurseForge)",
+                    )
+                    .clicked()
+                    {
+                        open_catalog = true;
+                    }
                 } else if filtered_mods.is_empty() {
                     ui.add_space(16.0);
                     ui.label(
@@ -2490,6 +2746,11 @@ impl InstancesView {
                     }
                 }
             });
+        if open_catalog {
+            self.content_sub_mode = ContentSubMode::Catalog;
+            self.synced_catalog_context = None;
+        }
+        crate::catalog_dialogs::show_overlays(ui.ctx(), state);
     }
 
     fn render_console_tab(
@@ -2717,18 +2978,18 @@ impl InstancesView {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_pack_directory_tab(
         ui: &mut Ui,
         tokens: &Tokens,
         packs_dir: &std::path::Path,
+        packs: Vec<(String, bool, u64)>,
         title: &str,
-        folder_btn_label: &str,
         empty_hint: &str,
+        catalog_btn_label: &str,
         search_query: &mut String,
-    ) {
-        let _ = std::fs::create_dir_all(packs_dir);
-        let packs = list_packs_in_dir(packs_dir);
-
+    ) -> bool {
+        let mut open_catalog = false;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
             ui.label(
@@ -2737,13 +2998,10 @@ impl InstancesView {
                     .strong()
                     .size(14.0),
             );
-            if secondary_glass_button(ui, Some(VectorIcon::Folder), folder_btn_label).clicked() {
-                let _ = crate::opener::open_that(packs_dir);
-            }
             ui.add(
                 egui::TextEdit::singleline(search_query)
                     .hint_text("Поиск по имени файла...")
-                    .desired_width(200.0),
+                    .desired_width(220.0),
             );
             if !search_query.is_empty() && secondary_glass_button(ui, None, "Сброс").clicked()
             {
@@ -2766,7 +3024,13 @@ impl InstancesView {
                 "По вашему запросу ничего не найдено."
             };
             ui.label(RichText::new(msg).color(tokens.text_muted));
-            return;
+            if q.is_empty() {
+                ui.add_space(8.0);
+                if primary_emerald_button(ui, Some(VectorIcon::Plus), catalog_btn_label).clicked() {
+                    open_catalog = true;
+                }
+            }
+            return open_catalog;
         }
 
         ScrollArea::vertical()
@@ -2819,6 +3083,80 @@ impl InstancesView {
                     ui.add_space(4.0);
                 }
             });
+        open_catalog
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_pack_tab(
+        &mut self,
+        ui: &mut Ui,
+        state: &mut UiState,
+        inst_id: &mq_core::InstanceId,
+        subdir: &str,
+        catalog_tab: crate::catalog_state::CatalogTab,
+        title: &str,
+        download_cta: &str,
+        folder_btn_label: &str,
+        empty_hint: &str,
+        catalog_btn_label: &str,
+        import_hint: &str,
+        is_shader_tab: bool,
+    ) {
+        let tokens = Tokens::from_config(&state.config.theme);
+        let dir = state.paths.instance_dir(inst_id.as_str()).join(subdir);
+        let _ = std::fs::create_dir_all(&dir);
+        let packs = list_packs_in_dir(&dir);
+
+        self.render_content_sub_mode_bar(
+            ui,
+            state,
+            inst_id,
+            catalog_tab,
+            packs.len(),
+            download_cta,
+            folder_btn_label,
+            &dir,
+            &tokens,
+        );
+
+        if self.content_sub_mode == ContentSubMode::Catalog {
+            self.sync_and_render_instance_catalog(ui, state, inst_id, catalog_tab);
+            return;
+        }
+
+        self.render_local_file_import_bar(
+            ui,
+            state,
+            inst_id,
+            &dir,
+            &[".zip"],
+            import_hint,
+            false,
+            &tokens,
+        );
+        ui.add_space(6.0);
+        crate::catalog_dialogs::jobs_panel(ui, state);
+
+        let search_query = if is_shader_tab {
+            &mut self.shader_search_query
+        } else {
+            &mut self.pack_search_query
+        };
+        let open_catalog = Self::render_pack_directory_tab(
+            ui,
+            &tokens,
+            &dir,
+            packs,
+            title,
+            empty_hint,
+            catalog_btn_label,
+            search_query,
+        );
+        if open_catalog {
+            self.content_sub_mode = ContentSubMode::Catalog;
+            self.synced_catalog_context = None;
+        }
+        crate::catalog_dialogs::show_overlays(ui.ctx(), state);
     }
 
     fn render_resourcepacks_tab(
@@ -2827,19 +3165,19 @@ impl InstancesView {
         state: &mut UiState,
         inst_id: &mq_core::InstanceId,
     ) {
-        let tokens = Tokens::from_config(&state.config.theme);
-        let packs_dir = state
-            .paths
-            .instance_dir(inst_id.as_str())
-            .join("resourcepacks");
-        Self::render_pack_directory_tab(
+        self.render_pack_tab(
             ui,
-            &tokens,
-            &packs_dir,
+            state,
+            inst_id,
+            "resourcepacks",
+            crate::catalog_state::CatalogTab::ResourcePacks,
             "Ресурспаки",
+            "Скачать ресурспаки",
             "Открыть resourcepacks/",
-            "Ресурспаки не установлены. Поместите .zip файлы в папку resourcepacks/ или установите из Каталога.",
-            &mut self.pack_search_query,
+            "Ресурспаки не установлены. Скачайте их из Каталога или добавьте .zip файл выше.",
+            "Скачать ресурспаки из каталога (Modrinth / CurseForge)",
+            "Путь к .zip ресурспаку или перетащите .zip в окно...",
+            false,
         );
     }
 
@@ -2849,19 +3187,19 @@ impl InstancesView {
         state: &mut UiState,
         inst_id: &mq_core::InstanceId,
     ) {
-        let tokens = Tokens::from_config(&state.config.theme);
-        let shaders_dir = state
-            .paths
-            .instance_dir(inst_id.as_str())
-            .join("shaderpacks");
-        Self::render_pack_directory_tab(
+        self.render_pack_tab(
             ui,
-            &tokens,
-            &shaders_dir,
+            state,
+            inst_id,
+            "shaderpacks",
+            crate::catalog_state::CatalogTab::Shaders,
             "Шейдерпаки",
+            "Скачать шейдеры",
             "Открыть shaderpacks/",
-            "Шейдеры не установлены. Поместите шейдерпаки в папку shaderpacks/ (для работы требуется Iris или OptiFine).",
-            &mut self.shader_search_query,
+            "Шейдеры не установлены. Скачайте их из Каталога или добавьте .zip файл (для работы требуется Iris или OptiFine).",
+            "Скачать шейдеры из каталога (Modrinth / CurseForge)",
+            "Путь к .zip шейдерпаку или перетащите .zip в окно...",
+            true,
         );
     }
 
@@ -3460,6 +3798,46 @@ fn delete_pack_file(dir: &std::path::Path, filename: &str) {
     }
 }
 
+/// Copies a local mod (`.jar`) or pack (`.zip`) file into an instance content directory.
+fn install_local_content_file(
+    target_dir: &std::path::Path,
+    src_path: &std::path::Path,
+    allowed_exts: &[&str],
+) -> Result<String, String> {
+    if !src_path.exists() || !src_path.is_file() {
+        return Err(format!("Файл не найден: {}", src_path.display()));
+    }
+    let file_name = src_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string)
+        .ok_or_else(|| "Некорректное имя файла".to_string())?;
+    let lower = file_name.to_ascii_lowercase();
+    if !allowed_exts.iter().any(|ext| lower.ends_with(ext)) {
+        return Err(format!(
+            "Неподдерживаемый формат файла «{}» (ожидается {})",
+            file_name,
+            allowed_exts.join(", ")
+        ));
+    }
+    std::fs::create_dir_all(target_dir)
+        .map_err(|e| format!("Не удалось создать папку {}: {e}", target_dir.display()))?;
+    let dst_path = target_dir.join(&file_name);
+    let same_file = matches!(
+        (
+            std::fs::canonicalize(src_path),
+            std::fs::canonicalize(&dst_path)
+        ),
+        (Ok(s), Ok(d)) if s == d
+    );
+    if same_file {
+        return Ok(file_name);
+    }
+    std::fs::copy(src_path, &dst_path)
+        .map_err(|e| format!("Не удалось скопировать файл {file_name}: {e}"))?;
+    Ok(file_name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3597,5 +3975,87 @@ mod tests {
         let by_ver = view.filtered_instances(&state);
         assert_eq!(by_ver.len(), 1);
         assert_eq!(by_ver[0].mc_version, "26.1");
+    }
+
+    #[test]
+    fn install_local_content_file_copies_matching_extension_and_rejects_others() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src_dir = tmp.path().join("src");
+        let dst_dir = tmp.path().join("mods");
+        std::fs::create_dir_all(&src_dir).expect("src dir");
+
+        let jar_path = src_dir.join("sodium-fabric.jar");
+        std::fs::write(&jar_path, b"jar-bytes").expect("write jar");
+        let txt_path = src_dir.join("notes.txt");
+        std::fs::write(&txt_path, b"text").expect("write txt");
+
+        let installed =
+            install_local_content_file(&dst_dir, &jar_path, &[".jar"]).expect("jar should install");
+        assert_eq!(installed, "sodium-fabric.jar");
+        assert_eq!(
+            std::fs::read(dst_dir.join("sodium-fabric.jar")).expect("copied"),
+            b"jar-bytes"
+        );
+
+        let err = install_local_content_file(&dst_dir, &txt_path, &[".jar"])
+            .expect_err("txt should be rejected");
+        assert!(err.contains(".jar"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn in_instance_catalog_mode_syncs_and_renders_for_mods_resourcepacks_and_shaders() {
+        let (_tmp, mut state) = test_ui_state();
+        let inst = state
+            .instance_mgr
+            .create_instance("Test Fabric", "1.21.4", ModLoaderKind::Fabric, None)
+            .expect("fabric instance");
+        let inst_id = inst.id.clone();
+        state.instances.push(inst);
+        state.selected_instance_id = Some(inst_id.clone());
+        // Prevent auto-triggering a background search request beyond testing sync.
+        state.catalog.loading = true;
+
+        let mut view = InstancesView {
+            view_mode: InstanceViewMode::List,
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                Vec2::new(1180.0, 740.0),
+            )),
+            ..Default::default()
+        };
+
+        for (detail_tab, expected_cat_tab, expected_loader) in [
+            (
+                InstanceDetailTab::Mods,
+                crate::catalog_state::CatalogTab::Mods,
+                Some(ModLoaderKind::Fabric),
+            ),
+            (
+                InstanceDetailTab::ResourcePacks,
+                crate::catalog_state::CatalogTab::ResourcePacks,
+                None,
+            ),
+            (
+                InstanceDetailTab::ShaderPacks,
+                crate::catalog_state::CatalogTab::Shaders,
+                None,
+            ),
+        ] {
+            view.current_tab = detail_tab;
+            view.content_sub_mode = ContentSubMode::Catalog;
+            let _ = ctx.run(input.clone(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    view.ui(ui, &mut state);
+                });
+            });
+            assert_eq!(state.selected_instance_id.as_ref(), Some(&inst_id));
+            assert_eq!(state.catalog.tab, expected_cat_tab);
+            assert_eq!(state.catalog.filters.mc_version, "1.21.4");
+            assert_eq!(state.catalog.filters.loader, expected_loader);
+        }
     }
 }
