@@ -156,7 +156,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilen
 
 [Registry]
 ; Register .mrpack association only (never intercept .zip)
-Root: HKA; Subkey: "Software\Classes\.mrpack"; ValueType: string; ValueName: ""; ValueData: "MQ.Modpack"; Flags: uninsdeletevalue; Tasks: assocmrpack
+Root: HKA; Subkey: "Software\Classes\.mrpack"; ValueType: string; ValueName: ""; ValueData: "MQ.Modpack"; Flags: uninsdeletekeyifempty uninsdeletevalue; Tasks: assocmrpack
 Root: HKA; Subkey: "Software\Classes\MQ.Modpack"; ValueType: string; ValueName: ""; ValueData: "{cm:MrpackFileDescription}"; Flags: uninsdeletekey; Tasks: assocmrpack
 Root: HKA; Subkey: "Software\Classes\MQ.Modpack\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\mq.ico,0"; Tasks: assocmrpack
 Root: HKA; Subkey: "Software\Classes\MQ.Modpack\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assocmrpack
