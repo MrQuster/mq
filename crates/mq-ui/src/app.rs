@@ -158,11 +158,16 @@ impl MqApp {
         Self::from_state(state)
     }
 
-    pub fn from_state(state: UiState) -> Self {
+    pub fn from_state(mut state: UiState) -> Self {
         let recovery_journal = mq_core::crash::InstallJournal::load_unclosed(&state.paths);
+        let mut current_tab = NavTab::Instances;
+        if let Some(path) = state.pending_mrpack_path.take() {
+            state.import_local_pack(path);
+            current_tab = NavTab::Catalog;
+        }
         Self {
             state,
-            current_tab: NavTab::Instances,
+            current_tab,
             instances_view: InstancesView::default(),
             catalog_view: CatalogView::default(),
             accounts_view: AccountsView::default(),
@@ -1459,6 +1464,22 @@ impl MqApp {
         // Drain background worker events
         self.state.drain_events();
         self.handle_worker_commands();
+
+        if let Some(rx) = self.state.mrpack_ipc_receiver.clone() {
+            let mut received = Vec::new();
+            if let Ok(guard) = rx.lock() {
+                while let Ok(path) = guard.try_recv() {
+                    received.push(path);
+                }
+            }
+            if !received.is_empty() {
+                for path in received {
+                    self.state.import_local_pack(path);
+                }
+                self.current_tab = NavTab::Catalog;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+        }
 
         // 1. Sidebar (Left)
         let accounts_list = self.state.accounts.list_accounts().to_vec();

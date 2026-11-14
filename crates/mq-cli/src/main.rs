@@ -63,7 +63,8 @@ use doctor::{cmd_doctor_install, DoctorArgs};
     long_about = "MQ — high-performance, multithreaded Minecraft launcher for Linux.\n\
                   Created by MrQuster (https://github.com/MrQuster).\n\
                   Supports Offline mode, Ely.by browser OAuth2 with authlib-injector, Modrinth, and CurseForge.\n\
-                  Run 'mq' without arguments to start the GUI, or use subcommands for CLI operations."
+                  Run 'mq' without arguments to start the GUI, or use subcommands for CLI operations.",
+    args_conflicts_with_subcommands = true
 )]
 struct Cli {
     /// Graphical rendering backend for the UI.
@@ -77,6 +78,10 @@ struct Cli {
     /// Internal restart flag after a self-update.
     #[arg(long)]
     after_update: bool,
+
+    /// Path to a local .mrpack modpack file to open in the import dialog.
+    #[arg(value_name = "MRPACK_FILE")]
+    open_pack: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -639,7 +644,25 @@ async fn main() -> Result<()> {
     mq_core::install_panic_hook(&paths);
 
     match cli.command {
-        None => run_desktop_gui(cli.backend, cli.threads, paths),
+        None => {
+            let pending_mrpack = match cli.open_pack {
+                Some(path) => {
+                    if !is_mrpack_arg(&path) {
+                        anyhow::bail!(
+                            "Неподдерживаемый файл: {}. Ожидается архив .mrpack",
+                            path.display()
+                        );
+                    }
+                    let resolved = std::fs::canonicalize(&path).unwrap_or(path);
+                    if try_forward_mrpack_to_running_instance(&paths, &resolved) {
+                        return Ok(());
+                    }
+                    Some(resolved)
+                }
+                None => None,
+            };
+            run_desktop_gui(cli.backend, cli.threads, paths, pending_mrpack)
+        }
         Some(Commands::Launch(args)) => cmd_launch(args, paths).await,
         Some(Commands::Install(args)) => cmd_install(args, paths, cli.threads).await,
         Some(Commands::Search(args)) => cmd_search(args, paths).await,
@@ -724,8 +747,69 @@ fn default_cpu_threads() -> usize {
         .unwrap_or(4)
 }
 
+fn is_mrpack_arg(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("mrpack"))
+}
+
+fn gui_ipc_port_file(paths: &MqPaths) -> PathBuf {
+    paths.data_dir.join("gui-ipc.port")
+}
+
+fn try_forward_mrpack_to_running_instance(paths: &MqPaths, pack_path: &std::path::Path) -> bool {
+    use std::io::Write;
+    let port_file = gui_ipc_port_file(paths);
+    let Ok(port_str) = std::fs::read_to_string(&port_file) else {
+        return false;
+    };
+    let Ok(port) = port_str.trim().parse::<u16>() else {
+        return false;
+    };
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut stream) =
+        std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(250))
+    else {
+        return false;
+    };
+    let msg = format!("{}\n", pack_path.to_string_lossy());
+    stream.write_all(msg.as_bytes()).is_ok() && stream.flush().is_ok()
+}
+
+type MrpackIpcRx = Arc<std::sync::Mutex<std::sync::mpsc::Receiver<PathBuf>>>;
+
+fn start_mrpack_ipc_listener(paths: &MqPaths) -> Option<(MrpackIpcRx, PathBuf)> {
+    use std::io::{BufRead, BufReader};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
+    let port = listener.local_addr().ok()?.port();
+    let port_file = gui_ipc_port_file(paths);
+    let _ = std::fs::write(&port_file, port.to_string());
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for conn in listener.incoming().flatten() {
+            let mut reader = BufReader::new(conn);
+            let mut line = String::new();
+            if reader.read_line(&mut line).is_ok() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    let p = PathBuf::from(trimmed);
+                    if is_mrpack_arg(&p) {
+                        let _ = tx.send(p);
+                    }
+                }
+            }
+        }
+    });
+    Some((Arc::new(std::sync::Mutex::new(rx)), port_file))
+}
+
 /// Fallback-aware GUI launcher with headless environment detection.
-fn run_desktop_gui(backend: BackendChoice, threads: Option<usize>, paths: MqPaths) -> Result<()> {
+fn run_desktop_gui(
+    backend: BackendChoice,
+    threads: Option<usize>,
+    paths: MqPaths,
+    pending_mrpack: Option<PathBuf>,
+) -> Result<()> {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let has_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
@@ -760,8 +844,11 @@ fn run_desktop_gui(backend: BackendChoice, threads: Option<usize>, paths: MqPath
     let num_t = threads.unwrap_or_else(default_cpu_threads);
     let pool = Arc::new(ComputePool::new(num_t));
 
-    let state = UiState::new(paths.clone(), config.clone(), pool.clone())
+    let mut state = UiState::new(paths.clone(), config.clone(), pool.clone())
         .context("Failed to initialize UI state")?;
+    let ipc_listener = start_mrpack_ipc_listener(&paths);
+    state.pending_mrpack_path = pending_mrpack.clone();
+    state.mrpack_ipc_receiver = ipc_listener.as_ref().map(|(rx, _)| rx.clone());
     let gui_backend = match backend {
         BackendChoice::Auto => GuiBackend::Auto,
         BackendChoice::Vulkan => GuiBackend::Vulkan,
@@ -772,20 +859,26 @@ fn run_desktop_gui(backend: BackendChoice, threads: Option<usize>, paths: MqPath
         "[MQ] Запуск графического интерфейса MQ Launcher (Backend: {:?})...",
         gui_backend
     );
-    match run_gui(state, gui_backend) {
+    let result = match run_gui(state, gui_backend) {
         Ok(()) => Ok(()),
         Err(e) if gui_backend != GuiBackend::Gl => {
             eprintln!(
                 "Не удалось инициализировать графический бэкенд {:?} ({e}). Переключение на запасной рендерер OpenGL (Glow)...",
                 gui_backend
             );
-            let fallback_state = UiState::new(paths, config, pool)
+            let mut fallback_state = UiState::new(paths, config, pool)
                 .context("Failed to initialize UI state for OpenGL fallback")?;
+            fallback_state.pending_mrpack_path = pending_mrpack;
+            fallback_state.mrpack_ipc_receiver = ipc_listener.as_ref().map(|(rx, _)| rx.clone());
             run_gui(fallback_state, GuiBackend::Gl)
                 .map_err(|err| anyhow::anyhow!("eframe error: {err}"))
         }
         Err(e) => Err(anyhow::anyhow!("eframe error: {e}")),
+    };
+    if let Some((_, port_file)) = ipc_listener {
+        let _ = std::fs::remove_file(port_file);
     }
+    result
 }
 
 async fn cmd_launch(args: LaunchArgs, paths: MqPaths) -> Result<()> {
@@ -3348,4 +3441,59 @@ async fn cmd_bench(args: BenchArgs) -> Result<()> {
     println!("================================================================================");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod mrpack_cli_tests {
+    use super::*;
+
+    #[test]
+    fn parses_positional_mrpack_argument() {
+        let cli = Cli::try_parse_from(["mq", r"C:\Users\Player\Downloads\My Pack.mrpack"])
+            .expect("should parse .mrpack path");
+        assert!(cli.command.is_none());
+        assert_eq!(
+            cli.open_pack.as_deref(),
+            Some(std::path::Path::new(
+                r"C:\Users\Player\Downloads\My Pack.mrpack"
+            ))
+        );
+        assert!(is_mrpack_arg(cli.open_pack.as_ref().unwrap()));
+
+        let upper = std::path::Path::new("/tmp/Pack.MRPACK");
+        assert!(is_mrpack_arg(upper));
+        assert!(!is_mrpack_arg(std::path::Path::new("/tmp/Pack.zip")));
+    }
+
+    #[test]
+    fn preserves_subcommands_and_bare_gui_launch() {
+        let bare = Cli::try_parse_from(["mq"]).expect("bare mq");
+        assert!(bare.command.is_none());
+        assert!(bare.open_pack.is_none());
+
+        let sub = Cli::try_parse_from(["mq", "about"]).expect("about subcommand");
+        assert!(matches!(sub.command, Some(Commands::About)));
+        assert!(sub.open_pack.is_none());
+    }
+
+    #[test]
+    fn forwards_mrpack_path_to_running_instance_ipc() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = MqPaths::with_root(tmp.path());
+        paths.ensure_dirs().unwrap();
+
+        let pack = tmp.path().join("demo.mrpack");
+        assert!(!try_forward_mrpack_to_running_instance(&paths, &pack));
+
+        let (rx, port_file) = start_mrpack_ipc_listener(&paths).expect("bind IPC listener");
+        assert!(try_forward_mrpack_to_running_instance(&paths, &pack));
+
+        let received = rx
+            .lock()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("receive forwarded .mrpack path");
+        assert_eq!(received, pack);
+        let _ = std::fs::remove_file(port_file);
+    }
 }

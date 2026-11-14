@@ -26,7 +26,7 @@ pub struct MqPaths {
 impl MqPaths {
     /// Resolves canonical paths for the active platform:
     /// - Checks `MQ_DATA_DIR` environment variable; if set and non-empty, returns `Self::with_root(val)`.
-    /// - Checks for `portable.flag` adjacent to `current_exe()`; if found, runs in portable mode rooted at the executable's directory.
+    /// - Checks for `portable.flag` adjacent to `current_exe()`; if found, runs in portable mode rooted at `<exe_dir>/data`.
     /// - On Windows: `%LOCALAPPDATA%\MQ` (data), `%APPDATA%\MQ` (config), `%LOCALAPPDATA%\MQ\cache` (cache).
     /// - On Linux: strictly follows XDG Base Directory specification (`~/.local/share/mq`, `~/.config/mq`, `~/.cache/mq`).
     pub fn platform_default() -> MqResult<Self> {
@@ -36,8 +36,8 @@ impl MqPaths {
 
         if let Ok(exe) = env::current_exe() {
             if let Some(exe_dir) = exe.parent() {
-                if exe_dir.join("portable.flag").is_file() {
-                    return Ok(Self::with_root(exe_dir));
+                if let Some(portable) = Self::portable_paths(exe_dir) {
+                    return Ok(portable);
                 }
             }
         }
@@ -60,6 +60,15 @@ impl MqPaths {
     #[inline]
     pub fn default_paths() -> MqResult<Self> {
         Self::platform_default()
+    }
+
+    /// Returns portable paths rooted at `<exe_dir>/data` when `portable.flag` exists in `exe_dir`.
+    pub fn portable_paths(exe_dir: &Path) -> Option<Self> {
+        if exe_dir.join("portable.flag").is_file() {
+            Some(Self::with_root(exe_dir.join("data")))
+        } else {
+            None
+        }
     }
 
     /// Resolves paths strictly following the XDG Base Directory Specification:
@@ -467,6 +476,20 @@ mod tests {
             tmp.path().join("install.journal")
         );
         assert!(paths.authlib_injector_jar().parent().unwrap().is_dir());
+    }
+
+    #[test]
+    fn portable_flag_uses_data_dir_next_to_exe() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        assert!(MqPaths::portable_paths(tmp.path()).is_none());
+
+        fs::write(tmp.path().join("portable.flag"), b"").expect("write portable.flag");
+        let paths = MqPaths::portable_paths(tmp.path()).expect("portable paths should resolve");
+        let expected_root = tmp.path().join("data");
+        assert_eq!(paths.data_dir, expected_root);
+        assert_eq!(paths.config_dir, expected_root.join("config"));
+        assert_eq!(paths.cache_dir, expected_root.join("cache"));
+        assert_eq!(paths.instances_dir(), expected_root.join("instances"));
     }
 
     #[test]

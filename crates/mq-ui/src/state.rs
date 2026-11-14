@@ -285,6 +285,11 @@ pub struct UiState {
     pub show_duplicate_dialog: bool,
     pub duplicate_target_name: String,
     pub show_delete_confirm_dialog: bool,
+
+    // Pending .mrpack import from CLI / IPC
+    pub pending_mrpack_path: Option<std::path::PathBuf>,
+    pub mrpack_ipc_receiver:
+        Option<Arc<std::sync::Mutex<std::sync::mpsc::Receiver<std::path::PathBuf>>>>,
 }
 
 impl UiState {
@@ -382,6 +387,8 @@ impl UiState {
             show_duplicate_dialog: false,
             duplicate_target_name: String::new(),
             show_delete_confirm_dialog: false,
+            pending_mrpack_path: None,
+            mrpack_ipc_receiver: None,
         })
     }
 
