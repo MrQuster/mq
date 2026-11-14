@@ -5,6 +5,15 @@
 
 ---
 
+## [v2.5.1] — 2026-11-14 ("Redesigned Rounded mq Ligature Icon")
+
+### Изменено
+- **Новая скруглённая иконка с лигатурой `mq`:**
+  - Перерисован фирменный знак в виде мягкого скруглённого медальона (`rx="88"`) с плавно соединёнными строчными буквами `mq`: `docs/assets/logo.svg`, `docs/assets/logo-light.svg`, `docs/assets/social-preview.png`, `packaging/mq.svg`, `packaging/windows/mq.ico`, `packaging/windows/wizard-small.bmp`, `packaging/windows/wizard-large.bmp` и внутри приложения (`crates/mq-ui/src/sidebar.rs`: `paint_mq_emblem`, `build_app_icon`).
+  - Обновлены скриншоты интерфейса в `docs/assets/screenshots/`.
+
+---
+
 ## [v2.5.0] — 2026-11-14 ("Calm Palette, Customization Studio & Batch Mod Queue")
 
 ### Изменено и добавлено
