@@ -35,6 +35,9 @@ pub enum VectorIcon {
     Copy,
     ChevronRight,
     ChevronDown,
+    ChevronsLeft,
+    ChevronsRight,
+    Activity,
     Warning,
     Shield,
     Download,
@@ -57,10 +60,20 @@ fn rel_pos(rect: Rect, nx: f32, ny: f32) -> Pos2 {
     )
 }
 
+#[inline]
+fn lucide_pos(rect: Rect, x: f32, y: f32) -> Pos2 {
+    Pos2::new(
+        rect.left() + rect.width() * (x / 24.0),
+        rect.top() + rect.height() * (y / 24.0),
+    )
+}
+
 /// Paints a geometric [`VectorIcon`] inside `rect` using `color` without any emoji glyphs.
 pub fn paint_vector_icon(painter: &Painter, rect: Rect, icon: VectorIcon, color: Color32) {
     let r = rect.shrink((rect.width().min(rect.height()) * 0.10).max(1.0));
-    let stroke_w = crate::state::safe_clamp_f32(r.width().min(r.height()) * 0.11, 1.3, 2.2);
+    let base_size = rect.width().min(rect.height());
+    // Lucide-calibrated 1.5px stroke at 16px icon size.
+    let stroke_w = crate::state::safe_clamp_f32(base_size * (1.5 / 16.0), 1.25, 2.25);
     let stroke = Stroke::new(stroke_w, color);
 
     match icon {
@@ -124,45 +137,50 @@ pub fn paint_vector_icon(painter: &Painter, rect: Rect, icon: VectorIcon, color:
         }
         VectorIcon::Layers => {
             let top_diamond = vec![
-                rel_pos(r, 0.50, 0.14),
-                rel_pos(r, 0.88, 0.34),
-                rel_pos(r, 0.50, 0.54),
-                rel_pos(r, 0.12, 0.34),
+                lucide_pos(rect, 12.0, 2.0),
+                lucide_pos(rect, 22.0, 7.0),
+                lucide_pos(rect, 12.0, 12.0),
+                lucide_pos(rect, 2.0, 7.0),
             ];
             painter.add(Shape::closed_line(top_diamond, stroke));
             painter.add(Shape::line(
                 vec![
-                    rel_pos(r, 0.12, 0.52),
-                    rel_pos(r, 0.50, 0.70),
-                    rel_pos(r, 0.88, 0.52),
+                    lucide_pos(rect, 2.0, 12.0),
+                    lucide_pos(rect, 12.0, 17.0),
+                    lucide_pos(rect, 22.0, 12.0),
                 ],
                 stroke,
             ));
             painter.add(Shape::line(
                 vec![
-                    rel_pos(r, 0.12, 0.68),
-                    rel_pos(r, 0.50, 0.86),
-                    rel_pos(r, 0.88, 0.68),
+                    lucide_pos(rect, 2.0, 17.0),
+                    lucide_pos(rect, 12.0, 22.0),
+                    lucide_pos(rect, 22.0, 17.0),
                 ],
                 stroke,
             ));
         }
         VectorIcon::Catalog => {
-            for (gx, gy) in [(0.14, 0.14), (0.56, 0.14), (0.14, 0.56), (0.56, 0.56)] {
-                let cell = Rect::from_min_max(rel_pos(r, gx, gy), rel_pos(r, gx + 0.30, gy + 0.30));
-                painter.rect_stroke(cell, CornerRadius::same(2), stroke, StrokeKind::Inside);
+            for (x0, y0) in [(3.0, 3.0), (14.0, 3.0), (3.0, 14.0), (14.0, 14.0)] {
+                let cell = Rect::from_min_max(
+                    lucide_pos(rect, x0, y0),
+                    lucide_pos(rect, x0 + 7.0, y0 + 7.0),
+                );
+                painter.rect_stroke(cell, CornerRadius::same(1), stroke, StrokeKind::Inside);
             }
         }
         VectorIcon::User => {
-            let head_c = rel_pos(r, 0.50, 0.32);
-            let head_r = r.width().min(r.height()) * 0.18;
+            let head_c = lucide_pos(rect, 12.0, 7.0);
+            let head_r = base_size * (4.0 / 24.0);
             painter.circle_stroke(head_c, head_r, stroke);
             painter.add(Shape::line(
                 vec![
-                    rel_pos(r, 0.18, 0.86),
-                    rel_pos(r, 0.26, 0.64),
-                    rel_pos(r, 0.74, 0.64),
-                    rel_pos(r, 0.82, 0.86),
+                    lucide_pos(rect, 5.0, 21.0),
+                    lucide_pos(rect, 5.0, 19.0),
+                    lucide_pos(rect, 7.0, 16.0),
+                    lucide_pos(rect, 17.0, 16.0),
+                    lucide_pos(rect, 19.0, 19.0),
+                    lucide_pos(rect, 19.0, 21.0),
                 ],
                 stroke,
             ));
@@ -180,10 +198,21 @@ pub fn paint_vector_icon(painter: &Painter, rect: Rect, icon: VectorIcon, color:
             }
         }
         VectorIcon::Settings => {
-            for (idx, y) in [0.24_f32, 0.50_f32, 0.76_f32].into_iter().enumerate() {
-                painter.line_segment([rel_pos(r, 0.14, y), rel_pos(r, 0.86, y)], stroke);
-                let knob_x = if idx == 1 { 0.66 } else { 0.34 };
-                painter.circle_filled(rel_pos(r, knob_x, y), stroke_w * 1.35, color);
+            let knob_r = base_size * (2.0 / 24.0);
+            for (y, kx) in [
+                (5.0_f32, 12.0_f32),
+                (12.0_f32, 8.0_f32),
+                (19.0_f32, 16.0_f32),
+            ] {
+                painter.line_segment(
+                    [lucide_pos(rect, 3.0, y), lucide_pos(rect, kx - 2.0, y)],
+                    stroke,
+                );
+                painter.circle_stroke(lucide_pos(rect, kx, y), knob_r, stroke);
+                painter.line_segment(
+                    [lucide_pos(rect, kx + 2.0, y), lucide_pos(rect, 21.0, y)],
+                    stroke,
+                );
             }
         }
         VectorIcon::Refresh => {
@@ -207,9 +236,9 @@ pub fn paint_vector_icon(painter: &Painter, rect: Rect, icon: VectorIcon, color:
         VectorIcon::ChevronRight => {
             painter.add(Shape::line(
                 vec![
-                    rel_pos(r, 0.34, 0.20),
-                    rel_pos(r, 0.68, 0.50),
-                    rel_pos(r, 0.34, 0.80),
+                    lucide_pos(rect, 9.0, 6.0),
+                    lucide_pos(rect, 15.0, 12.0),
+                    lucide_pos(rect, 9.0, 18.0),
                 ],
                 stroke,
             ));
@@ -217,9 +246,58 @@ pub fn paint_vector_icon(painter: &Painter, rect: Rect, icon: VectorIcon, color:
         VectorIcon::ChevronDown => {
             painter.add(Shape::line(
                 vec![
-                    rel_pos(r, 0.20, 0.36),
-                    rel_pos(r, 0.50, 0.68),
-                    rel_pos(r, 0.80, 0.36),
+                    lucide_pos(rect, 6.0, 9.0),
+                    lucide_pos(rect, 12.0, 15.0),
+                    lucide_pos(rect, 18.0, 9.0),
+                ],
+                stroke,
+            ));
+        }
+        VectorIcon::ChevronsLeft => {
+            painter.add(Shape::line(
+                vec![
+                    lucide_pos(rect, 11.0, 17.0),
+                    lucide_pos(rect, 6.0, 12.0),
+                    lucide_pos(rect, 11.0, 7.0),
+                ],
+                stroke,
+            ));
+            painter.add(Shape::line(
+                vec![
+                    lucide_pos(rect, 18.0, 17.0),
+                    lucide_pos(rect, 13.0, 12.0),
+                    lucide_pos(rect, 18.0, 7.0),
+                ],
+                stroke,
+            ));
+        }
+        VectorIcon::ChevronsRight => {
+            painter.add(Shape::line(
+                vec![
+                    lucide_pos(rect, 6.0, 17.0),
+                    lucide_pos(rect, 11.0, 12.0),
+                    lucide_pos(rect, 6.0, 7.0),
+                ],
+                stroke,
+            ));
+            painter.add(Shape::line(
+                vec![
+                    lucide_pos(rect, 13.0, 17.0),
+                    lucide_pos(rect, 18.0, 12.0),
+                    lucide_pos(rect, 13.0, 7.0),
+                ],
+                stroke,
+            ));
+        }
+        VectorIcon::Activity => {
+            painter.add(Shape::line(
+                vec![
+                    lucide_pos(rect, 2.0, 12.0),
+                    lucide_pos(rect, 6.0, 12.0),
+                    lucide_pos(rect, 9.0, 3.0),
+                    lucide_pos(rect, 15.0, 21.0),
+                    lucide_pos(rect, 18.0, 12.0),
+                    lucide_pos(rect, 22.0, 12.0),
                 ],
                 stroke,
             ));
@@ -248,16 +326,27 @@ pub fn paint_vector_icon(painter: &Painter, rect: Rect, icon: VectorIcon, color:
             painter.line_segment([rel_pos(r, 0.47, 0.64), rel_pos(r, 0.66, 0.40)], stroke);
         }
         VectorIcon::Download => {
-            let stem_top = rel_pos(r, 0.50, 0.16);
-            let stem_bottom = rel_pos(r, 0.50, 0.64);
-            painter.line_segment([stem_top, stem_bottom], stroke);
-            let wing_left = rel_pos(r, 0.28, 0.44);
-            let wing_right = rel_pos(r, 0.72, 0.44);
-            painter.line_segment([wing_left, stem_bottom], stroke);
-            painter.line_segment([wing_right, stem_bottom], stroke);
-            let tray_l = rel_pos(r, 0.18, 0.82);
-            let tray_r = rel_pos(r, 0.82, 0.82);
-            painter.line_segment([tray_l, tray_r], stroke);
+            painter.line_segment(
+                [lucide_pos(rect, 12.0, 3.0), lucide_pos(rect, 12.0, 15.0)],
+                stroke,
+            );
+            painter.add(Shape::line(
+                vec![
+                    lucide_pos(rect, 7.0, 10.0),
+                    lucide_pos(rect, 12.0, 15.0),
+                    lucide_pos(rect, 17.0, 10.0),
+                ],
+                stroke,
+            ));
+            painter.add(Shape::line(
+                vec![
+                    lucide_pos(rect, 3.0, 15.0),
+                    lucide_pos(rect, 3.0, 19.0),
+                    lucide_pos(rect, 21.0, 19.0),
+                    lucide_pos(rect, 21.0, 15.0),
+                ],
+                stroke,
+            ));
         }
         VectorIcon::Cross => {
             let p1 = rel_pos(r, 0.24, 0.24);
