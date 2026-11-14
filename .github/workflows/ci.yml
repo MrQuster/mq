@@ -118,7 +118,32 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Build Release mq.exe
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release --locked -p mq-cli
+
+      - name: Verify static CRT and PE metadata
+        shell: pwsh
+        run: |
+          $exe = ".\target\release\mq.exe"
+          $vi = (Get-Item $exe).VersionInfo
+          Write-Host "PE CompanyName=$($vi.CompanyName) ProductName=$($vi.ProductName) FileVersion=$($vi.FileVersion)"
+          if ($vi.CompanyName -ne "MrQuster") {
+            throw "Expected PE CompanyName 'MrQuster', got '$($vi.CompanyName)'"
+          }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            $dumpbin = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Filter "dumpbin.exe" -Recurse -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -like "*\Hostx64\x64\*" } | Select-Object -First 1
+            if ($dumpbin) {
+              $deps = (& $dumpbin.FullName /dependents $exe) -join "`n"
+              Write-Host $deps
+              if ($deps -match "VCRUNTIME140") {
+                throw "mq.exe unexpectedly depends on VCRUNTIME140.dll"
+              }
+            }
+          }
 
       - name: Verify Windows binary & CLI smoke checks
         shell: pwsh
@@ -129,4 +154,13 @@ jobs:
           .\target\release\mq.exe instances list
           .\target\release\mq.exe instances create "WinTest 1.20.1" --version 1.20.1 --loader vanilla
           .\target\release\mq.exe instances list
+          .\target\release\mq.exe launch --dry-run || $true
           .\target\release\mq.exe doctor --install 1.21.1 --json || $true
+
+      - name: Test Windows Inno Setup Installer
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts\ci\test-windows-installer.ps1
+
+      - name: Test install.ps1
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts\ci\test-install-ps1.ps1
