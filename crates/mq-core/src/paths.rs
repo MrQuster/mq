@@ -407,6 +407,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn xdg_explicit_overrides_and_relative_ignore_rules() {
         let paths = MqPaths::from_xdg_vars(
             Some(OsStr::new("/custom/data")),
