@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/home/honey/mq/target}"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 
 TMP_DIR="$(mktemp -d -t mq-verify-XXXXXX)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
@@ -42,7 +43,7 @@ run_check "cargo clippy --workspace --all-targets --locked -- -D warnings" "carg
 run_check "cargo test --workspace --locked" "cargo test --workspace --locked" "3"
 
 # 4. Forbidden stubs and placeholder markers
-run_check "No todo!/unimplemented!/TODO/FIXME/Coming soon in crates/" "! rg -n '\b(todo!|unimplemented!)\(|\bTODO\b|\bFIXME\b|Coming soon' crates/" "4"
+run_check "No todo!/unimplemented!/TODO/FIXME/XXX/HACK/Coming soon in crates/" "! rg -n '\b(todo!|unimplemented!)\(|\bTODO\b|\bFIXME\b|\bXXX\b|\bHACK\b|Coming soon' crates/" "4"
 
 # 5. The real CurseForge key must never be committed. Read it from the local
 #    0600 env file (or environment) so the secret itself is not stored here.

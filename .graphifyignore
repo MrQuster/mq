@@ -1,0 +1,7 @@
+target/
+dist/
+.git/
+graphify-out/
+docs/assets/
+.agent/
+.agents/
