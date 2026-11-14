@@ -12,8 +12,8 @@ pub mod platform;
 pub mod secret;
 
 pub use config::{
-    AppConfig, BackgroundStyle, GuiBackend, LaunchAction, ThemeConfig, ThemePreset, UiDensity,
-    ENV_CF_API_KEY, ENV_MS_CLIENT_ID,
+    builtin_cf_api_key, AppConfig, BackgroundStyle, GuiBackend, LaunchAction, ThemeConfig,
+    ThemePreset, UiDensity, ENV_CF_API_KEY, ENV_MS_CLIENT_ID,
 };
 pub use crash::{
     extract_panic_message, install_panic_hook, sanitize_crash_text, write_crash_report_for_panic,

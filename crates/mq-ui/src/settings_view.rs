@@ -952,6 +952,8 @@ impl SettingsView {
             "Ключ сохранён (файл с правами 0600)."
         } else if from_env {
             "Используется ключ из переменной MQ_CURSEFORGE_API_KEY."
+        } else if state.config.effective_cf_api_key().is_some() {
+            "Используется встроенный ключ CurseForge (каталог работает сразу)."
         } else {
             "Ключ не задан: CurseForge отключён, Modrinth работает полностью."
         };
@@ -959,8 +961,8 @@ impl SettingsView {
         ui.add_space(4.0);
         ui.label(
             RichText::new(
-                "Получите бесплатный личный ключ в консоли CurseForge и вставьте его ниже. \
-                 Общий ключ в лаунчер не вшит.",
+                "Каталог CurseForge работает из коробки со встроенным ключом. При желании вы можете \
+                 указать свой личный ключ из консоли CurseForge ниже.",
             )
             .color(tokens.text_muted),
         );

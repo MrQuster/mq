@@ -533,7 +533,7 @@ impl CurseForgeClient {
     }
 
     /// Creates a [`CurseForgeClient`] reading `$MQ_CURSEFORGE_API_KEY` (or legacy `$MQ_CF_API_KEY`)
-    /// from the process environment.
+    /// from the process environment, falling back to the built-in key unless disabled.
     pub fn from_env() -> MqResult<Self> {
         let key = std::env::var(ENV_CURSEFORGE_API_KEY)
             .ok()
@@ -544,6 +544,13 @@ impl CurseForgeClient {
                     .ok()
                     .map(|s| s.trim().to_owned())
                     .filter(|s| !s.is_empty())
+            })
+            .or_else(|| {
+                if mq_core::config::is_builtin_cf_key_disabled() {
+                    None
+                } else {
+                    Some(mq_core::config::builtin_cf_api_key())
+                }
             });
         Self::new(key)
     }

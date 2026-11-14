@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
 
 PackageIdentifier: MrQuster.MQ
-PackageVersion: 2.5.1
+PackageVersion: 2.6.0
 MinimumOSVersion: 10.0.0.0
 InstallerType: inno
 Scope: user
@@ -18,12 +18,12 @@ ReleaseDate: '2026-11-07'
 AppsAndFeaturesEntries:
   - DisplayName: MQ Launcher
     Publisher: MrQuster
-    DisplayVersion: 2.5.1
+    DisplayVersion: 2.6.0
     ProductCode: '{9D7C52A4-325A-4B6A-B68C-7C4E15F59D18}_is1'
     UpgradeCode: '{9D7C52A4-325A-4B6A-B68C-7C4E15F59D18}'
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/MrQuster/mq/releases/download/v2.5.1/MQ-Setup-2.5.1-x64.exe
+    InstallerUrl: https://github.com/MrQuster/mq/releases/download/v2.6.0/MQ-Setup-2.6.0-x64.exe
     InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000 # Calculated at release
 ManifestType: installer
 ManifestVersion: 1.6.0

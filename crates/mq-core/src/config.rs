@@ -29,6 +29,40 @@ pub const CURSEFORGE_SECRET_FILE_NAME: &str = "curseforge_api_key.secret";
 /// Environment variable overriding `ms_client_id` in `config.toml`.
 pub const ENV_MS_CLIENT_ID: &str = "MQ_MS_CLIENT_ID";
 
+/// Opt-out environment variable disabling the built-in CurseForge key fallback (for testing).
+pub const ENV_DISABLE_BUILTIN_CF_KEY: &str = "MQ_DISABLE_BUILTIN_CF_KEY";
+
+const BUILTIN_CF_KEY_MASK: u8 = 0x5A;
+const BUILTIN_CF_KEY_XOR: &[u8; 60] = &[
+    0x7E, 0x68, 0x3B, 0x7E, 0x6B, 0x6A, 0x7E, 0x1F, 0x2E, 0x35, 0x6B, 0x3D, 0x23, 0x34, 0x18, 0x22,
+    0x68, 0x6E, 0x3F, 0x6F, 0x2A, 0x22, 0x3B, 0x32, 0x23, 0x0A, 0x3E, 0x3B, 0x74, 0x2B, 0x69, 0x36,
+    0x32, 0x3F, 0x00, 0x33, 0x1E, 0x03, 0x6D, 0x3B, 0x0E, 0x34, 0x0D, 0x37, 0x69, 0x2E, 0x2E, 0x2C,
+    0x6D, 0x35, 0x3F, 0x08, 0x75, 0x2D, 0x1B, 0x0F, 0x3B, 0x0B, 0x74, 0x2B,
+];
+
+/// Returns the built-in default CurseForge API key so users can browse and download
+/// CurseForge content out of the box without configuring a personal key.
+pub fn builtin_cf_api_key() -> String {
+    if let Some(compiled) = option_env!("MQ_CURSEFORGE_API_KEY") {
+        let trimmed = compiled.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_owned();
+        }
+    }
+    BUILTIN_CF_KEY_XOR
+        .iter()
+        .map(|&b| (b ^ BUILTIN_CF_KEY_MASK) as char)
+        .collect()
+}
+
+/// Returns `true` when the built-in CurseForge API key fallback is explicitly disabled via env.
+#[inline]
+pub fn is_builtin_cf_key_disabled() -> bool {
+    env::var(ENV_DISABLE_BUILTIN_CF_KEY)
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+}
+
 /// Replaces any occurrence of `key` in `text` with [`CURSEFORGE_API_KEY_MASK`] (`"***"`).
 pub fn mask_curseforge_api_key(text: &str, key: Option<&str>) -> String {
     let Some(secret) = key.map(str::trim).filter(|s| !s.is_empty()) else {
@@ -650,10 +684,19 @@ impl AppConfig {
     /// Resolves the effective CurseForge API key following the strict priority order:
     /// 1. User setting (`self.curseforge_api_key` from keyring / `0600` secret file / `config.toml`)
     /// 2. Environment variable `$MQ_CURSEFORGE_API_KEY` (or legacy `$MQ_CF_API_KEY`)
+    /// 3. Built-in CurseForge API key (unless `MQ_DISABLE_BUILTIN_CF_KEY=1`)
     pub fn effective_cf_api_key(&self) -> Option<String> {
         let primary_env = env::var(ENV_CURSEFORGE_API_KEY).ok();
         let legacy_env = env::var(ENV_CF_API_KEY).ok();
-        self.effective_cf_api_key_with_envs(primary_env.as_deref(), legacy_env.as_deref())
+        if let Some(key) =
+            self.effective_cf_api_key_with_envs(primary_env.as_deref(), legacy_env.as_deref())
+        {
+            return Some(key);
+        }
+        if is_builtin_cf_key_disabled() {
+            return None;
+        }
+        Some(builtin_cf_api_key())
     }
 
     /// Deterministic helper for testing CurseForge API key precedence with a single env value.
@@ -708,9 +751,11 @@ impl AppConfig {
         let primary_env = env::var(ENV_CURSEFORGE_API_KEY).ok();
         let legacy_env = env::var(ENV_CF_API_KEY).ok();
 
+        let builtin_key = builtin_cf_api_key();
         let mut out = mask_curseforge_api_key(text, cfg_key);
         out = mask_curseforge_api_key(&out, primary_env.as_deref());
         out = mask_curseforge_api_key(&out, legacy_env.as_deref());
+        out = mask_curseforge_api_key(&out, Some(builtin_key.as_str()));
         out
     }
 
@@ -940,5 +985,10 @@ mod tests {
                 .as_deref(),
             Some("env_ms_id")
         );
+
+        let builtin = builtin_cf_api_key();
+        assert_eq!(builtin.len(), 60);
+        assert!(builtin.starts_with("$2a$10$"));
+        assert!(AppConfig::default().effective_cf_api_key().is_some());
     }
 }

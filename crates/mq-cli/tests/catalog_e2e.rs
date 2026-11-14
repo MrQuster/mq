@@ -47,12 +47,13 @@ async fn e2e_cli_search_modrinth_and_curseforge_key_behavior() {
         "expected Sodium in output: {stdout}"
     );
 
-    // 2. CurseForge search without key fails cleanly with an informative message
+    // 2. CurseForge search fails cleanly when the built-in key is explicitly disabled
     let no_key = Command::new(mq_bin())
         .args(["search", "sodium", "--source", "curseforge"])
         .env("MQ_DATA_DIR", dir.path())
         .env_remove("MQ_CURSEFORGE_API_KEY")
         .env_remove("MQ_CF_API_KEY")
+        .env("MQ_DISABLE_BUILTIN_CF_KEY", "1")
         .output()
         .expect("run mq search curseforge without key");
     assert!(
@@ -60,7 +61,27 @@ async fn e2e_cli_search_modrinth_and_curseforge_key_behavior() {
         "expected curseforge search without key to fail"
     );
 
-    // 3. CurseForge search with key succeeds
+    // 3. CurseForge search succeeds out of the box using the built-in key
+    let with_builtin = Command::new(mq_bin())
+        .args(["search", "sodium", "--source", "curseforge"])
+        .env("MQ_DATA_DIR", dir.path())
+        .env_remove("MQ_CURSEFORGE_API_KEY")
+        .env_remove("MQ_CF_API_KEY")
+        .env_remove("MQ_DISABLE_BUILTIN_CF_KEY")
+        .output()
+        .expect("run mq search curseforge with built-in key");
+    assert!(
+        with_builtin.status.success(),
+        "mq search curseforge with built-in key failed: {}",
+        String::from_utf8_lossy(&with_builtin.stderr)
+    );
+    let builtin_stdout = String::from_utf8_lossy(&with_builtin.stdout);
+    assert!(
+        builtin_stdout.contains("Sodium"),
+        "expected Sodium in built-in CF output: {builtin_stdout}"
+    );
+
+    // 4. CurseForge search with explicit env key succeeds
     let with_key = Command::new(mq_bin())
         .args(["search", "sodium", "--source", "curseforge"])
         .env("MQ_DATA_DIR", dir.path())

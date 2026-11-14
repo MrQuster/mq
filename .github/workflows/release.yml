@@ -45,6 +45,8 @@ jobs:
             ${{ runner.os }}-cargo-release-linux-
 
       - name: Build release binary
+        env:
+          MQ_CURSEFORGE_API_KEY: ${{ secrets.MQ_CURSEFORGE_API_KEY }}
         run: cargo build --release -p mq-cli
 
       - name: Prepare Linux artifacts
@@ -97,6 +99,7 @@ jobs:
       - name: Build release binary
         env:
           RUSTFLAGS: -C target-feature=+crt-static
+          MQ_CURSEFORGE_API_KEY: ${{ secrets.MQ_CURSEFORGE_API_KEY }}
         run: cargo build --release -p mq-cli
 
       - name: Verify static CRT

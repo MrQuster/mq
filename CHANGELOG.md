@@ -5,6 +5,16 @@
 
 ---
 
+## [v2.6.0] — 2026-11-14 ("Out-of-the-Box CurseForge Mods & Rounded mq Icon")
+
+### Добавлено и изменено
+- **Встроенный ключ CurseForge API v1 из коробки:**
+  - Встроена поддержка скачивания модов, ресурс-паков, шейдеров и сборок с CurseForge сразу после установки без необходимости вручную получать персональный API-ключ (`mq_core::builtin_cf_api_key`, fallback в `effective_cf_api_key` и `CurseForgeClient::from_env`, автоматическое маскирование в логах через `sanitize_cf_api_key`).
+  - Возможность указать свой личный ключ в **Настройки → Каталог** или переменной `MQ_CURSEFORGE_API_KEY` полностью сохранена и имеет приоритет.
+  - В CI/Release-пайплайн добавлена передача секрета `MQ_CURSEFORGE_API_KEY` при сборке релизных бинарников для Linux и Windows.
+
+---
+
 ## [v2.5.1] — 2026-11-14 ("Redesigned Rounded mq Ligature Icon")
 
 ### Изменено
