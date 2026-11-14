@@ -7,6 +7,7 @@
 //! - Concurrent installations of the same Minecraft version/instance
 
 use std::fs::Permissions;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -17,20 +18,37 @@ use std::time::Duration;
 #[derive(Debug)]
 pub struct ReadOnlyGuard {
     path: PathBuf,
+    #[cfg(unix)]
     original_mode: u32,
+    #[cfg(not(unix))]
+    original_readonly: bool,
 }
 
 impl ReadOnlyGuard {
-    /// Changes `path` mode to `0o555` (read + execute, no write).
+    /// Changes `path` mode to read-only (`0o555` on Unix).
     pub fn new<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         let p = path.as_ref().to_path_buf();
         let metadata = std::fs::metadata(&p)?;
-        let original_mode = metadata.permissions().mode();
-        std::fs::set_permissions(&p, Permissions::from_mode(0o555))?;
-        Ok(Self {
-            path: p,
-            original_mode,
-        })
+        #[cfg(unix)]
+        {
+            let original_mode = metadata.permissions().mode();
+            std::fs::set_permissions(&p, Permissions::from_mode(0o555))?;
+            Ok(Self {
+                path: p,
+                original_mode,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            let mut perms: Permissions = metadata.permissions();
+            let original_readonly = perms.readonly();
+            perms.set_readonly(true);
+            std::fs::set_permissions(&p, perms)?;
+            Ok(Self {
+                path: p,
+                original_readonly,
+            })
+        }
     }
 
     /// Explicit path reference.
@@ -41,7 +59,19 @@ impl ReadOnlyGuard {
 
 impl Drop for ReadOnlyGuard {
     fn drop(&mut self) {
-        let _ = std::fs::set_permissions(&self.path, Permissions::from_mode(self.original_mode));
+        #[cfg(unix)]
+        {
+            let _ =
+                std::fs::set_permissions(&self.path, Permissions::from_mode(self.original_mode));
+        }
+        #[cfg(not(unix))]
+        {
+            if let Ok(meta) = std::fs::metadata(&self.path) {
+                let mut perms = meta.permissions();
+                perms.set_readonly(self.original_readonly);
+                let _ = std::fs::set_permissions(&self.path, perms);
+            }
+        }
     }
 }
 
