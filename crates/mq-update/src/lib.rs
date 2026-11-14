@@ -77,7 +77,7 @@ pub fn extract_sha256_for_targets(
         if parts.len() >= 2 {
             let hash = parts[0];
             let filename = parts[1].trim_start_matches('*');
-            if target_filenames.iter().any(|t| *t == filename) {
+            if target_filenames.contains(&filename) {
                 return Some(hash.to_string());
             }
         }
