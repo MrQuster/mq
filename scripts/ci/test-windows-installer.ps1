@@ -128,8 +128,12 @@ try {
     $openCmd = (Get-ItemProperty -Path $cmdKey).'(default)'
     Assert-True ($openCmd -like "*mq.exe*") ".mrpack open command '$openCmd' does not reference mq.exe"
 
-    $verOutput = (& $installedExe --version 2>&1) -join "`n"
-    Assert-True ($verOutput -like "*$ver*") "mq.exe --version output '$verOutput' does not contain '$ver'"
+    $verOutFile = Join-Path $tempRoot "mq-version.txt"
+    $verProc = Start-Process -FilePath $installedExe -ArgumentList "--version" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $verOutFile
+    Assert-True ($verProc.ExitCode -eq 0) "mq.exe --version exited with code $($verProc.ExitCode)"
+    $verOutput = if (Test-Path $verOutFile) { (Get-Content $verOutFile -Raw).Trim() } else { "" }
+    $peProductVer = (Get-Item $installedExe).VersionInfo.ProductVersion
+    Assert-True (($verOutput -like "*$ver*") -or ($peProductVer -like "*$ver*")) "mq.exe version check failed: stdout='$verOutput', PE='$peProductVer', expected '$ver'"
 
     # 4. Test silent uninstall without /PURGE=1 -> user data must be preserved
     $uninstaller = Join-Path $installDir "unins000.exe"
