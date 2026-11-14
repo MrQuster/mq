@@ -138,22 +138,26 @@ async fn test_multithreading_equivalence_single_vs_multi_threaded() {
     let cmd1 = build_launch_command(&ctx1).unwrap();
     let cmd2 = build_launch_command(&ctx2).unwrap();
 
-    let norm1: Vec<String> = cmd1
-        .args
-        .iter()
-        .map(|s| {
-            s.replace(temp1.path().to_str().unwrap(), "<ROOT>")
-                .replace("inst1", "<INST>")
-        })
-        .collect();
-    let norm2: Vec<String> = cmd2
-        .args
-        .iter()
-        .map(|s| {
-            s.replace(temp2.path().to_str().unwrap(), "<ROOT>")
-                .replace("inst2", "<INST>")
-        })
-        .collect();
+    let normalize = |args: &[String], root: &std::path::Path, inst: &str| -> Vec<String> {
+        let canon = root
+            .canonicalize()
+            .ok()
+            .and_then(|p| p.to_str().map(str::to_owned));
+        let raw = root.to_str().unwrap();
+        args.iter()
+            .map(|s| {
+                let s = if let Some(ref c) = canon {
+                    s.replace(c.as_str(), "<ROOT>")
+                } else {
+                    s.clone()
+                };
+                s.replace(raw, "<ROOT>").replace(inst, "<INST>")
+            })
+            .collect()
+    };
+
+    let norm1 = normalize(&cmd1.args, temp1.path(), "inst1");
+    let norm2 = normalize(&cmd2.args, temp2.path(), "inst2");
 
     assert_eq!(cmd1.program, cmd2.program);
     assert_eq!(norm1, norm2);
