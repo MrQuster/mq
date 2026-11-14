@@ -95,7 +95,27 @@ jobs:
             ${{ runner.os }}-cargo-release-win-
 
       - name: Build release binary
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release -p mq-cli
+
+      - name: Verify static CRT
+        shell: pwsh
+        run: |
+          $exe = "target\release\mq.exe"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            $dumpbin = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" -Filter "dumpbin.exe" -Recurse -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -like "*\Hostx64\x64\*" } | Select-Object -First 1
+            if ($dumpbin) {
+              $deps = (& $dumpbin.FullName /dependents $exe) -join "`n"
+              Write-Host $deps
+              if ($deps -match "VCRUNTIME140") {
+                throw "mq.exe unexpectedly depends on VCRUNTIME140.dll"
+              }
+            }
+          }
 
       - name: Prepare Windows standalone and portable artifacts
         shell: pwsh
@@ -118,8 +138,10 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: |
-          choco install innosetup --no-progress
-          echo "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) {
+            choco install innosetup --no-progress -y
+            echo "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
 
       - name: Build Inno Setup Installer
         shell: pwsh
@@ -134,7 +156,7 @@ jobs:
           path: |
             dist\mq-windows-x86_64.exe
             dist\mq-windows-x86_64-portable.zip
-            dist\MQ-Setup-*.exe
+            dist\MQ-Setup-*-x64.exe
 
   publish:
     name: Sign, Attest & Publish Release
@@ -211,7 +233,7 @@ jobs:
             irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1 | iex
             ```
             
-            Or download the standalone Inno Setup installer (`MQ-Setup-${{ github.ref_name }}.exe`) or portable ZIP (`mq-windows-x86_64-portable.zip`).
+            Or download the standalone Inno Setup installer (`MQ-Setup-<version>-x64.exe`) or portable ZIP (`mq-windows-x86_64-portable.zip`).
             
             ---
             
