@@ -1,6 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="512" height="512">
-  <rect x="8" y="8" width="240" height="240" rx="54" fill="#12151B" stroke="#2A313E" stroke-width="4"/>
-  <rect x="50" y="50" width="151" height="151" rx="24" fill="none" stroke="#4C9A82" stroke-width="22"/>
-  <line x1="176" y1="176" x2="218" y2="218" stroke="#4C9A82" stroke-width="24" stroke-linecap="round"/>
-  <path d="M 87 156 L 87 90 L 125 128 L 163 90 L 163 156" fill="none" stroke="#E6E8EE" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#181D26"/>
+      <stop offset="100%" stop-color="#0E1117"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2B3545"/>
+      <stop offset="100%" stop-color="#1B222D"/>
+    </linearGradient>
+    <linearGradient id="sage" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#58AD93"/>
+      <stop offset="100%" stop-color="#438973"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="88" fill="url(#bg)" stroke="url(#rim)" stroke-width="4"/>
+  <path d="M 42 144 L 42 101 A 19 19 0 0 1 80 101 L 80 144 M 80 101 A 19 19 0 0 1 118 101 L 118 124 A 20 20 0 0 0 158 124 L 158 112" fill="none" stroke="#ECF0F6" stroke-width="18.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 200 103 A 21 21 0 0 0 158 103 L 158 123 A 21 21 0 0 0 200 123 Z" fill="none" stroke="url(#sage)" stroke-width="18.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 200 84 L 200 170 A 14 14 0 0 0 214 184 L 216 184" fill="none" stroke="url(#sage)" stroke-width="18.5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

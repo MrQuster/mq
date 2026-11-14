@@ -234,9 +234,48 @@ pub const fn account_source_label(kind: AccountKind) -> &'static str {
     }
 }
 
-/// Paints the minimalist geometric `MQ` emblem inside `rect` (clean squircle + `Q` frame + `M` glyph).
+fn push_arc(
+    pts: &mut Vec<[f32; 2]>,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    deg_start: f32,
+    deg_end: f32,
+    steps: usize,
+) {
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let rad = (deg_start + (deg_end - deg_start) * t).to_radians();
+        pts.push([(cx + r * rad.cos()) / 256.0, (cy + r * rad.sin()) / 256.0]);
+    }
+}
+
+/// Returns the normalized `[0..1]` strokes for the connected `mq` ligature (`m` left stem/arch,
+/// `m`-to-`q` valley bridge, `q` closed bowl, `q` descender hook).
+fn mq_ligature_strokes(arc_steps: usize) -> [Vec<[f32; 2]>; 4] {
+    let mut m_left = vec![[42.0 / 256.0, 144.0 / 256.0]];
+    push_arc(&mut m_left, 61.0, 101.0, 19.0, 180.0, 360.0, arc_steps);
+    m_left.push([80.0 / 256.0, 144.0 / 256.0]);
+
+    let mut m_bridge = Vec::new();
+    push_arc(&mut m_bridge, 99.0, 101.0, 19.0, 180.0, 360.0, arc_steps);
+    push_arc(&mut m_bridge, 138.0, 124.0, 20.0, 180.0, 0.0, arc_steps);
+    m_bridge.push([158.0 / 256.0, 112.0 / 256.0]);
+
+    let mut q_bowl = Vec::new();
+    push_arc(&mut q_bowl, 179.0, 103.0, 21.0, 360.0, 180.0, arc_steps);
+    push_arc(&mut q_bowl, 179.0, 123.0, 21.0, 180.0, 0.0, arc_steps);
+
+    let mut q_stem = vec![[200.0 / 256.0, 84.0 / 256.0]];
+    push_arc(&mut q_stem, 214.0, 170.0, 14.0, 180.0, 90.0, arc_steps / 2);
+    q_stem.push([216.0 / 256.0, 184.0 / 256.0]);
+
+    [m_left, m_bridge, q_bowl, q_stem]
+}
+
+/// Paints the minimalist rounded `mq` ligature monogram emblem inside `rect`.
 pub fn paint_mq_emblem(painter: &Painter, rect: Rect, tokens: &Tokens) {
-    let rx = (rect.width() * 0.22).round().max(4.0);
+    let rx = (rect.width() * 0.35).round().max(6.0);
     let corner = CornerRadius::same(rx as u8);
     painter.rect_filled(rect, corner, tokens.bg_surface);
     painter.rect_stroke(
@@ -246,49 +285,59 @@ pub fn paint_mq_emblem(painter: &Painter, rect: Rect, tokens: &Tokens) {
         StrokeKind::Inside,
     );
 
-    let p = |nx: f32, ny: f32| {
-        Pos2::new(
-            rect.left() + rect.width() * nx,
-            rect.top() + rect.height() * ny,
-        )
+    let map_pts = |pts: &[[f32; 2]]| -> Vec<Pos2> {
+        pts.iter()
+            .map(|&[nx, ny]| {
+                Pos2::new(
+                    rect.left() + rect.width() * nx,
+                    rect.top() + rect.height() * ny,
+                )
+            })
+            .collect()
     };
 
-    // Outer geometric `Q` rounded-square ring + bottom-right diagonal tail
-    let q_rect = Rect::from_min_max(p(0.19, 0.19), p(0.79, 0.79));
-    let q_stroke_w = (rect.width() * 0.085).clamp(1.6, 4.0);
-    painter.rect_stroke(
-        q_rect,
-        CornerRadius::same((rect.width() * 0.14).round().max(3.0) as u8),
-        Stroke::new(q_stroke_w, tokens.accent),
-        StrokeKind::Middle,
-    );
-    painter.line_segment(
-        [p(0.69, 0.69), p(0.85, 0.85)],
-        Stroke::new((rect.width() * 0.095).clamp(1.8, 4.4), tokens.accent),
-    );
+    let stroke_w = (rect.width() * 0.072).clamp(1.6, 3.6);
+    let cap_r = stroke_w * 0.5;
+    let m_stroke = Stroke::new(stroke_w, tokens.text);
+    let q_stroke = Stroke::new(stroke_w, tokens.accent);
+    let [m_left, m_bridge, q_bowl, q_stem] = mq_ligature_strokes(14);
 
-    // Centered crisp geometric `M` inside the `Q` frame
-    let m_stroke = Stroke::new((rect.width() * 0.082).clamp(1.6, 3.8), tokens.text);
-    let m_pts = vec![
-        p(0.34, 0.61),
-        p(0.34, 0.35),
-        p(0.49, 0.50),
-        p(0.64, 0.35),
-        p(0.64, 0.61),
-    ];
-    painter.add(Shape::line(m_pts, m_stroke));
+    let m_left_pos = map_pts(&m_left);
+    if let (Some(&first), Some(&last)) = (m_left_pos.first(), m_left_pos.last()) {
+        painter.add(Shape::line(m_left_pos.clone(), m_stroke));
+        painter.circle_filled(first, cap_r, tokens.text);
+        painter.circle_filled(last, cap_r, tokens.text);
+    }
+
+    let m_bridge_pos = map_pts(&m_bridge);
+    painter.add(Shape::line(m_bridge_pos, m_stroke));
+
+    let q_bowl_pos = map_pts(&q_bowl);
+    painter.add(Shape::closed_line(q_bowl_pos, q_stroke));
+
+    let q_stem_pos = map_pts(&q_stem);
+    if let (Some(&first), Some(&last)) = (q_stem_pos.first(), q_stem_pos.last()) {
+        painter.add(Shape::line(q_stem_pos.clone(), q_stroke));
+        painter.circle_filled(first, cap_r, tokens.accent);
+        painter.circle_filled(last, cap_r, tokens.accent);
+    }
 }
 
-/// Builds a `64x64` antialiased window/taskbar icon matching the minimalist geometric `MQ` emblem.
+/// Builds a `64x64` antialiased window/taskbar icon matching the rounded `mq` ligature monogram.
 pub fn build_app_icon() -> egui::IconData {
     const SIZE: usize = 64;
     const SS: usize = 4; // 4x4 supersampling for crisp subpixel edges
 
     let mut rgba = vec![0u8; SIZE * SIZE * 4];
-    let bg = [0x12u8, 0x15, 0x1B];
-    let border = [0x2A, 0x31, 0x3E];
+    let bg = [0x13u8, 0x17, 0x1F];
+    let border = [0x29, 0x32, 0x41];
     let accent = [0x4C, 0x9A, 0x82];
-    let fg = [0xE6, 0xE8, 0xEE];
+    let fg = [0xEC, 0xF0, 0xF6];
+
+    let [m_left, m_bridge, mut q_bowl, q_stem] = mq_ligature_strokes(14);
+    if let Some(&first) = q_bowl.first() {
+        q_bowl.push(first);
+    }
 
     fn sd_rounded_box(px: f32, py: f32, cx: f32, cy: f32, hx: f32, hy: f32, r: f32) -> f32 {
         let qx = (px - cx).abs() - (hx - r);
@@ -309,6 +358,16 @@ pub fn build_app_icon() -> egui::IconData {
         (dx * dx + dy * dy).sqrt()
     }
 
+    fn sd_polyline(px: f32, py: f32, pts: &[[f32; 2]]) -> f32 {
+        let mut best = f32::MAX;
+        for w in pts.windows(2) {
+            best = best.min(sd_segment(px, py, w[0][0], w[0][1], w[1][0], w[1][1]));
+        }
+        best
+    }
+
+    let stroke_r = 18.5 / 256.0 * 0.5;
+
     for y in 0..SIZE {
         for x in 0..SIZE {
             let mut acc_r = 0.0_f32;
@@ -321,28 +380,23 @@ pub fn build_app_icon() -> egui::IconData {
                     let nx = ((x * SS + sx) as f32 + 0.5) / ((SIZE * SS) as f32);
                     let ny = ((y * SS + sy) as f32 + 0.5) / ((SIZE * SS) as f32);
 
-                    let d_outer = sd_rounded_box(nx, ny, 0.5, 0.5, 0.47, 0.47, 0.11);
+                    let d_outer = sd_rounded_box(nx, ny, 0.5, 0.5, 0.468, 0.468, 0.343);
                     if d_outer > 0.0 {
                         continue;
                     }
 
-                    let mut col = if d_outer > -0.022 { border } else { bg };
+                    let mut col = if d_outer > -0.020 { border } else { bg };
 
-                    let d_q_box =
-                        sd_rounded_box(nx, ny, 0.49, 0.49, 0.295, 0.295, 0.085).abs() - 0.044;
-                    let d_q_tail = sd_segment(nx, ny, 0.69, 0.69, 0.85, 0.85) - 0.048;
-                    if d_q_box.min(d_q_tail) <= 0.0 {
-                        col = accent;
-                    }
-
-                    let m_r = 0.041;
-                    let d_m = sd_segment(nx, ny, 0.34, 0.61, 0.34, 0.35)
-                        .min(sd_segment(nx, ny, 0.34, 0.35, 0.49, 0.50))
-                        .min(sd_segment(nx, ny, 0.49, 0.50, 0.64, 0.35))
-                        .min(sd_segment(nx, ny, 0.64, 0.35, 0.64, 0.61))
-                        - m_r;
+                    let d_m =
+                        sd_polyline(nx, ny, &m_left).min(sd_polyline(nx, ny, &m_bridge)) - stroke_r;
                     if d_m <= 0.0 {
                         col = fg;
+                    }
+
+                    let d_q =
+                        sd_polyline(nx, ny, &q_bowl).min(sd_polyline(nx, ny, &q_stem)) - stroke_r;
+                    if d_q <= 0.0 {
+                        col = accent;
                     }
 
                     acc_r += col[0] as f32;
