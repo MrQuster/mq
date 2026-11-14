@@ -420,7 +420,7 @@ mod tests {
         let (mut st, _t) = state();
         let inst = st
             .instance_mgr
-            .create_instance("Test", "1.21.1", ModLoaderKind::Fabric, None)
+            .create_instance("Test", "1.21.4", ModLoaderKind::Fabric, None)
             .unwrap();
         st.instances = st.instance_mgr.list_instances().unwrap();
         st.selected_instance_id = Some(inst.id.clone());
@@ -428,7 +428,7 @@ mod tests {
         st.open_install_content(hit(ProjectKind::Mod));
         match st.cmd_receiver.try_recv().unwrap() {
             UiWorkerCommand::PlanInstall { req, request_id } => {
-                assert_eq!(req.mc_version, "1.21.1");
+                assert_eq!(req.mc_version, "1.21.4");
                 assert_eq!(req.loader, Some(ModLoaderKind::Fabric));
                 assert_eq!(request_id, st.install.as_ref().unwrap().request_id);
             }
@@ -472,7 +472,7 @@ mod tests {
         let (mut st, _t) = state();
         let inst = st
             .instance_mgr
-            .create_instance("Test", "1.21.1", ModLoaderKind::Fabric, None)
+            .create_instance("Test", "1.21.4", ModLoaderKind::Fabric, None)
             .unwrap();
         let spec = RetrySpec::Content {
             instance_id: inst.id.clone(),
@@ -498,7 +498,7 @@ mod tests {
         let (mut st, _t) = state();
         let inst = st
             .instance_mgr
-            .create_instance("Test", "1.21.1", ModLoaderKind::Fabric, None)
+            .create_instance("Test", "1.21.4", ModLoaderKind::Fabric, None)
             .unwrap();
         st.instances = st.instance_mgr.list_instances().unwrap();
         st.selected_instance_id = Some(inst.id.clone());

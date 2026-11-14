@@ -189,18 +189,30 @@ impl MqApp {
                             .timeout(std::time::Duration::from_secs(12))
                             .build()
                             .unwrap_or_default();
-                        if let Ok(manifest) = mq_meta::fetch_version_manifest(&client, None).await {
-                            let versions = manifest
-                                .versions
-                                .into_iter()
-                                .map(|v| (v.id, v.release_type))
-                                .collect();
-                            let _ =
-                                resp_tx.send(UiWorkerResponse::VersionManifestFetched(versions));
-                            bus.publish(mq_core::Event::PhaseCompleted {
-                                phase: "manifest_fetch".to_string(),
-                                elapsed_ms: 0,
-                            });
+                        match mq_meta::fetch_version_manifest(&client, None).await {
+                            Ok(mut manifest) => {
+                                manifest.sort_by_release_time_desc();
+                                let latest_release = Some(manifest.latest.release);
+                                let versions = manifest
+                                    .versions
+                                    .into_iter()
+                                    .map(|v| (v.id, v.release_type))
+                                    .collect();
+                                let _ = resp_tx.send(UiWorkerResponse::VersionManifestFetched {
+                                    latest_release,
+                                    versions,
+                                });
+                                bus.publish(mq_core::Event::PhaseCompleted {
+                                    phase: "manifest_fetch".to_string(),
+                                    elapsed_ms: 0,
+                                });
+                            }
+                            Err(_) => {
+                                let _ = resp_tx.send(UiWorkerResponse::VersionManifestFetched {
+                                    latest_release: None,
+                                    versions: Vec::new(),
+                                });
+                            }
                         }
                     });
                 }
@@ -1810,7 +1822,7 @@ mod tests {
         let journal = mq_core::crash::InstallJournal::start(
             &paths,
             "inst-1",
-            "1.21.1",
+            "1.21.4",
             "fabric",
             "client_jar",
         )
@@ -1824,12 +1836,12 @@ mod tests {
         let mut app = MqApp::from_state(state);
         assert!(app.recovery_journal.is_some());
         let rec = app.recovery_journal.as_ref().unwrap();
-        assert_eq!(rec.mc_version, "1.21.1");
+        assert_eq!(rec.mc_version, "1.21.4");
         assert_eq!(rec.stage, "client_jar");
 
         // Verify diagnostic summary formatting
         let diag = rec.format_diagnostic_summary(&paths);
-        assert!(diag.contains("1.21.1"));
+        assert!(diag.contains("1.21.4"));
         assert!(diag.contains("client_jar"));
 
         // Render frame with recovery dialog active

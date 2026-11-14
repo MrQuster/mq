@@ -510,7 +510,7 @@ mod tests {
         // Java missing
         let err_java = InstallError::from_error_str(
             InstallStage::JavaRuntime,
-            "JavaNotFound: no compatible JRE detected for Minecraft 1.21.1",
+            "JavaNotFound: no compatible JRE detected for Minecraft 1.21.4",
         );
         assert!(err_java.localized_title.contains("версия Java"));
 

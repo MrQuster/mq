@@ -10,6 +10,7 @@ use mq_instances::{
     ping_server, restore_world, save_servers_dat, InstanceManifest, ServerEntry,
 };
 
+use crate::components::button::{button_primary, button_secondary};
 use crate::components::{
     render_badge, render_underline_tabs, segmented_switch, BadgeKind, FilterChip, SearchField,
     SegmentedOption, Select, SelectOption,
@@ -55,12 +56,12 @@ impl McVersionCategory {
 
 /// All official release versions of Minecraft Java Edition in reverse chronological order.
 pub const ALL_MC_RELEASES: &[&str] = &[
-    "1.21.4", "1.21.3", "1.21.2", "1.21.1", "1.21", "1.20.6", "1.20.5", "1.20.4", "1.20.3",
-    "1.20.2", "1.20.1", "1.20", "1.19.4", "1.19.3", "1.19.2", "1.19.1", "1.19", "1.18.2", "1.18.1",
-    "1.18", "1.17.1", "1.17", "1.16.5", "1.16.4", "1.16.3", "1.16.2", "1.16.1", "1.16", "1.15.2",
-    "1.15.1", "1.15", "1.14.4", "1.14.3", "1.14.2", "1.14.1", "1.14", "1.13.2", "1.13.1", "1.13",
-    "1.12.2", "1.12.1", "1.12", "1.11.2", "1.11", "1.10.2", "1.10.1", "1.10", "1.9.4", "1.9.2",
-    "1.9", "1.8.9", "1.8.8", "1.8", "1.7.10", "1.7.9", "1.7.2", "1.6.4", "1.6.2", "1.5.2", "1.4.7",
+    "1.21.4", "1.21.3", "1.21.2", "1.21", "1.20.6", "1.20.5", "1.20.4", "1.20.3", "1.20.2",
+    "1.20.1", "1.20", "1.19.4", "1.19.3", "1.19.2", "1.19.1", "1.19", "1.18.2", "1.18.1", "1.18",
+    "1.17.1", "1.17", "1.16.5", "1.16.4", "1.16.3", "1.16.2", "1.16.1", "1.16", "1.15.2", "1.15.1",
+    "1.15", "1.14.4", "1.14.3", "1.14.2", "1.14.1", "1.14", "1.13.2", "1.13.1", "1.13", "1.12.2",
+    "1.12.1", "1.12", "1.11.2", "1.11", "1.10.2", "1.10.1", "1.10", "1.9.4", "1.9.2", "1.9",
+    "1.8.9", "1.8.8", "1.8", "1.7.10", "1.7.9", "1.7.2", "1.6.4", "1.6.2", "1.5.2", "1.4.7",
     "1.3.2", "1.2.5", "1.1", "1.0.0",
 ];
 
@@ -96,7 +97,6 @@ pub const ALL_MC_SNAPSHOTS: &[&str] = &[
     "24w35a",
     "24w34a",
     "24w33a",
-    "1.21.1-rc1",
     "24w14a",
     "24w13a",
     "24w12a",
@@ -159,8 +159,28 @@ pub const ALL_MC_ALPHAS: &[&str] = &[
     "rd-132211",
 ];
 
-/// Highlighted popular versions for quick 1-click selection chips.
-pub const POPULAR_CHIPS: &[&str] = &["1.21.1", "1.20.1", "1.16.5", "1.12.2", "1.8.9", "b1.7.3"];
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoaderFilter {
+    All,
+    Vanilla,
+    Fabric,
+    Quilt,
+    Forge,
+    NeoForge,
+}
+
+impl LoaderFilter {
+    pub fn matches(self, kind: ModLoaderKind) -> bool {
+        match self {
+            Self::All => true,
+            Self::Vanilla => kind == ModLoaderKind::Vanilla,
+            Self::Fabric => kind == ModLoaderKind::Fabric,
+            Self::Quilt => kind == ModLoaderKind::Quilt,
+            Self::Forge => kind == ModLoaderKind::Forge,
+            Self::NeoForge => kind == ModLoaderKind::NeoForge,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstanceDetailTab {
@@ -193,6 +213,7 @@ pub struct InstancesView {
     pub current_tab: InstanceDetailTab,
     pub view_mode: InstanceViewMode,
     pub sort_mode: InstanceSortMode,
+    pub loader_filter: LoaderFilter,
     pub search_query: String,
     pub console_autoscroll: bool,
     pub console_search: String,
@@ -220,8 +241,9 @@ impl Default for InstancesView {
     fn default() -> Self {
         Self {
             current_tab: InstanceDetailTab::Console,
-            view_mode: InstanceViewMode::List,
+            view_mode: InstanceViewMode::Grid,
             sort_mode: InstanceSortMode::Playtime,
+            loader_filter: LoaderFilter::All,
             search_query: String::new(),
             console_autoscroll: true,
             console_search: String::new(),
@@ -253,397 +275,98 @@ impl InstancesView {
             state.selected_instance_id = Some(state.instances[0].id.clone());
         }
 
-        // Row 1: Header + primary action buttons (B9, B14)
-        ui.horizontal(|ui| {
-            ui.heading(
-                RichText::new("Инстансы и сборки")
-                    .color(TEXT_PRIMARY)
-                    .size(20.0)
-                    .strong(),
-            );
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать инстанс").clicked()
-                {
-                    state.show_create_instance_dialog = true;
-                }
-                if secondary_glass_button(ui, Some(VectorIcon::Download), "Импорт").clicked()
-                {
-                    self.show_import_dialog = true;
-                }
-            });
-        });
-
-        ui.add_space(8.0);
-
-        // Row 2: SearchField + sorting dropdown Select + view mode segmented switch (B4, B6, B14)
         let tokens = Tokens::from_config(&state.config.theme);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(10.0, 0.0);
 
-            // B6: SearchField with Ctrl+F and icon
-            SearchField::new(&mut self.search_query, "Поиск инстанса...")
-                .width(180.0)
+        if !state.show_create_instance_dialog
+            && !self.show_import_dialog
+            && ui.input_mut(|i| {
+                i.consume_key(egui::Modifiers::CTRL, egui::Key::N)
+                    || i.consume_key(egui::Modifiers::COMMAND, egui::Key::N)
+            })
+        {
+            state.show_create_instance_dialog = true;
+        }
+
+        if !state.instances.is_empty() {
+            // Row 1: Header + primary action buttons
+            ui.horizontal(|ui| {
+                ui.heading(
+                    RichText::new("Инстансы")
+                        .color(tokens.text)
+                        .size(20.0)
+                        .strong(),
+                );
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if button_primary(ui, &tokens, Some(VectorIcon::Plus), "Создать инстанс")
+                        .clicked()
+                    {
+                        state.show_create_instance_dialog = true;
+                    }
+                    ui.add_space(6.0);
+                    if button_secondary(ui, &tokens, Some(VectorIcon::Download), "Импорт").clicked()
+                    {
+                        self.show_import_dialog = true;
+                    }
+                });
+            });
+
+            ui.add_space(8.0);
+
+            // Row 2: SearchField + loader filter + sorting dropdown + view mode segmented switch
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(10.0, 6.0);
+
+                SearchField::new(&mut self.search_query, "Поиск инстанса...")
+                    .width(180.0)
+                    .show(ui, &tokens);
+
+                let loader_opts = [
+                    SelectOption::new(LoaderFilter::All, "Все загрузчики"),
+                    SelectOption::new(LoaderFilter::Vanilla, "Vanilla"),
+                    SelectOption::new(LoaderFilter::Fabric, "Fabric"),
+                    SelectOption::new(LoaderFilter::Quilt, "Quilt"),
+                    SelectOption::new(LoaderFilter::Forge, "Forge"),
+                    SelectOption::new(LoaderFilter::NeoForge, "NeoForge"),
+                ];
+                Select::new(
+                    "instance_loader_filter",
+                    "Загрузчик",
+                    &mut self.loader_filter,
+                    &loader_opts,
+                )
                 .show(ui, &tokens);
 
-            // B4: Select dropdown for sorting
-            let sort_opts = [
-                SelectOption::new(InstanceSortMode::Playtime, "По времени"),
-                SelectOption::new(InstanceSortMode::Name, "По имени"),
-                SelectOption::new(InstanceSortMode::Created, "По дате"),
-            ];
-            Select::new(
-                "instance_sort_select",
-                "Сортировка",
-                &mut self.sort_mode,
-                &sort_opts,
-            )
-            .show(ui, &tokens);
+                let sort_opts = [
+                    SelectOption::new(InstanceSortMode::Playtime, "По времени"),
+                    SelectOption::new(InstanceSortMode::Name, "По имени"),
+                    SelectOption::new(InstanceSortMode::Created, "По дате"),
+                ];
+                Select::new(
+                    "instance_sort_select",
+                    "Сортировка",
+                    &mut self.sort_mode,
+                    &sort_opts,
+                )
+                .show(ui, &tokens);
 
-            // B4: Segmented switch for view mode (Grid / List)
-            let view_opts = [
-                SegmentedOption::new(InstanceViewMode::Grid, "Сетка")
-                    .with_icon(VectorIcon::Layers)
-                    .with_tooltip("Отображение плитками"),
-                SegmentedOption::new(InstanceViewMode::List, "Список")
-                    .with_icon(VectorIcon::Terminal)
-                    .with_tooltip("Отображение списком"),
-            ];
-            segmented_switch(ui, &tokens, &mut self.view_mode, &view_opts);
-        });
+                let view_opts = [
+                    SegmentedOption::new(InstanceViewMode::Grid, "Сетка")
+                        .with_icon(VectorIcon::Layers)
+                        .with_tooltip("Отображение плитками"),
+                    SegmentedOption::new(InstanceViewMode::List, "Список")
+                        .with_icon(VectorIcon::Terminal)
+                        .with_tooltip("Отображение списком"),
+                ];
+                segmented_switch(ui, &tokens, &mut self.view_mode, &view_opts);
+            });
 
-        ui.add_space(8.0);
-
-        if state.instances.is_empty() && !state.show_create_instance_dialog {
-            self.render_empty_onboarding_hub(ui, state);
-            return;
+            ui.add_space(8.0);
         }
 
         // Instance creation modal
         if state.show_create_instance_dialog {
-            // Trigger manifest fetch on first open if empty
-            if state.remote_versions.is_empty() && !state.is_fetching_manifest {
-                state.is_fetching_manifest = true;
-                let _ = state.cmd_sender.send(UiWorkerCommand::FetchVersionManifest);
-            }
-
-            egui::Window::new("Создание нового инстанса Minecraft")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ui.ctx(), |ui| {
-                    let modal_w = 460.0_f32.min(ui.ctx().screen_rect().width() - 32.0);
-                    ui.set_width(modal_w);
-
-                    // 1. Minecraft Version Selection
-                    ui.label(
-                        RichText::new("Версия Minecraft:")
-                            .color(TEXT_PRIMARY)
-                            .strong(),
-                    );
-                    ui.add_space(2.0);
-
-                    // Quick-pick popular chips
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-                        for &v in POPULAR_CHIPS {
-                            let is_selected = state.create_inst_mc_ver == v;
-                            let label = if v == "1.21.1" {
-                                format!("{v} (Рекомендуемая)")
-                            } else {
-                                v.to_string()
-                            };
-                            if ui.selectable_label(is_selected, label).clicked() {
-                                state.create_inst_mc_ver = v.to_string();
-                                state.create_inst_name =
-                                    format!("{} {}", v, state.create_inst_loader.as_str());
-                            }
-                        }
-                    });
-
-                    ui.add_space(6.0);
-
-                    // Category Filter Toggles & Manifest sync
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Категории:").color(TEXT_MUTED).small());
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if state.is_fetching_manifest {
-                                ui.label(RichText::new("Загрузка...").color(ACCENT_COBALT).small());
-                            } else if secondary_glass_button(
-                                ui,
-                                Some(VectorIcon::Refresh),
-                                "Mojang",
-                            )
-                            .clicked()
-                            {
-                                state.is_fetching_manifest = true;
-                                let _ =
-                                    state.cmd_sender.send(UiWorkerCommand::FetchVersionManifest);
-                            }
-                        });
-                    });
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
-                        ui.checkbox(&mut self.show_releases, "Релизы");
-                        ui.checkbox(&mut self.show_snapshots, "Снапшоты");
-                        ui.checkbox(&mut self.show_betas, "Beta");
-                        ui.checkbox(&mut self.show_alphas, "Alpha");
-                    });
-
-                    ui.add_space(4.0);
-
-                    // Search input for versions
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Поиск:").color(TEXT_MUTED).small());
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.version_search)
-                                .hint_text("Фильтр (1.20, b1.7, 24w, rd)...")
-                                .desired_width(ui.available_width() - 60.0),
-                        );
-                        if !self.version_search.is_empty() && ui.small_button("Сброс").clicked()
-                        {
-                            self.version_search.clear();
-                        }
-                    });
-
-                    ui.add_space(6.0);
-
-                    // Build filtered version list
-                    let query = self.version_search.trim().to_lowercase();
-                    let mut filtered: Vec<(&str, McVersionCategory)> = Vec::new();
-
-                    if !state.remote_versions.is_empty() {
-                        for (id, rel_type) in &state.remote_versions {
-                            let cat = match rel_type.as_str() {
-                                "release" => McVersionCategory::Release,
-                                "snapshot" => McVersionCategory::Snapshot,
-                                "old_beta" => McVersionCategory::OldBeta,
-                                "old_alpha" => McVersionCategory::OldAlpha,
-                                _ => continue,
-                            };
-                            let matches_cat = match cat {
-                                McVersionCategory::Release => self.show_releases,
-                                McVersionCategory::Snapshot => self.show_snapshots,
-                                McVersionCategory::OldBeta => self.show_betas,
-                                McVersionCategory::OldAlpha => self.show_alphas,
-                            };
-                            if !matches_cat {
-                                continue;
-                            }
-                            if !query.is_empty() && !id.to_lowercase().contains(&query) {
-                                continue;
-                            }
-                            filtered.push((id.as_str(), cat));
-                        }
-                    } else {
-                        if self.show_releases {
-                            for &v in ALL_MC_RELEASES {
-                                if query.is_empty() || v.to_lowercase().contains(&query) {
-                                    filtered.push((v, McVersionCategory::Release));
-                                }
-                            }
-                        }
-                        if self.show_snapshots {
-                            for &v in ALL_MC_SNAPSHOTS {
-                                if query.is_empty() || v.to_lowercase().contains(&query) {
-                                    filtered.push((v, McVersionCategory::Snapshot));
-                                }
-                            }
-                        }
-                        if self.show_betas {
-                            for &v in ALL_MC_BETAS {
-                                if query.is_empty() || v.to_lowercase().contains(&query) {
-                                    filtered.push((v, McVersionCategory::OldBeta));
-                                }
-                            }
-                        }
-                        if self.show_alphas {
-                            for &v in ALL_MC_ALPHAS {
-                                if query.is_empty() || v.to_lowercase().contains(&query) {
-                                    filtered.push((v, McVersionCategory::OldAlpha));
-                                }
-                            }
-                        }
-                    }
-
-                    // Scrollable version list
-                    let picker_frame = egui::Frame::new()
-                        .fill(CARD_SURFACE)
-                        .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-                        .corner_radius(RADIUS_CARD)
-                        .inner_margin(egui::Margin::same(6));
-
-                    picker_frame.show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ScrollArea::vertical()
-                            .id_salt("version_select_scroll")
-                            .max_height(130.0)
-                            .show(ui, |ui| {
-                                if filtered.is_empty() {
-                                    ui.add_space(8.0);
-                                    ui.label(
-                                        RichText::new("Нет версий, соответствующих фильтрам")
-                                            .color(TEXT_MUTED),
-                                    );
-                                } else {
-                                    for (vid, cat) in filtered {
-                                        let is_sel = state.create_inst_mc_ver == vid;
-                                        ui.horizontal(|ui| {
-                                            let text_col =
-                                                if is_sel { ACCENT_COBALT } else { TEXT_PRIMARY };
-                                            if ui
-                                                .selectable_label(
-                                                    is_sel,
-                                                    RichText::new(vid).color(text_col).strong(),
-                                                )
-                                                .clicked()
-                                            {
-                                                state.create_inst_mc_ver = vid.to_string();
-                                                state.create_inst_name = format!(
-                                                    "{} {}",
-                                                    vid,
-                                                    state.create_inst_loader.as_str()
-                                                );
-                                            }
-                                            version_badge(ui, cat.badge_label(), cat.badge_color());
-                                        });
-                                    }
-                                }
-                            });
-                    });
-
-                    ui.add_space(4.0);
-
-                    // Selected version editable field
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Выбранная версия:").color(TEXT_MUTED).small());
-                        let mut ver_str = state.create_inst_mc_ver.clone();
-                        if ui.text_edit_singleline(&mut ver_str).changed() {
-                            state.create_inst_mc_ver = ver_str.clone();
-                            state.create_inst_name =
-                                format!("{} {}", ver_str, state.create_inst_loader.as_str());
-                        }
-                    });
-
-                    ui.add_space(10.0);
-
-                    // 2. Mod Loader Selection
-                    ui.label(
-                        RichText::new("Загрузчик модов:")
-                            .color(TEXT_PRIMARY)
-                            .strong(),
-                    );
-                    ui.add_space(2.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-                        for &ldr in &[
-                            ModLoaderKind::Vanilla,
-                            ModLoaderKind::Fabric,
-                            ModLoaderKind::Quilt,
-                            ModLoaderKind::Forge,
-                            ModLoaderKind::NeoForge,
-                        ] {
-                            let is_sel = state.create_inst_loader == ldr;
-                            if ui.selectable_label(is_sel, ldr.as_str()).clicked() {
-                                state.create_inst_loader = ldr;
-                                state.create_inst_name =
-                                    format!("{} {}", state.create_inst_mc_ver, ldr.as_str());
-                            }
-                        }
-                    });
-
-                    ui.add_space(10.0);
-
-                    // 3. Allocated Memory (RAM)
-                    ui.label(
-                        RichText::new(format!(
-                            "Выделенная память: {} МБ ({:.1} ГБ)",
-                            state.create_inst_ram_mb,
-                            state.create_inst_ram_mb as f32 / 1024.0
-                        ))
-                        .color(TEXT_PRIMARY)
-                        .strong(),
-                    );
-                    ui.add_space(4.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-                        for &(mb, lbl) in &[
-                            (2048, "2 ГБ"),
-                            (4096, "4 ГБ"),
-                            (6144, "6 ГБ"),
-                            (8192, "8 ГБ"),
-                            (12288, "12 ГБ"),
-                            (16384, "16 ГБ"),
-                        ] {
-                            if ui
-                                .selectable_label(state.create_inst_ram_mb == mb, lbl)
-                                .clicked()
-                            {
-                                state.create_inst_ram_mb = mb;
-                            }
-                        }
-                    });
-                    ui.add_space(4.0);
-                    ui.add(
-                        egui::Slider::new(&mut state.create_inst_ram_mb, 1024..=16384)
-                            .step_by(512.0)
-                            .show_value(false),
-                    );
-
-                    ui.add_space(10.0);
-
-                    // 4. Instance Name
-                    ui.label(
-                        RichText::new("Название инстанса:")
-                            .color(TEXT_PRIMARY)
-                            .strong(),
-                    );
-                    ui.text_edit_singleline(&mut state.create_inst_name);
-
-                    ui.add_space(14.0);
-                    ui.horizontal(|ui| {
-                        if primary_emerald_button(ui, Some(VectorIcon::Check), "Создать инстанс")
-                            .clicked()
-                        {
-                            match state.instance_mgr.create_instance(
-                                &state.create_inst_name,
-                                &state.create_inst_mc_ver,
-                                state.create_inst_loader,
-                                None,
-                            ) {
-                                Ok(mut manifest) => {
-                                    manifest.memory_max_mb = state.create_inst_ram_mb;
-                                    let _ = state.instance_mgr.save_instance(&manifest);
-                                    let inst_id = manifest.id.clone();
-                                    state.selected_instance_id = Some(inst_id.clone());
-                                    state.instances.push(manifest.clone());
-
-                                    // Auto-start installation immediately upon instance creation
-                                    state.installing_instance = Some(inst_id.clone());
-                                    state.install_error = None;
-                                    state.detailed_install_error = None;
-                                    state.current_install_stage = crate::install_types::InstallStage::Manifest;
-                                    state.install_retries_count = 0;
-                                    state.install_eta_secs = None;
-                                    state.status_message = Some((
-                                        format!("Инстанс '{}' создан. Запущена автоматическая установка...", manifest.name),
-                                        false,
-                                    ));
-                                    let _ = state.cmd_sender.send(UiWorkerCommand::InstallInstance {
-                                        instance_id: inst_id,
-                                    });
-                                }
-                                Err(e) => {
-                                    state.status_message = Some((format!("Ошибка создания инстанса: {e}"), true));
-                                }
-                            }
-                            state.show_create_instance_dialog = false;
-                        }
-                        if secondary_glass_button(ui, None, "Отмена").clicked() {
-                            state.show_create_instance_dialog = false;
-                        }
-                    });
-                });
+            self.render_create_instance_modal(ui, state, &tokens);
         }
 
         // Duplicate modal
@@ -836,6 +559,11 @@ impl InstancesView {
             } else {
                 self.show_delete_dialog = false;
             }
+        }
+
+        if state.instances.is_empty() {
+            self.render_empty_onboarding_hub(ui, state, &tokens);
+            return;
         }
 
         if self.view_mode == InstanceViewMode::Grid {
@@ -1509,7 +1237,54 @@ impl InstancesView {
         });
     }
 
+    fn filtered_instances(&self, state: &UiState) -> Vec<InstanceManifest> {
+        let q = self.search_query.trim().to_lowercase();
+        let mut list: Vec<InstanceManifest> = state
+            .instances
+            .iter()
+            .filter(|inst| self.loader_filter.matches(inst.loader))
+            .filter(|inst| {
+                q.is_empty()
+                    || inst.name.to_lowercase().contains(&q)
+                    || inst.mc_version.to_lowercase().contains(&q)
+                    || inst.loader.as_str().to_lowercase().contains(&q)
+            })
+            .cloned()
+            .collect();
+
+        match self.sort_mode {
+            InstanceSortMode::Playtime => {
+                list.sort_by(|a, b| b.playtime_secs.cmp(&a.playtime_secs));
+            }
+            InstanceSortMode::Name => {
+                list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            }
+            InstanceSortMode::Created => {
+                list.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            }
+        }
+        list
+    }
+
     fn render_grid_view(&mut self, ui: &mut Ui, state: &mut UiState, tokens: &Tokens) {
+        let instances = self.filtered_instances(state);
+        if instances.is_empty() {
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.label(
+                    RichText::new("Инстансы не найдены")
+                        .size(15.0)
+                        .color(tokens.text_muted),
+                );
+                ui.add_space(8.0);
+                if button_secondary(ui, tokens, None, "Сбросить фильтры").clicked() {
+                    self.search_query.clear();
+                    self.loader_filter = LoaderFilter::All;
+                }
+            });
+            return;
+        }
+
         ScrollArea::vertical()
             .id_salt("instances_grid_scroll")
             .show(ui, |ui| {
@@ -1518,7 +1293,6 @@ impl InstancesView {
                 let spacing = 16.0_f32;
                 let cols = ((avail_w + spacing) / (card_w + spacing)).floor().max(1.0) as usize;
 
-                let instances = state.instances.clone();
                 for chunk in instances.chunks(cols) {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = Vec2::new(spacing, spacing);
@@ -1672,167 +1446,394 @@ impl InstancesView {
         }
     }
 
-    fn render_empty_onboarding_hub(&mut self, ui: &mut Ui, state: &mut UiState) {
-        ui.vertical_centered(|ui| {
-            ui.add_space(32.0);
+    fn render_create_instance_modal(&mut self, ui: &mut Ui, state: &mut UiState, tokens: &Tokens) {
+        if state.remote_versions.is_empty() && !state.is_fetching_manifest {
+            state.is_fetching_manifest = true;
+            let _ = state.cmd_sender.send(UiWorkerCommand::FetchVersionManifest);
+        }
 
-            // Large geometric emblem
-            let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), egui::Sense::hover());
-            let painter = ui.painter();
-            painter.circle_filled(rect.center(), 32.0, ACCENT_EMERALD.gamma_multiply(0.12));
-            painter.circle_stroke(
-                rect.center(),
-                32.0,
-                Stroke::new(1.5_f32, ACCENT_EMERALD.gamma_multiply(0.5)),
-            );
-            let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(32.0));
-            paint_vector_icon(painter, icon_rect, VectorIcon::Layers, ACCENT_EMERALD);
+        if state.create_inst_mc_ver.is_empty() {
+            if let Some(latest) = &state.latest_release {
+                state.create_inst_mc_ver = latest.clone();
+            }
+        }
 
-            ui.add_space(16.0);
-            ui.heading(
-                RichText::new("Добро пожаловать в MQ")
-                    .color(TEXT_PRIMARY)
-                    .size(24.0)
-                    .strong(),
-            );
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new(
-                    "Сверхбыстрый модульный лаунчер Minecraft на чистом Rust для Arch Linux",
-                )
-                .color(TEXT_MUTED)
-                .size(14.0),
-            );
+        let effective_ver = if !state.create_inst_mc_ver.is_empty() {
+            state.create_inst_mc_ver.clone()
+        } else {
+            state
+                .latest_release
+                .clone()
+                .unwrap_or_else(|| ALL_MC_RELEASES[0].to_string())
+        };
+        let auto_name = format!("{} {}", state.create_inst_loader.as_str(), effective_ver);
 
-            ui.add_space(28.0);
+        egui::Window::new("Создать инстанс")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                let modal_w = 460.0_f32.min(ui.ctx().screen_rect().width() - 32.0);
+                ui.set_width(modal_w);
 
-            // 3 Quick Action Cards in wrapped row
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = Vec2::new(16.0, 16.0);
+                // 1. Instance Name with auto-placeholder
+                ui.label(RichText::new("Название").color(tokens.text).strong());
+                ui.add_space(4.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.create_inst_name)
+                        .hint_text(&auto_name)
+                        .desired_width(ui.available_width()),
+                );
 
-                // Card 1: Vanilla 1.21.1
-                let card1 = egui::Frame::new()
-                    .fill(CARD_SURFACE)
-                    .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-                    .corner_radius(RADIUS_CARD)
-                    .inner_margin(egui::Margin::same(18));
-                card1.show(ui, |ui| {
-                    ui.set_width(220.0);
-                    ui.horizontal(|ui| {
-                        let (r, _) =
-                            ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
-                        paint_vector_icon(ui.painter(), r, VectorIcon::Check, ACCENT_COBALT);
-                        ui.label(RichText::new("Vanilla 1.21.1").color(TEXT_PRIMARY).strong());
-                    });
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Чистая официальная версия игры без сторонних модов.")
-                            .color(TEXT_MUTED)
-                            .small(),
-                    );
-                    ui.add_space(14.0);
-                    if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать Vanilla")
-                        .clicked()
-                    {
-                        if let Ok(mut manifest) = state.instance_mgr.create_instance(
-                            "Vanilla 1.21.1",
-                            "1.21.1",
-                            ModLoaderKind::Vanilla,
-                            None,
-                        ) {
-                            manifest.memory_max_mb = 4096;
-                            let _ = state.instance_mgr.save_instance(&manifest);
-                            state.selected_instance_id = Some(manifest.id.clone());
-                            state.instances.push(manifest);
+                ui.add_space(10.0);
+
+                // 2. Mod Loader Selection
+                ui.label(RichText::new("Загрузчик").color(tokens.text).strong());
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                    for &ldr in &[
+                        ModLoaderKind::Vanilla,
+                        ModLoaderKind::Fabric,
+                        ModLoaderKind::Quilt,
+                        ModLoaderKind::Forge,
+                        ModLoaderKind::NeoForge,
+                    ] {
+                        let is_sel = state.create_inst_loader == ldr;
+                        if ui.selectable_label(is_sel, ldr.as_str()).clicked() {
+                            state.create_inst_loader = ldr;
                         }
                     }
                 });
 
-                // Card 2: Fabric 1.21.1
-                let card2 = egui::Frame::new()
-                    .fill(CARD_SURFACE)
-                    .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-                    .corner_radius(RADIUS_CARD)
-                    .inner_margin(egui::Margin::same(18));
-                card2.show(ui, |ui| {
-                    ui.set_width(220.0);
-                    ui.horizontal(|ui| {
-                        let (r, _) =
-                            ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
-                        paint_vector_icon(
-                            ui.painter(),
-                            r,
-                            VectorIcon::Layers,
-                            Color32::from_rgb(0xE2, 0xB3, 0x7E),
-                        );
-                        ui.label(RichText::new("Fabric 1.21.1").color(TEXT_PRIMARY).strong());
-                    });
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new("Оптимизированный легковесный загрузчик для Sodium и Iris.")
-                            .color(TEXT_MUTED)
-                            .small(),
-                    );
-                    ui.add_space(14.0);
-                    if primary_emerald_button(ui, Some(VectorIcon::Plus), "Создать Fabric")
-                        .clicked()
-                    {
-                        if let Ok(mut manifest) = state.instance_mgr.create_instance(
-                            "Fabric 1.21.1",
-                            "1.21.1",
-                            ModLoaderKind::Fabric,
-                            None,
-                        ) {
-                            manifest.memory_max_mb = 4096;
-                            let _ = state.instance_mgr.save_instance(&manifest);
-                            state.selected_instance_id = Some(manifest.id.clone());
-                            state.instances.push(manifest);
-                        }
-                    }
-                });
+                ui.add_space(10.0);
 
-                // Card 3: Custom creation
-                let card3 = egui::Frame::new()
-                    .fill(CARD_SURFACE)
-                    .stroke(Stroke::new(1.0_f32, BORDER_SUBTLE))
-                    .corner_radius(RADIUS_CARD)
-                    .inner_margin(egui::Margin::same(18));
-                card3.show(ui, |ui| {
-                    ui.set_width(220.0);
-                    ui.horizontal(|ui| {
-                        let (r, _) =
-                            ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
-                        paint_vector_icon(ui.painter(), r, VectorIcon::Settings, ACCENT_EMERALD);
-                        ui.label(RichText::new("Свой инстанс").color(TEXT_PRIMARY).strong());
-                    });
-                    ui.add_space(6.0);
+                // 3. Minecraft Version Selection
+                ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(
-                            "Выбор любой версии (1.7 - 1.21), Quilt, Forge или NeoForge.",
+                        RichText::new("Версия Minecraft")
+                            .color(tokens.text)
+                            .strong(),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if state.is_fetching_manifest {
+                            ui.label(
+                                RichText::new("Загрузка...")
+                                    .color(tokens.text_muted)
+                                    .small(),
+                            );
+                        } else if button_secondary(
+                            ui,
+                            tokens,
+                            Some(VectorIcon::Refresh),
+                            "Обновить",
                         )
-                        .color(TEXT_MUTED)
-                        .small(),
+                        .clicked()
+                        {
+                            state.is_fetching_manifest = true;
+                            let _ = state.cmd_sender.send(UiWorkerCommand::FetchVersionManifest);
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
+                    ui.checkbox(&mut self.show_releases, "Релизы");
+                    ui.checkbox(&mut self.show_snapshots, "Снапшоты");
+                    ui.checkbox(&mut self.show_betas, "Beta");
+                    ui.checkbox(&mut self.show_alphas, "Alpha");
+                });
+
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.version_search)
+                            .hint_text("Поиск версии (26.1, 1.21.4, 25w09b)...")
+                            .desired_width(ui.available_width() - 64.0),
                     );
-                    ui.add_space(14.0);
-                    if secondary_glass_button(ui, Some(VectorIcon::Plus), "Настроить...").clicked()
+                    if !self.version_search.is_empty() && ui.small_button("Сброс").clicked() {
+                        self.version_search.clear();
+                    }
+                });
+
+                ui.add_space(6.0);
+
+                let query = self.version_search.trim().to_lowercase();
+                let mut filtered: Vec<(&str, McVersionCategory)> = Vec::new();
+
+                if !state.remote_versions.is_empty() {
+                    for (id, rel_type) in &state.remote_versions {
+                        let cat = match rel_type.as_str() {
+                            "release" => McVersionCategory::Release,
+                            "snapshot" => McVersionCategory::Snapshot,
+                            "old_beta" => McVersionCategory::OldBeta,
+                            "old_alpha" => McVersionCategory::OldAlpha,
+                            _ => continue,
+                        };
+                        let matches_cat = match cat {
+                            McVersionCategory::Release => self.show_releases,
+                            McVersionCategory::Snapshot => self.show_snapshots,
+                            McVersionCategory::OldBeta => self.show_betas,
+                            McVersionCategory::OldAlpha => self.show_alphas,
+                        };
+                        if !matches_cat {
+                            continue;
+                        }
+                        if !query.is_empty() && !id.to_lowercase().contains(&query) {
+                            continue;
+                        }
+                        filtered.push((id.as_str(), cat));
+                    }
+                } else if !state.is_fetching_manifest {
+                    if self.show_releases {
+                        for &v in ALL_MC_RELEASES {
+                            if query.is_empty() || v.to_lowercase().contains(&query) {
+                                filtered.push((v, McVersionCategory::Release));
+                            }
+                        }
+                    }
+                    if self.show_snapshots {
+                        for &v in ALL_MC_SNAPSHOTS {
+                            if query.is_empty() || v.to_lowercase().contains(&query) {
+                                filtered.push((v, McVersionCategory::Snapshot));
+                            }
+                        }
+                    }
+                    if self.show_betas {
+                        for &v in ALL_MC_BETAS {
+                            if query.is_empty() || v.to_lowercase().contains(&query) {
+                                filtered.push((v, McVersionCategory::OldBeta));
+                            }
+                        }
+                    }
+                    if self.show_alphas {
+                        for &v in ALL_MC_ALPHAS {
+                            if query.is_empty() || v.to_lowercase().contains(&query) {
+                                filtered.push((v, McVersionCategory::OldAlpha));
+                            }
+                        }
+                    }
+                }
+
+                let picker_frame = egui::Frame::new()
+                    .fill(tokens.bg_input)
+                    .stroke(Stroke::new(1.0_f32, tokens.border))
+                    .corner_radius(RADIUS_CARD)
+                    .inner_margin(egui::Margin::same(6));
+
+                picker_frame.show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ScrollArea::vertical()
+                        .id_salt("version_select_scroll")
+                        .max_height(130.0)
+                        .show(ui, |ui| {
+                            if state.is_fetching_manifest && state.remote_versions.is_empty() {
+                                for width_frac in [0.55_f32, 0.42, 0.62, 0.48] {
+                                    let avail_w = ui.available_width();
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        Vec2::new(avail_w * width_frac, 18.0),
+                                        Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(rect, 4.0, tokens.bg_surface_hover);
+                                    ui.add_space(4.0);
+                                }
+                            } else if filtered.is_empty() {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    RichText::new("Нет версий, соответствующих фильтрам")
+                                        .color(tokens.text_muted),
+                                );
+                            } else {
+                                for (vid, cat) in filtered {
+                                    let is_sel = effective_ver == vid;
+                                    ui.horizontal(|ui| {
+                                        let text_col =
+                                            if is_sel { tokens.accent } else { tokens.text };
+                                        if ui
+                                            .selectable_label(
+                                                is_sel,
+                                                RichText::new(vid).color(text_col).strong(),
+                                            )
+                                            .clicked()
+                                        {
+                                            state.create_inst_mc_ver = vid.to_string();
+                                        }
+                                        version_badge(ui, cat.badge_label(), cat.badge_color());
+                                    });
+                                }
+                            }
+                        });
+                });
+
+                ui.add_space(10.0);
+
+                // 4. Collapsible Advanced Block (Memory + Java)
+                egui::CollapsingHeader::new(RichText::new("Дополнительно").color(tokens.text))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(format!(
+                                "Память: {} МБ ({:.1} ГБ)",
+                                state.create_inst_ram_mb,
+                                state.create_inst_ram_mb as f32 / 1024.0
+                            ))
+                            .color(tokens.text)
+                            .small(),
+                        );
+                        ui.add_space(4.0);
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                            for &(mb, lbl) in &[
+                                (2048, "2 ГБ"),
+                                (4096, "4 ГБ"),
+                                (6144, "6 ГБ"),
+                                (8192, "8 ГБ"),
+                                (12288, "12 ГБ"),
+                                (16384, "16 ГБ"),
+                            ] {
+                                if ui
+                                    .selectable_label(state.create_inst_ram_mb == mb, lbl)
+                                    .clicked()
+                                {
+                                    state.create_inst_ram_mb = mb;
+                                }
+                            }
+                        });
+                        ui.add_space(4.0);
+                        ui.add(
+                            egui::Slider::new(&mut state.create_inst_ram_mb, 1024..=16384)
+                                .step_by(512.0)
+                                .show_value(false),
+                        );
+
+                        ui.add_space(8.0);
+                        ui.label(RichText::new("Путь к Java").color(tokens.text).small());
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.create_inst_java_path)
+                                .hint_text("Авто (встроенная или системная Java)")
+                                .desired_width(ui.available_width()),
+                        );
+                    });
+
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    if button_primary(ui, tokens, Some(VectorIcon::Check), "Создать инстанс")
+                        .clicked()
                     {
-                        state.show_create_instance_dialog = true;
+                        let final_name = if state.create_inst_name.trim().is_empty() {
+                            auto_name.clone()
+                        } else {
+                            state.create_inst_name.trim().to_string()
+                        };
+                        match state.instance_mgr.create_instance(
+                            &final_name,
+                            &effective_ver,
+                            state.create_inst_loader,
+                            None,
+                        ) {
+                            Ok(mut manifest) => {
+                                manifest.memory_max_mb = state.create_inst_ram_mb;
+                                let custom_java = state.create_inst_java_path.trim();
+                                if !custom_java.is_empty() {
+                                    manifest.java_path =
+                                        Some(std::path::PathBuf::from(custom_java));
+                                }
+                                let _ = state.instance_mgr.save_instance(&manifest);
+                                let inst_id = manifest.id.clone();
+                                state.selected_instance_id = Some(inst_id.clone());
+                                state.instances.push(manifest.clone());
+
+                                state.installing_instance = Some(inst_id.clone());
+                                state.install_error = None;
+                                state.detailed_install_error = None;
+                                state.current_install_stage =
+                                    crate::install_types::InstallStage::Manifest;
+                                state.install_retries_count = 0;
+                                state.install_eta_secs = None;
+                                state.status_message = Some((
+                                    format!(
+                                        "Инстанс '{}' создан. Запущена установка...",
+                                        manifest.name
+                                    ),
+                                    false,
+                                ));
+                                let _ = state.cmd_sender.send(UiWorkerCommand::InstallInstance {
+                                    instance_id: inst_id,
+                                });
+                            }
+                            Err(e) => {
+                                state.status_message =
+                                    Some((format!("Ошибка создания инстанса: {e}"), true));
+                            }
+                        }
+                        state.create_inst_name.clear();
+                        state.create_inst_java_path.clear();
+                        state.show_create_instance_dialog = false;
+                    }
+                    ui.add_space(8.0);
+                    if button_secondary(ui, tokens, None, "Отмена").clicked() {
+                        state.show_create_instance_dialog = false;
                     }
                 });
             });
+    }
 
-            ui.add_space(32.0);
+    fn render_empty_onboarding_hub(&mut self, ui: &mut Ui, state: &mut UiState, tokens: &Tokens) {
+        let avail = ui.available_size();
+        let card_max_w = 420.0_f32.min((avail.x - 32.0).max(240.0));
+        let top_pad = ((avail.y - 240.0) * 0.4).max(24.0);
 
-            // Technical badges
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 12.0;
-                status_pill(ui, "CAS Дедупликация O(1)", ACCENT_EMERALD);
-                status_pill(ui, "Rayon Многопоточность", ACCENT_COBALT);
-                status_pill(
-                    ui,
-                    "Zero-Lag UI Watchdog",
-                    Color32::from_rgb(0xC0, 0x84, 0xFC),
-                );
+        ui.vertical_centered(|ui| {
+            ui.add_space(top_pad);
+
+            let card = egui::Frame::new()
+                .fill(tokens.bg_surface)
+                .stroke(Stroke::new(1.0_f32, tokens.border))
+                .corner_radius(RADIUS_CARD)
+                .inner_margin(egui::Margin::same(32));
+
+            card.show(ui, |ui| {
+                ui.set_max_width(card_max_w);
+                ui.vertical_centered(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(48.0), egui::Sense::hover());
+                    paint_vector_icon(ui.painter(), rect, VectorIcon::Cube, tokens.text_muted);
+
+                    ui.add_space(16.0);
+                    ui.label(
+                        RichText::new("Инстансов пока нет")
+                            .color(tokens.text)
+                            .size(18.0)
+                            .strong(),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Создайте первый инстанс или импортируйте сборку")
+                            .color(tokens.text_muted)
+                            .size(13.0),
+                    );
+
+                    ui.add_space(20.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        let total_btn_w = 300.0_f32.min(ui.available_width());
+                        let side_pad = ((ui.available_width() - total_btn_w) * 0.5).max(0.0);
+                        if side_pad > 0.0 {
+                            ui.add_space(side_pad);
+                        }
+                        if button_primary(ui, tokens, Some(VectorIcon::Plus), "Создать инстанс")
+                            .clicked()
+                        {
+                            state.show_create_instance_dialog = true;
+                        }
+                        if button_secondary(ui, tokens, Some(VectorIcon::Download), "Импорт")
+                            .clicked()
+                        {
+                            self.show_import_dialog = true;
+                        }
+                    });
+                });
             });
         });
     }
@@ -3018,6 +3019,8 @@ mod tests {
     #[test]
     fn instances_view_default_configuration() {
         let view = InstancesView::default();
+        assert_eq!(view.view_mode, InstanceViewMode::Grid);
+        assert_eq!(view.loader_filter, LoaderFilter::All);
         assert!(view.show_releases);
         assert!(!view.show_snapshots);
         assert!(!view.show_betas);
@@ -3025,5 +3028,108 @@ mod tests {
         assert!(view.version_search.is_empty());
         assert!(!view.show_delete_dialog);
         assert!(view.instance_to_delete.is_none());
+    }
+
+    fn test_ui_state() -> (tempfile::TempDir, UiState) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let paths = mq_core::MqPaths::with_root(tmp.path().to_path_buf());
+        let config = mq_core::AppConfig::default();
+        let pool = std::sync::Arc::new(mq_sched::ComputePool::new(2));
+        let state = UiState::new(paths, config, pool).expect("ui state");
+        (tmp, state)
+    }
+
+    #[test]
+    fn empty_state_renders_cleanly_without_panic() {
+        let (_tmp, mut state) = test_ui_state();
+        assert!(state.instances.is_empty());
+
+        let mut view = InstancesView::default();
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                Vec2::new(1024.0, 720.0),
+            )),
+            ..Default::default()
+        };
+
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                view.ui(ui, &mut state);
+            });
+        });
+    }
+
+    #[test]
+    fn create_dialog_renders_skeleton_and_manifest_with_26x_support() {
+        let (_tmp, mut state) = test_ui_state();
+        state.show_create_instance_dialog = true;
+        state.is_fetching_manifest = true;
+        assert!(state.create_inst_name.is_empty());
+        assert!(state.create_inst_mc_ver.is_empty());
+
+        let mut view = InstancesView::default();
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                Vec2::new(1024.0, 720.0),
+            )),
+            ..Default::default()
+        };
+
+        // 1. Loading skeleton state
+        let _ = ctx.run(input.clone(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                view.ui(ui, &mut state);
+            });
+        });
+
+        // 2. Manifest fetched with 26.x release
+        state.latest_release = Some("26.1".to_string());
+        state.remote_versions = vec![
+            ("26.1".to_string(), "release".to_string()),
+            ("26.1-snapshot-1".to_string(), "snapshot".to_string()),
+            ("1.21.4".to_string(), "release".to_string()),
+        ];
+        state.is_fetching_manifest = false;
+
+        let _ = ctx.run(input, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                view.ui(ui, &mut state);
+            });
+        });
+
+        assert_eq!(state.create_inst_mc_ver, "26.1");
+    }
+
+    #[test]
+    fn filtered_instances_filters_by_query_and_loader() {
+        let (_tmp, mut state) = test_ui_state();
+        let fab = state
+            .instance_mgr
+            .create_instance("My Fabric", "26.1", ModLoaderKind::Fabric, None)
+            .expect("fabric");
+        let van = state
+            .instance_mgr
+            .create_instance("Classic Vanilla", "1.21.4", ModLoaderKind::Vanilla, None)
+            .expect("vanilla");
+        state.instances.push(fab);
+        state.instances.push(van);
+
+        let mut view = InstancesView::default();
+        assert_eq!(view.filtered_instances(&state).len(), 2);
+
+        view.loader_filter = LoaderFilter::Fabric;
+        let only_fab = view.filtered_instances(&state);
+        assert_eq!(only_fab.len(), 1);
+        assert_eq!(only_fab[0].name, "My Fabric");
+
+        view.loader_filter = LoaderFilter::All;
+        view.search_query = "26.1".to_string();
+        let by_ver = view.filtered_instances(&state);
+        assert_eq!(by_ver.len(), 1);
+        assert_eq!(by_ver[0].mc_version, "26.1");
     }
 }

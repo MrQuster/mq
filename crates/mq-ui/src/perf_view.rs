@@ -38,7 +38,7 @@ impl PerfView {
 
             ui.add_space(8.0);
             ui.label(format!(
-                "Общая загрузка CPU: {:.1}% | Память процесса (RSS): {:.1} МиБ",
+                "Общая загрузка CPU: {:.1}% | Память процесса: {:.1} МиБ",
                 state.latest_cpu.total_pct, state.latest_cpu.rss_mib
             ));
 
@@ -56,14 +56,14 @@ impl PerfView {
             ui.separator();
             ui.add_space(8.0);
 
-            ui.label(RichText::new("Сторожевой таймер UI (Watchdog > 8 мс)").strong());
+            ui.label(RichText::new("Плавность интерфейса (> 8 мс)").strong());
             let violations = state.watchdog.violation_count();
             let col = if violations == 0 { ACCENT_EMERALD } else { STATUS_WARN };
             ui.label(RichText::new(format!("Зафиксировано фризов кадра > 8 мс: {violations}")).color(col));
 
             ui.add_space(6.0);
             ui.label(RichText::new(
-                "Лаунчер MQ использует shared-nothing архитектуру и параллельный пул Rayon для всех тяжёлых вычислений (хэширование SHA-1/SHA-512, распаковка модпаков, сканирование модов), гарантируя плавность интерфейса."
+                "MQ выполняет проверку файлов, распаковку сборок и сканирование модов в фоне, чтобы интерфейс оставался плавным."
             ).color(TEXT_MUTED).small());
         });
     }

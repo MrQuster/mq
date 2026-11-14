@@ -225,7 +225,7 @@ impl SettingsView {
                     let sec_col = rgb_to_c32(state.config.theme.accent_secondary);
                     let _ = accent_button(ui, Some(VectorIcon::Play), "Кнопка действия", pri_col);
                     let _ = secondary_glass_button(ui, Some(VectorIcon::Folder), "Вторичная");
-                    tag_pill(ui, "Fabric 1.21.1", sec_col);
+                    tag_pill(ui, "Fabric", sec_col);
                     let mut sample_toggle = true;
                     let _ = smooth_toggle(ui, &mut sample_toggle);
                 });

@@ -69,7 +69,10 @@ pub enum UiWorkerResponse {
         removed: usize,
         error: Option<String>,
     },
-    VersionManifestFetched(Vec<(String, String)>),
+    VersionManifestFetched {
+        latest_release: Option<String>,
+        versions: Vec<(String, String)>,
+    },
     InstanceInstallStarted(InstanceId),
     InstanceInstallCompleted(InstanceId),
     InstanceError {
@@ -260,6 +263,8 @@ pub struct UiState {
     pub create_inst_mc_ver: String,
     pub create_inst_loader: ModLoaderKind,
     pub create_inst_ram_mb: u32,
+    pub create_inst_java_path: String,
+    pub latest_release: Option<String>,
     pub remote_versions: Vec<(String, String)>, // (id, release_type)
     pub is_fetching_manifest: bool,
 
@@ -368,10 +373,12 @@ impl UiState {
             manual_watcher: None,
             install_seq: 0,
             show_create_instance_dialog: false,
-            create_inst_name: "1.21.1 Fabric".to_string(),
-            create_inst_mc_ver: "1.21.1".to_string(),
+            create_inst_name: String::new(),
+            create_inst_mc_ver: String::new(),
             create_inst_loader: ModLoaderKind::Fabric,
             create_inst_ram_mb: 4096,
+            create_inst_java_path: String::new(),
+            latest_release: None,
             remote_versions: Vec::new(),
             is_fetching_manifest: false,
             crash_analysis: None,
@@ -523,8 +530,19 @@ impl UiState {
                         ),
                     });
                 }
-                UiWorkerResponse::VersionManifestFetched(versions) => {
-                    self.remote_versions = versions;
+                UiWorkerResponse::VersionManifestFetched {
+                    latest_release,
+                    versions,
+                } => {
+                    if let Some(rel) = latest_release {
+                        self.latest_release = Some(rel.clone());
+                        if self.create_inst_mc_ver.is_empty() {
+                            self.create_inst_mc_ver = rel;
+                        }
+                    }
+                    if !versions.is_empty() {
+                        self.remote_versions = versions;
+                    }
                     self.is_fetching_manifest = false;
                 }
                 UiWorkerResponse::InstanceInstallStarted(id) => {
