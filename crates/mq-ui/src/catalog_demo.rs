@@ -211,8 +211,9 @@ pub fn apply_demo_scene(state: &mut UiState, scene: &str) {
             state.show_create_instance_dialog = true;
         }
         "sidebar-long-nick" => {
-            if let Ok(profile) = mq_auth::create_offline_account("Alexandr_SuperLongNickname_2026")
-            {
+            state.accounts.remove_account("Player");
+            if let Ok(mut profile) = mq_auth::create_offline_account("Alexandr_2026") {
+                profile.username = "Alexandr_SuperLongNickname_2026".to_string();
                 state.accounts.upsert_account(profile, true);
             }
         }
@@ -225,6 +226,16 @@ pub fn apply_demo_scene(state: &mut UiState, scene: &str) {
             );
             state.jobs.progress(job_id, 3, 10);
             state.active_phase = Some("Загрузка модов (3/10)".into());
+            state.phase_progress = Some(mq_core::PhaseProgress {
+                phase: "Загрузка модов".into(),
+                completed_items: 3,
+                total_items: 10,
+                bytes_done: 4_200_000,
+                bytes_total: 14_000_000,
+                files_per_sec: 4.5,
+                mib_per_sec: 12.4,
+                active_tasks: 3,
+            });
         }
         _ => {}
     }

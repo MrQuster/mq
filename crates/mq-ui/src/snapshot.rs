@@ -107,24 +107,26 @@ impl SnapshotSession {
         }
         events.extend(opts.extra_events.iter().cloned());
 
-        let warm_input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(width as f32, height as f32),
-            )),
-            events: events.clone(),
-            ..Default::default()
-        };
-
-        // Warm-up pass so egui can measure text, allocate layout geometry, and register hover/focus
-        let warm_output = egui_ctx.run(warm_input, |ctx| {
-            app.render_frame_for_snapshot(ctx);
-        });
-        for (id, delta) in &warm_output.textures_delta.set {
-            renderer.update_texture(&self.device, &self.queue, *id, delta);
-        }
-        for id in &warm_output.textures_delta.free {
-            renderer.free_texture(id);
+        // Warm-up passes so egui can measure text, settle Window anchors/animations, and register hover/focus
+        for step in 0..4 {
+            let warm_input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width as f32, height as f32),
+                )),
+                time: Some(step as f64 * 0.25),
+                events: events.clone(),
+                ..Default::default()
+            };
+            let warm_output = egui_ctx.run(warm_input, |ctx| {
+                app.render_frame_for_snapshot(ctx);
+            });
+            for (id, delta) in &warm_output.textures_delta.set {
+                renderer.update_texture(&self.device, &self.queue, *id, delta);
+            }
+            for id in &warm_output.textures_delta.free {
+                renderer.free_texture(id);
+            }
         }
 
         let final_input = egui::RawInput {
@@ -132,6 +134,7 @@ impl SnapshotSession {
                 egui::Pos2::ZERO,
                 egui::vec2(width as f32, height as f32),
             )),
+            time: Some(1.0),
             events: opts
                 .pointer_pos
                 .map(egui::Event::PointerMoved)
@@ -330,8 +333,10 @@ mod tests {
         let paths = MqPaths::with_root(root.to_path_buf());
         std::fs::create_dir_all(paths.instances_dir())?;
 
-        let mut config = AppConfig::default();
-        config.launcher_locale = "ru".to_string();
+        let mut config = AppConfig {
+            launcher_locale: "ru".to_string(),
+            ..Default::default()
+        };
         config.theme.preset = preset;
 
         let pool = Arc::new(ComputePool::new(2));
@@ -368,8 +373,10 @@ mod tests {
             instances_view.view_mode = InstanceViewMode::Grid;
         }
 
-        let mut settings_view = SettingsView::default();
-        settings_view.active_section = Some(SettingsSection::Customization);
+        let settings_view = SettingsView {
+            active_section: Some(SettingsSection::Customization),
+            ..Default::default()
+        };
 
         apply_demo_scene(&mut state, scene);
 
@@ -449,7 +456,7 @@ mod tests {
                 1180,
                 740,
                 SnapshotOptions {
-                    pointer_pos: Some(egui::Pos2::new(112.0, 140.0)),
+                    pointer_pos: Some(egui::Pos2::new(112.0, 275.0)),
                     ..Default::default()
                 },
             ),
@@ -531,8 +538,7 @@ mod tests {
 
         for (idx, preset) in ThemePreset::ALL.iter().enumerate() {
             let filename = format!("theme-{:02}-{preset:?}.png", idx + 1);
-            let mut app =
-                build_demo_app_for_qa(tmp.path(), NavTab::Settings, *preset, "settings")?;
+            let mut app = build_demo_app_for_qa(tmp.path(), NavTab::Settings, *preset, "settings")?;
             session.capture(
                 &mut app,
                 1180,
