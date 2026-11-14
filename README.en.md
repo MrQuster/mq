@@ -67,16 +67,16 @@ The launcher contains zero telemetry, analytics, or background user tracking.
 ## Screenshots
 
 <p align="center">
-  <img src="docs/assets/screenshots/01_instances.png" alt="Instances View" width="48%">
-  <img src="docs/assets/screenshots/02_detail.png" alt="Instance Details & Console" width="48%">
+  <img src="docs/assets/screenshots/01-instances.png" alt="Instances View" width="48%">
+  <img src="docs/assets/screenshots/02-detail-mods.png" alt="Instance Details & Mods" width="48%">
 </p>
 <p align="center">
-  <img src="docs/assets/screenshots/03_catalog.png" alt="Mod and Modpack Catalog" width="48%">
-  <img src="docs/assets/screenshots/04_accounts.png" alt="Account Management" width="48%">
+  <img src="docs/assets/screenshots/04-catalog.png" alt="Mod and Modpack Catalog" width="48%">
+  <img src="docs/assets/screenshots/05-accounts.png" alt="Account Management" width="48%">
 </p>
 <p align="center">
-  <img src="docs/assets/screenshots/05_perf.png" alt="Performance Monitoring" width="48%">
-  <img src="docs/assets/screenshots/06_settings.png" alt="Settings Screen" width="48%">
+  <img src="docs/assets/screenshots/06-settings-matte.png" alt="Settings Screen (Dark Theme)" width="48%">
+  <img src="docs/assets/screenshots/07-settings-light.png" alt="Settings Screen (Light Theme)" width="48%">
 </p>
 
 ---
@@ -88,13 +88,13 @@ The launcher contains zero telemetry, analytics, or background user tracking.
 Install the latest release with a single command:
 
 ```bash
-curl -fsSL https://github.com/MrQuster/mq/releases/download/v2.2.0/install.sh | sh
+curl -fsSL https://github.com/MrQuster/mq/releases/latest/download/install.sh | sh
 ```
 
 Portable execution without system integration:
 
 ```bash
-curl -LO https://github.com/MrQuster/mq/releases/download/v2.2.0/mq-linux-x86_64.tar.gz
+curl -LO https://github.com/MrQuster/mq/releases/download/v2.4.0/mq-linux-x86_64.tar.gz
 tar -xzf mq-linux-x86_64.tar.gz
 ./mq
 ```
@@ -104,13 +104,18 @@ tar -xzf mq-linux-x86_64.tar.gz
 Install via PowerShell with a single command (no administrator privileges required):
 
 ```powershell
-irm https://github.com/MrQuster/mq/releases/download/v2.2.0/install.ps1 | iex
+irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1 | iex
 ```
 
-Other Windows options:
-* **Inno Setup Installer:** download [`MQ-Setup-2.2.0.exe`](https://github.com/MrQuster/mq/releases/download/v2.2.0/MQ-Setup-2.2.0.exe).
-* **Portable Archive:** download [`mq-windows-x86_64-portable.zip`](https://github.com/MrQuster/mq/releases/download/v2.2.0/mq-windows-x86_64-portable.zip) (stores data in the local `data/` folder).
-* **Windows Package Manager (winget):** `winget install MrQuster.MQ`
+| Install Method | Command / File | Notes |
+|---|---|---|
+| **Inno Setup 6 Installer** | [`MQ-Setup-2.4.0-x64.exe`](https://github.com/MrQuster/mq/releases/download/v2.4.0/MQ-Setup-2.4.0-x64.exe) | Installs to `%LOCALAPPDATA%\Programs\MQ` without UAC, RU/UK/EN, `.mrpack` association |
+| **PowerShell Script** | `irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1 \| iex` | Verifies `SHA256SUMS` & Minisign, supports `-Portable`, `-Silent`, `-Uninstall` |
+| **Portable Archive** | [`mq-windows-x86_64-portable.zip`](https://github.com/MrQuster/mq/releases/download/v2.4.0/mq-windows-x86_64-portable.zip) | Includes `portable.flag`, stores all data in `data/` next to `mq.exe` |
+| **winget** | `winget install MrQuster.MQ` | Manifest in `packaging/winget/` |
+| **Scoop** | `scoop install packaging/scoop/mq.json` | Portable build with `persist: ["data"]` |
+
+For SHA-256 verification, Minisign signatures, and Windows SmartScreen guidance, see [docs/WINDOWS_SIGNING.md](docs/WINDOWS_SIGNING.md).
 
 For distribution-specific guides (Arch Linux, Ubuntu/Debian, Fedora), refer to [docs/INSTALL.md](docs/INSTALL.md).
 

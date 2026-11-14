@@ -67,16 +67,16 @@ MQ — модульный лаунчер для Minecraft: Java Edition, нап�
 ## Скриншоты
 
 <p align="center">
-  <img src="docs/assets/screenshots/01_instances.png" alt="Список инстансов" width="48%">
-  <img src="docs/assets/screenshots/02_detail.png" alt="Детали инстанса и консоль" width="48%">
+  <img src="docs/assets/screenshots/01-instances.png" alt="Список инстансов" width="48%">
+  <img src="docs/assets/screenshots/02-detail-mods.png" alt="Детали инстанса и моды" width="48%">
 </p>
 <p align="center">
-  <img src="docs/assets/screenshots/03_catalog.png" alt="Каталог модов и сборок" width="48%">
-  <img src="docs/assets/screenshots/04_accounts.png" alt="Управление аккаунтами" width="48%">
+  <img src="docs/assets/screenshots/04-catalog.png" alt="Каталог модов и сборок" width="48%">
+  <img src="docs/assets/screenshots/05-accounts.png" alt="Управление аккаунтами" width="48%">
 </p>
 <p align="center">
-  <img src="docs/assets/screenshots/05_perf.png" alt="Мониторинг ресурсов и потоков" width="48%">
-  <img src="docs/assets/screenshots/06_settings.png" alt="Настройки лаунчера" width="48%">
+  <img src="docs/assets/screenshots/06-settings-matte.png" alt="Настройки лаунчера (тёмная тема)" width="48%">
+  <img src="docs/assets/screenshots/07-settings-light.png" alt="Настройки лаунчера (светлая тема)" width="48%">
 </p>
 
 ---
@@ -88,13 +88,13 @@ MQ — модульный лаунчер для Minecraft: Java Edition, нап�
 Установка актуального релиза скриптом в одну команду:
 
 ```bash
-curl -fsSL https://github.com/MrQuster/mq/releases/download/v2.2.0/install.sh | sh
+curl -fsSL https://github.com/MrQuster/mq/releases/latest/download/install.sh | sh
 ```
 
 Портативный запуск без установки в систему:
 
 ```bash
-curl -LO https://github.com/MrQuster/mq/releases/download/v2.2.0/mq-linux-x86_64.tar.gz
+curl -LO https://github.com/MrQuster/mq/releases/download/v2.4.0/mq-linux-x86_64.tar.gz
 tar -xzf mq-linux-x86_64.tar.gz
 ./mq
 ```
@@ -104,13 +104,18 @@ tar -xzf mq-linux-x86_64.tar.gz
 Установка через PowerShell в одну команду (права администратора UAC не требуются):
 
 ```powershell
-irm https://github.com/MrQuster/mq/releases/download/v2.2.0/install.ps1 | iex
+irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1 | iex
 ```
 
-Другие способы установки на Windows:
-* **Классический инсталлятор:** скачайте [`MQ-Setup-2.2.0.exe`](https://github.com/MrQuster/mq/releases/download/v2.2.0/MQ-Setup-2.2.0.exe).
-* **Портативный архив:** скачайте [`mq-windows-x86_64-portable.zip`](https://github.com/MrQuster/mq/releases/download/v2.2.0/mq-windows-x86_64-portable.zip) (хранит данные в папке `data/` рядом с программой).
-* **Пакетный менеджер Windows (winget):** `winget install MrQuster.MQ`
+| Способ установки | Команда / файл | Примечание |
+|---|---|---|
+| **Установщик Inno Setup 6** | [`MQ-Setup-2.4.0-x64.exe`](https://github.com/MrQuster/mq/releases/download/v2.4.0/MQ-Setup-2.4.0-x64.exe) | Ставится в `%LOCALAPPDATA%\Programs\MQ` без UAC, RU/UK/EN, ассоциация `.mrpack` |
+| **PowerShell-скрипт** | `irm https://github.com/MrQuster/mq/releases/latest/download/install.ps1 \| iex` | Проверка `SHA256SUMS` и Minisign, поддержка `-Portable`, `-Silent`, `-Uninstall` |
+| **Портативный архив** | [`mq-windows-x86_64-portable.zip`](https://github.com/MrQuster/mq/releases/download/v2.4.0/mq-windows-x86_64-portable.zip) | С `portable.flag`, хранит все данные в папке `data/` рядом с `mq.exe` |
+| **winget** | `winget install MrQuster.MQ` | Официальный манифест в `packaging/winget/` |
+| **Scoop** | `scoop install packaging/scoop/mq.json` | Портативная сборка с `persist: ["data"]` |
+
+Проверка подписи, контрольных сумм SHA-256 и информация о Windows SmartScreen описаны в [docs/WINDOWS_SIGNING.md](docs/WINDOWS_SIGNING.md).
 
 Подробная информация для Arch Linux, Ubuntu/Debian и Fedora доступна в [Руководстве по установке](docs/INSTALL.md).
 

@@ -5,6 +5,23 @@
 
 ---
 
+## [v2.4.0] — 2026-11-14 ("Clean UI, Windows Installer & Graphify")
+
+### Добавлено
+- **Полноценная дистрибуция для Windows 10/11 x64:**
+  - Мастер установки Inno Setup 6 (`packaging/windows/mq.iss`) с графитовыми BMP-ассетами (`wizard-large.bmp`, `wizard-small.bmp`), установкой без UAC в `%LOCALAPPDATA%\Programs\MQ`, языками RU/UK/EN, ассоциацией `.mrpack`, безопасным закрытием только `mq.exe` и удалением с расчётом размера данных (`/PURGE=1` для тихого режима).
+  - Обновлённый PowerShell-установщик (`packaging/windows/install.ps1`) с проверкой TLS 1.2+, `SHA256SUMS` и Minisign, флагами `-Version`, `-Portable`, `-Silent`, `-Uninstall`, `-BaseUrl`.
+  - Портативный режим через `portable.flag` (`<exe_dir>/data/` без записи в реестр), запуск `mq.exe <file.mrpack>` с передачей пути запущенному окну по loopback IPC, автообновление через `MQ-Setup-<version>-x64.exe` при наличии `unins000.exe` (или атомарную подмену в portable-режиме).
+  - Статическая CRT (`+crt-static`), встроенные `mq.ico` и `VERSIONINFO` (`crates/mq-cli/build.rs`), манифесты `winget` и `scoop`, документация `docs/WINDOWS_SIGNING.md` и `docs/WINDOWS_TEST_CHECKLIST.md`, CI/Release-пайплайн с автотестами PowerShell на `windows-latest`.
+- **Чистый интерфейс и визуальный QA:**
+  - Убраны шаблоны быстрого создания с хардкодом `1.21.1` и технические плашки; добавлен чистый Empty State «Инстансов пока нет» и обновлённый диалог «Создать инстанс» с манифестом Mojang (`latest.release`, фильтры, `26.x`).
+  - Обновлена боковая панель (`224 px` / компактный режим `64 px`, авто-сворачивание `<1000 px`), сгруппированные разделы, блок аккаунта с усечением ника, единый набор векторных иконок Lucide `16 px` (добавлена лицензия ISC в `THIRD_PARTY_LICENSES.md`) и клавиатурная навигация (`Ctrl+1..6`, стрелки, `Enter`).
+  - Проведён двухэтапный визуальный QA (`docs/VISUAL_QA_REPORT.md`), обновлены скриншоты в `docs/assets/screenshots/`.
+- **Инструментарий разработки:**
+  - Настроен `.graphifyignore` и проверка качества `scripts/verify.sh` (`fmt`, `clippy -D warnings`, `cargo test --workspace --locked`, проверка заглушек и ключей).
+
+---
+
 ## [v2.3.0] — 2026-11-14 ("Unified Modrinth + CurseForge Catalog")
 
 ### Добавлено
