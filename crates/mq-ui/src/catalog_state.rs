@@ -382,12 +382,12 @@ mod tests {
             ..Default::default()
         };
         s.filters.loader = Some(ModLoaderKind::Fabric);
-        s.filters.mc_version = " 1.21.1 ".into();
+        s.filters.mc_version = " 1.21.4 ".into();
         s.page = 2;
         let q = s.build_query();
         assert_eq!(q.project_kind, ProjectKind::Shader);
         assert_eq!(q.offset, 2 * CATALOG_PAGE_SIZE);
-        assert_eq!(q.mc_version.as_deref(), Some("1.21.1"));
+        assert_eq!(q.mc_version.as_deref(), Some("1.21.4"));
         assert_eq!(q.loader, None, "shaders ignore the loader filter");
         s.mark_dirty(Instant::now());
         assert_eq!(s.page, 0, "editing the query resets pagination");

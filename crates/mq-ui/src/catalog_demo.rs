@@ -92,7 +92,7 @@ pub fn apply_demo_scene(state: &mut UiState, scene: &str) {
             let page = ProjectPage {
                 details,
                 versions: vec![
-                    version("v3", "0.5.11", "1.21.1"),
+                    version("v3", "0.5.11", "1.21.4"),
                     version("v2", "0.5.9", "1.21"),
                     version("v1", "0.5.8", "1.20.6"),
                 ],
@@ -156,7 +156,7 @@ pub fn apply_demo_scene(state: &mut UiState, scene: &str) {
                 },
             );
             d.preview = Some(ModpackPreview {
-                mc_version: "1.21.1".into(),
+                mc_version: "1.21.4".into(),
                 loader: mq_core::ModLoaderKind::Fabric,
                 loader_version: Some("0.16.9".into()),
                 file_count: 64,
@@ -171,7 +171,7 @@ pub fn apply_demo_scene(state: &mut UiState, scene: &str) {
             let spec = RetrySpec::Modpack {
                 instance_name: "Demo".into(),
                 preview: ModpackPreview {
-                    mc_version: "1.21.1".into(),
+                    mc_version: "1.21.4".into(),
                     loader: mq_core::ModLoaderKind::Fabric,
                     loader_version: None,
                     file_count: 64,

@@ -330,7 +330,7 @@ mod tests {
     fn bottom_hud_renders_and_handles_zero_viewport_safely() {
         let ctx = Context::default();
         let data = BottomHudData {
-            active_phase: Some("Проверка SHA-1 (CAS)".to_owned()),
+            active_phase: Some("Проверка файлов".to_owned()),
             progress_fraction: Some(0.64),
             files_per_sec: 420.0,
             mib_per_sec: 85.4,
