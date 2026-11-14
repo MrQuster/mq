@@ -92,8 +92,8 @@ pub fn apply_demo_scene(state: &mut UiState, scene: &str) {
             let page = ProjectPage {
                 details,
                 versions: vec![
-                    version("v3", "0.5.11", "1.21.1"),
-                    version("v2", "0.5.9", "1.21"),
+                    version("v3", "0.5.11", "26.1"),
+                    version("v2", "0.5.9", "1.21.4"),
                     version("v1", "0.5.8", "1.20.6"),
                 ],
             };
@@ -156,7 +156,7 @@ pub fn apply_demo_scene(state: &mut UiState, scene: &str) {
                 },
             );
             d.preview = Some(ModpackPreview {
-                mc_version: "1.21.1".into(),
+                mc_version: "26.1".into(),
                 loader: mq_core::ModLoaderKind::Fabric,
                 loader_version: Some("0.16.9".into()),
                 file_count: 64,
@@ -171,7 +171,7 @@ pub fn apply_demo_scene(state: &mut UiState, scene: &str) {
             let spec = RetrySpec::Modpack {
                 instance_name: "Demo".into(),
                 preview: ModpackPreview {
-                    mc_version: "1.21.1".into(),
+                    mc_version: "26.1".into(),
                     loader: mq_core::ModLoaderKind::Fabric,
                     loader_version: None,
                     file_count: 64,
@@ -201,6 +201,30 @@ pub fn apply_demo_scene(state: &mut UiState, scene: &str) {
                 Some(spec),
             );
             state.jobs.finish(c, Err("нет связи с сервером".into()));
+        }
+        "instances-empty" => {
+            state.instances.clear();
+            state.selected_instance_id = None;
+            state.show_create_instance_dialog = false;
+        }
+        "instances-create" => {
+            state.show_create_instance_dialog = true;
+        }
+        "sidebar-long-nick" => {
+            if let Ok(profile) = mq_auth::create_offline_account("Alexandr_SuperLongNickname_2026")
+            {
+                state.accounts.upsert_account(profile, true);
+            }
+        }
+        "sidebar-downloads" => {
+            let (job_id, _) = state.jobs.push(
+                "Sodium".into(),
+                "Инстанс «fabric-optimization»".into(),
+                10,
+                None,
+            );
+            state.jobs.progress(job_id, 3, 10);
+            state.active_phase = Some("Загрузка модов (3/10)".into());
         }
         _ => {}
     }
