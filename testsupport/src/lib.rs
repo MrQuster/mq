@@ -891,25 +891,37 @@ mod tests {
         assert_eq!(resp_bad_cl.body.len(), 42);
         assert_ne!(resp_bad_cl.body.len(), normal_ver_len);
 
-        // 8. Test Read-Only directory simulation
+        // 8. Test Read-Only simulation (directory on Unix, file on Windows where dir READONLY flag is advisory)
         let tmp = tempfile::tempdir().expect("tempdir");
         let test_dir = tmp.path().join("readonly_test");
         std::fs::create_dir_all(&test_dir).expect("create dir");
 
-        let res = with_read_only_dir(&test_dir, |p| {
-            // Attempting to write into read-only dir must fail with PermissionDenied
-            std::fs::write(p.join("fail.txt"), "hello")
+        #[cfg(unix)]
+        let guard_target = test_dir.clone();
+        #[cfg(not(unix))]
+        let guard_target = {
+            let f = test_dir.join("fail.txt");
+            std::fs::write(&f, "initial").expect("seed file");
+            f
+        };
+
+        let res = with_read_only_dir(&guard_target, |p| {
+            #[cfg(unix)]
+            let target_file = p.join("fail.txt");
+            #[cfg(not(unix))]
+            let target_file = p.to_path_buf();
+            std::fs::write(target_file, "hello")
         })
         .expect("guard");
-        assert!(res.is_err(), "write in read-only dir must fail");
+        assert!(res.is_err(), "write in read-only target must fail");
         assert_eq!(
             res.unwrap_err().kind(),
             std::io::ErrorKind::PermissionDenied
         );
 
         // Permissions restored after closure: write now succeeds
-        std::fs::write(test_dir.join("success.txt"), "hello").expect("write after restore");
-        assert!(test_dir.join("success.txt").exists());
+        std::fs::write(test_dir.join("fail.txt"), "hello").expect("write after restore");
+        assert!(test_dir.join("fail.txt").exists());
 
         server.shutdown().await;
     }
