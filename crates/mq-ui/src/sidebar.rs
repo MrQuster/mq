@@ -1,27 +1,112 @@
-//! Left navigation sidebar with geometric `MQ` vector emblem, fixed 220px width,
-//! 2px left accent border on active tab, and bottom 24x24 avatar profile.
+//! Left navigation sidebar with geometric `MQ` vector emblem, responsive 224px / 64px
+//! animated width, grouped navigation (Библиотека / Активность / Система), Lucide-style
+//! 16px vector icons, keyboard navigation (`Ctrl+1..6`, arrows, `Enter`), and bottom
+//! 28x28 account profile block.
 
 use egui::{
-    Align, Context, CornerRadius, FontId, Id, Layout, Painter, Pos2, Rect, RichText, Sense, Shape,
-    SidePanel, Stroke, StrokeKind, Ui, Vec2,
+    Align, Color32, Context, CornerRadius, FontId, Id, Key, Layout, Painter, Pos2, Rect, RichText,
+    Sense, Shape, SidePanel, Stroke, StrokeKind, Ui, Vec2,
 };
-use mq_auth::AccountProfile;
+use mq_auth::{AccountKind, AccountProfile};
 
 use crate::i18n::{tr, Language};
 use crate::theme::{solid_sidebar_frame, Tokens, RADIUS_BUTTON};
 use crate::widgets::{paint_vector_icon, VectorIcon};
 
-/// Fixed width of the left navigation sidebar in logical points (strictly 220px).
-pub const SIDEBAR_WIDTH: f32 = 220.0;
-/// Compact width of the left navigation sidebar when window is narrow (< 800px).
+/// Expanded width of the left navigation sidebar in logical points.
+pub const SIDEBAR_WIDTH: f32 = 224.0;
+/// Compact width of the left navigation sidebar when collapsed or window is narrow (< 1000px).
 pub const COMPACT_SIDEBAR_WIDTH: f32 = 64.0;
+/// Window width threshold below which the sidebar auto-collapses to compact mode.
+pub const AUTO_COLLAPSE_WINDOW_WIDTH: f32 = 1000.0;
+/// Collapse/expand animation duration in seconds (~150ms).
+pub const SIDEBAR_ANIMATION_SECS: f32 = 0.15;
+/// Fixed height of the brand header in logical points.
+pub const SIDEBAR_HEADER_HEIGHT: f32 = 56.0;
+/// Height of each navigation menu row.
+pub const NAV_ROW_HEIGHT: f32 = 36.0;
+/// Horizontal inner padding of a navigation menu row.
+pub const NAV_ROW_PADDING_X: f32 = 12.0;
+/// Size of each Lucide-style navigation icon.
+pub const NAV_ICON_SIZE: f32 = 16.0;
+/// Gap between icon and label in a navigation row.
+pub const NAV_ICON_TEXT_GAP: f32 = 12.0;
+/// Corner radius of a navigation row.
+pub const NAV_ROW_RADIUS: u8 = 6;
+/// Size of the skin head avatar in the bottom account block.
+pub const ACCOUNT_AVATAR_SIZE: f32 = 28.0;
 
-/// Returns the responsive width for the left navigation sidebar based on window width.
+const COLLAPSE_STATE_ID: &str = "mq_sidebar_collapse_state";
+const COLLAPSE_ANIM_ID: &str = "mq_sidebar_compact_anim";
+
+/// Persistent user preference for sidebar compact/expanded mode.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SidebarCollapseState {
+    /// `Some(true)` = user manually collapsed, `Some(false)` = user manually expanded,
+    /// `None` = follow auto-collapse threshold (`< 1000 px`).
+    pub manual_compact: Option<bool>,
+}
+
+/// Resolves whether the sidebar should be compact given window width and manual override.
+#[inline]
+pub fn resolve_compact_mode(window_width: f32, manual_compact: Option<bool>) -> bool {
+    manual_compact.unwrap_or(window_width < AUTO_COLLAPSE_WINDOW_WIDTH)
+}
+
+/// Returns whether the sidebar is currently in compact mode for `ctx`.
+pub fn is_sidebar_compact(ctx: &Context) -> bool {
+    let window_width = ctx.screen_rect().width();
+    let state = ctx
+        .data(|d| d.get_temp::<SidebarCollapseState>(Id::new(COLLAPSE_STATE_ID)))
+        .unwrap_or_default();
+    resolve_compact_mode(window_width, state.manual_compact)
+}
+
+/// Toggles the user's manual sidebar collapse preference in `ctx` memory.
+pub fn toggle_sidebar_compact(ctx: &Context) {
+    let current = is_sidebar_compact(ctx);
+    ctx.data_mut(|d| {
+        d.insert_temp(
+            Id::new(COLLAPSE_STATE_ID),
+            SidebarCollapseState {
+                manual_compact: Some(!current),
+            },
+        );
+    });
+}
+
+/// Returns the animated width for the left navigation sidebar (`224 px` <-> `64 px`, `~150 ms`).
 pub fn sidebar_width(ctx: &Context) -> f32 {
-    if ctx.screen_rect().width() < 800.0 {
-        COMPACT_SIDEBAR_WIDTH
-    } else {
-        SIDEBAR_WIDTH
+    let compact = is_sidebar_compact(ctx);
+    let t = ctx.animate_bool_with_time(Id::new(COLLAPSE_ANIM_ID), compact, SIDEBAR_ANIMATION_SECS);
+    egui::lerp(SIDEBAR_WIDTH..=COMPACT_SIDEBAR_WIDTH, t)
+}
+
+/// Navigation groups in the left sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NavGroup {
+    Library,
+    Activity,
+    System,
+}
+
+impl NavGroup {
+    /// Russian sentence-case group heading.
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Library => "Библиотека",
+            Self::Activity => "Активность",
+            Self::System => "Система",
+        }
+    }
+
+    /// Tabs belonging to this group in display order.
+    pub const fn tabs(&self) -> &'static [NavTab] {
+        match self {
+            Self::Library => &[NavTab::Instances, NavTab::Catalog],
+            Self::Activity => &[NavTab::Downloads, NavTab::Performance],
+            Self::System => &[NavTab::Accounts, NavTab::Settings],
+        }
     }
 }
 
@@ -31,18 +116,20 @@ pub enum NavTab {
     #[default]
     Instances,
     Catalog,
-    Accounts,
+    Downloads,
     Performance,
+    Accounts,
     Settings,
 }
 
 impl NavTab {
     /// All primary navigation tabs in display order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Instances,
         Self::Catalog,
-        Self::Accounts,
+        Self::Downloads,
         Self::Performance,
+        Self::Accounts,
         Self::Settings,
     ];
 
@@ -51,8 +138,9 @@ impl NavTab {
         match self {
             Self::Instances => "Инстансы",
             Self::Catalog => "Каталог",
-            Self::Accounts => "Аккаунты",
+            Self::Downloads => "Загрузки",
             Self::Performance => "Производительность",
+            Self::Accounts => "Аккаунты",
             Self::Settings => "Настройки",
         }
     }
@@ -61,23 +149,67 @@ impl NavTab {
     pub fn label_for(&self, lang: &str) -> &'static str {
         match self {
             Self::Instances => tr("tab_instances", lang),
-            Self::Catalog => tr("tab_catalog", lang),
-            Self::Accounts => tr("tab_accounts", lang),
+            Self::Catalog => match Language::from_code(lang) {
+                Language::Russian => "Каталог",
+                Language::Ukrainian => "Каталог",
+                Language::English => "Catalog",
+                _ => tr("tab_catalog", lang),
+            },
+            Self::Downloads => match Language::from_code(lang) {
+                Language::Ukrainian => "Завантаження",
+                Language::English => "Downloads",
+                _ => "Загрузки",
+            },
             Self::Performance => tr("tab_performance", lang),
+            Self::Accounts => tr("tab_accounts", lang),
             Self::Settings => tr("tab_settings", lang),
         }
     }
 
-    /// Vector icon associated with this navigation tab.
+    /// Vector icon associated with this navigation tab (16px Lucide geometry).
     pub const fn icon(&self) -> VectorIcon {
         match self {
             Self::Instances => VectorIcon::Layers,
             Self::Catalog => VectorIcon::Catalog,
+            Self::Downloads => VectorIcon::Download,
+            Self::Performance => VectorIcon::Activity,
             Self::Accounts => VectorIcon::User,
-            Self::Performance => VectorIcon::Cpu,
             Self::Settings => VectorIcon::Settings,
         }
     }
+
+    /// Keyboard shortcut index (`1..=6`) for `Ctrl+1..6`.
+    pub const fn shortcut_index(&self) -> usize {
+        match self {
+            Self::Instances => 1,
+            Self::Catalog => 2,
+            Self::Downloads => 3,
+            Self::Performance => 4,
+            Self::Accounts => 5,
+            Self::Settings => 6,
+        }
+    }
+
+    /// Human-readable shortcut label for tooltips in compact mode.
+    pub const fn shortcut_label(&self) -> &'static str {
+        match self {
+            Self::Instances => "Ctrl+1",
+            Self::Catalog => "Ctrl+2",
+            Self::Downloads => "Ctrl+3",
+            Self::Performance => "Ctrl+4",
+            Self::Accounts => "Ctrl+5",
+            Self::Settings => "Ctrl+6",
+        }
+    }
+}
+
+/// Optional dynamic indicators shown in the sidebar.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SidebarState {
+    /// Number of active download/install tasks (> 0 shows a neutral counter on «Загрузки»).
+    pub active_downloads: usize,
+    /// Whether a launcher update is available (shows a neutral dot + «Доступно обновление»).
+    pub update_available: bool,
 }
 
 /// User interaction emitted by the left navigation sidebar.
@@ -93,7 +225,16 @@ pub enum SidebarAction {
     ChangeLanguage(String),
 }
 
-/// Paints the crisp geometric `MQ` isometric cube emblem inside `rect`.
+/// Maps `AccountKind` to the human-readable source label shown in the bottom account block.
+pub const fn account_source_label(kind: AccountKind) -> &'static str {
+    match kind {
+        AccountKind::ElyBy => "Ely.by",
+        AccountKind::Microsoft => "Microsoft",
+        AccountKind::Offline => "Офлайн",
+    }
+}
+
+/// Paints the crisp geometric `MQ` isometric cube emblem inside `rect` (graphite + accent, no gradients).
 pub fn paint_mq_emblem(painter: &Painter, rect: Rect, tokens: &Tokens) {
     painter.rect_filled(rect, CornerRadius::same(6), tokens.bg_surface);
     painter.rect_stroke(
@@ -106,7 +247,6 @@ pub fn paint_mq_emblem(painter: &Painter, rect: Rect, tokens: &Tokens) {
     let r = rect.shrink(5.0);
     let p = |nx: f32, ny: f32| Pos2::new(r.left() + r.width() * nx, r.top() + r.height() * ny);
 
-    // Isometric hexagon outline
     let hex = vec![
         p(0.50, 0.06),
         p(0.90, 0.28),
@@ -117,7 +257,6 @@ pub fn paint_mq_emblem(painter: &Painter, rect: Rect, tokens: &Tokens) {
     ];
     painter.add(Shape::closed_line(hex, Stroke::new(1.5_f32, tokens.accent)));
 
-    // Stylized "M" + isometric core lines
     let m_stroke = Stroke::new(1.8_f32, tokens.text);
     painter.line_segment([p(0.26, 0.68), p(0.26, 0.34)], m_stroke);
     painter.line_segment([p(0.26, 0.34), p(0.50, 0.54)], m_stroke);
@@ -129,86 +268,333 @@ pub fn paint_mq_emblem(painter: &Painter, rect: Rect, tokens: &Tokens) {
     );
 }
 
+#[inline]
+fn nav_item_id(tab: NavTab) -> Id {
+    Id::new(("mq_sidebar_nav_item", tab.shortcut_index()))
+}
+
+fn paint_horizontal_divider(ui: &mut Ui, color: Color32) {
+    let w = ui.available_width().max(1.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 1.0), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        ui.painter().rect_filled(rect, CornerRadius::ZERO, color);
+    }
+}
+
+fn render_group_heading(ui: &mut Ui, label: &str, is_compact: bool, tokens: &Tokens) {
+    if is_compact {
+        return;
+    }
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.add_space(NAV_ROW_PADDING_X);
+        ui.label(RichText::new(label).size(11.0).color(tokens.text_muted));
+    });
+    ui.add_space(4.0);
+}
+
+fn truncate_text_to_width(
+    painter: &Painter,
+    text: &str,
+    font_id: &FontId,
+    max_width: f32,
+    color: Color32,
+) -> std::sync::Arc<egui::Galley> {
+    let full = painter.layout_no_wrap(text.to_owned(), font_id.clone(), color);
+    if full.size().x <= max_width || max_width <= 8.0 {
+        return full;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut lo = 0usize;
+    let mut hi = chars.len();
+    let mut best = String::from("…");
+    while lo <= hi {
+        let mid = (lo + hi) / 2;
+        let mut candidate: String = chars[..mid].iter().collect();
+        candidate.push('…');
+        let g = painter.layout_no_wrap(candidate.clone(), font_id.clone(), color);
+        if g.size().x <= max_width {
+            best = candidate;
+            lo = mid + 1;
+        } else if mid == 0 {
+            break;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    painter.layout_no_wrap(best, font_id.clone(), color)
+}
+
 fn render_nav_row(
     ui: &mut Ui,
     tab: NavTab,
     is_active: bool,
+    is_compact: bool,
+    badge_count: Option<usize>,
     lang_code: &str,
     tokens: &Tokens,
 ) -> bool {
-    let is_compact = ui.available_width() < 120.0;
     let available_w = ui
         .available_width()
-        .max(if is_compact { 48.0 } else { 160.0 });
-    let row_h = 36.0;
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(available_w, row_h), Sense::click());
+        .max(if is_compact { 40.0 } else { 140.0 });
+    let id = nav_item_id(tab);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(available_w, NAV_ROW_HEIGHT), Sense::hover());
+    let response = ui.interact(rect, id, Sense::click());
+
+    let has_focus = response.has_focus();
+    let hovered = response.hovered();
 
     if ui.is_rect_visible(rect) {
-        let hovered = response.hovered();
         let painter = ui.painter();
+        let cr = CornerRadius::same(NAV_ROW_RADIUS);
 
         if is_active {
-            let cr = CornerRadius {
-                nw: 0,
-                sw: 0,
-                ne: 6,
-                se: 6,
-            };
-            painter.rect_filled(rect, cr, tokens.border);
-            // 2px left accent bar
+            painter.rect_filled(rect, cr, tokens.bg_surface);
             let bar_rect = Rect::from_min_max(
-                Pos2::new(rect.left(), rect.top() + 4.0),
-                Pos2::new(rect.left() + 2.0, rect.bottom() - 4.0),
+                Pos2::new(rect.left(), rect.top() + 6.0),
+                Pos2::new(rect.left() + 2.0, rect.bottom() - 6.0),
             );
             painter.rect_filled(bar_rect, CornerRadius::same(1), tokens.accent);
         } else if hovered {
-            let cr = CornerRadius {
-                nw: 0,
-                sw: 0,
-                ne: 6,
-                se: 6,
-            };
-            painter.rect_filled(rect, cr, tokens.bg_surface);
+            painter.rect_filled(rect, cr, tokens.bg_surface_hover);
         }
 
-        let icon_color = if is_active {
-            tokens.accent
-        } else if hovered {
+        if has_focus {
+            painter.rect_stroke(
+                rect,
+                cr,
+                Stroke::new(2.0_f32, tokens.accent),
+                StrokeKind::Inside,
+            );
+        }
+
+        let fg_color = if is_active || hovered {
             tokens.text
         } else {
             tokens.text_muted
         };
 
         if is_compact {
-            // Vector Icon centered in compact mode
-            let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(18.0));
-            paint_vector_icon(painter, icon_rect, tab.icon(), icon_color);
-        } else {
-            // Vector Icon
-            let icon_rect = Rect::from_center_size(
-                Pos2::new(rect.left() + 20.0, rect.center().y),
-                Vec2::splat(16.0),
-            );
-            paint_vector_icon(painter, icon_rect, tab.icon(), icon_color);
+            let icon_rect = Rect::from_center_size(rect.center(), Vec2::splat(NAV_ICON_SIZE));
+            paint_vector_icon(painter, icon_rect, tab.icon(), fg_color);
 
-            // Label
-            let text_color = if is_active || hovered {
-                tokens.text
+            if let Some(count) = badge_count.filter(|&c| c > 0) {
+                let badge_center = Pos2::new(rect.right() - 8.0, rect.top() + 8.0);
+                painter.circle_filled(badge_center, 4.0, tokens.border_strong);
+                let _ = count;
+            }
+        } else {
+            let icon_left = rect.left() + NAV_ROW_PADDING_X;
+            let icon_rect = Rect::from_min_size(
+                Pos2::new(icon_left, rect.center().y - NAV_ICON_SIZE * 0.5),
+                Vec2::splat(NAV_ICON_SIZE),
+            );
+            paint_vector_icon(painter, icon_rect, tab.icon(), fg_color);
+
+            let badge_reserve = if badge_count.is_some_and(|c| c > 0) {
+                30.0
             } else {
-                tokens.text_muted
+                0.0
             };
+            let text_left = icon_left + NAV_ICON_SIZE + NAV_ICON_TEXT_GAP;
+            let max_text_w =
+                (rect.right() - NAV_ROW_PADDING_X - badge_reserve - text_left).max(20.0);
             let font_id = FontId::proportional(13.0);
-            let galley =
-                painter.layout_no_wrap(tab.label_for(lang_code).to_owned(), font_id, text_color);
-            let text_pos = Pos2::new(rect.left() + 38.0, rect.center().y - galley.size().y * 0.5);
-            painter.galley(text_pos, galley, text_color);
+            let galley = truncate_text_to_width(
+                painter,
+                tab.label_for(lang_code),
+                &font_id,
+                max_text_w,
+                fg_color,
+            );
+            let text_pos = Pos2::new(text_left, rect.center().y - galley.size().y * 0.5);
+            painter.galley(text_pos, galley, fg_color);
+
+            if let Some(count) = badge_count.filter(|&c| c > 0) {
+                let badge_text = if count > 99 {
+                    "99+".to_owned()
+                } else {
+                    count.to_string()
+                };
+                let badge_font = FontId::proportional(10.5);
+                let badge_galley = painter.layout_no_wrap(badge_text, badge_font, tokens.text);
+                let pill_w = (badge_galley.size().x + 10.0).max(18.0);
+                let pill_h = 16.0;
+                let pill_rect = Rect::from_min_size(
+                    Pos2::new(
+                        rect.right() - NAV_ROW_PADDING_X - pill_w,
+                        rect.center().y - pill_h * 0.5,
+                    ),
+                    Vec2::new(pill_w, pill_h),
+                );
+                painter.rect_filled(pill_rect, CornerRadius::same(8), tokens.bg_surface_hover);
+                painter.rect_stroke(
+                    pill_rect,
+                    CornerRadius::same(8),
+                    Stroke::new(1.0_f32, tokens.border),
+                    StrokeKind::Inside,
+                );
+                let b_pos = Pos2::new(
+                    pill_rect.center().x - badge_galley.size().x * 0.5,
+                    pill_rect.center().y - badge_galley.size().y * 0.5,
+                );
+                painter.galley(b_pos, badge_galley, tokens.text);
+            }
         }
     }
 
-    if is_compact {
-        response.on_hover_text(tab.label_for(lang_code)).clicked()
+    let activated_by_enter =
+        has_focus && ui.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space));
+
+    let resp = if is_compact {
+        response.on_hover_text(format!(
+            "{} ({})",
+            tab.label_for(lang_code),
+            tab.shortcut_label()
+        ))
     } else {
-        response.clicked()
+        response
+    };
+
+    resp.clicked() || activated_by_enter
+}
+
+fn handle_keyboard_navigation(ui: &mut Ui) -> Option<NavTab> {
+    // Ctrl+1..6 (or Cmd+1..6) direct tab switching
+    let shortcut_tab = ui.input(|i| {
+        if !(i.modifiers.ctrl || i.modifiers.command) {
+            return None;
+        }
+        let keys = [
+            Key::Num1,
+            Key::Num2,
+            Key::Num3,
+            Key::Num4,
+            Key::Num5,
+            Key::Num6,
+        ];
+        for (idx, key) in keys.into_iter().enumerate() {
+            if i.key_pressed(key) {
+                return NavTab::ALL.get(idx).copied();
+            }
+        }
+        None
+    });
+
+    if let Some(tab) = shortcut_tab {
+        ui.memory_mut(|m| m.request_focus(nav_item_id(tab)));
+        return Some(tab);
+    }
+
+    None
+}
+
+fn render_header(ui: &mut Ui, is_compact: bool, tokens: &Tokens) {
+    let available_w = ui.available_width().max(40.0);
+    let (header_rect, _) = ui.allocate_exact_size(
+        Vec2::new(available_w, SIDEBAR_HEADER_HEIGHT),
+        Sense::hover(),
+    );
+
+    if is_compact {
+        let emblem_rect = Rect::from_center_size(
+            Pos2::new(header_rect.center().x, header_rect.top() + 14.0),
+            Vec2::splat(24.0),
+        );
+        paint_mq_emblem(ui.painter(), emblem_rect, tokens);
+
+        let toggle_rect = Rect::from_center_size(
+            Pos2::new(header_rect.center().x, header_rect.bottom() - 12.0),
+            Vec2::splat(22.0),
+        );
+        let toggle_resp = ui.interact(
+            toggle_rect,
+            Id::new("mq_sidebar_collapse_toggle"),
+            Sense::click(),
+        );
+        if ui.is_rect_visible(toggle_rect) {
+            if toggle_resp.hovered() {
+                ui.painter().rect_filled(
+                    toggle_rect,
+                    CornerRadius::same(NAV_ROW_RADIUS),
+                    tokens.bg_surface_hover,
+                );
+            }
+            paint_vector_icon(
+                ui.painter(),
+                Rect::from_center_size(toggle_rect.center(), Vec2::splat(16.0)),
+                VectorIcon::ChevronsRight,
+                if toggle_resp.hovered() {
+                    tokens.text
+                } else {
+                    tokens.text_muted
+                },
+            );
+        }
+        if toggle_resp.on_hover_text("Развернуть меню").clicked() {
+            toggle_sidebar_compact(ui.ctx());
+        }
+    } else {
+        let emblem_rect = Rect::from_min_size(
+            Pos2::new(header_rect.left() + 4.0, header_rect.center().y - 16.0),
+            Vec2::splat(32.0),
+        );
+        if ui.is_rect_visible(emblem_rect) {
+            paint_mq_emblem(ui.painter(), emblem_rect, tokens);
+        }
+
+        let toggle_rect = Rect::from_min_size(
+            Pos2::new(header_rect.right() - 28.0, header_rect.center().y - 14.0),
+            Vec2::splat(28.0),
+        );
+        let toggle_resp = ui.interact(
+            toggle_rect,
+            Id::new("mq_sidebar_collapse_toggle"),
+            Sense::click(),
+        );
+        if ui.is_rect_visible(toggle_rect) {
+            if toggle_resp.hovered() {
+                ui.painter().rect_filled(
+                    toggle_rect,
+                    CornerRadius::same(NAV_ROW_RADIUS),
+                    tokens.bg_surface_hover,
+                );
+            }
+            paint_vector_icon(
+                ui.painter(),
+                Rect::from_center_size(toggle_rect.center(), Vec2::splat(16.0)),
+                VectorIcon::ChevronsLeft,
+                if toggle_resp.hovered() {
+                    tokens.text
+                } else {
+                    tokens.text_muted
+                },
+            );
+        }
+        if toggle_resp.on_hover_text("Свернуть меню").clicked() {
+            toggle_sidebar_compact(ui.ctx());
+        }
+
+        let text_left = emblem_rect.right() + 10.0;
+        let title_font = FontId::proportional(15.0);
+        let title_galley = ui
+            .painter()
+            .layout_no_wrap("MQ".to_owned(), title_font, tokens.text);
+        let version_font = FontId::proportional(11.0);
+        let version_galley = ui.painter().layout_no_wrap(
+            format!("v{}", env!("CARGO_PKG_VERSION")),
+            version_font,
+            tokens.text_muted,
+        );
+        let total_h = title_galley.size().y + 1.0 + version_galley.size().y;
+        let top_y = header_rect.center().y - total_h * 0.5;
+        ui.painter()
+            .galley(Pos2::new(text_left, top_y), title_galley, tokens.text);
+        ui.painter().galley(
+            Pos2::new(text_left, top_y + 17.0),
+            version_galley,
+            tokens.text_muted,
+        );
     }
 }
 
@@ -216,6 +602,8 @@ fn render_bottom_account_profile(
     ui: &mut Ui,
     accounts: &[AccountProfile],
     active_account_id: Option<&str>,
+    is_compact: bool,
+    update_available: bool,
     tokens: &Tokens,
 ) -> Option<SidebarAction> {
     let mut action = None;
@@ -227,32 +615,66 @@ fn render_bottom_account_profile(
         })
         .or_else(|| accounts.first());
 
-    let (username, avatar_opt, kind_str) = match active_profile {
+    let (username, avatar_opt, source_str) = match active_profile {
         Some(prof) => (
             prof.username.as_str(),
             prof.avatar_head.as_ref(),
-            prof.kind.badge_label(),
+            account_source_label(prof.kind),
         ),
-        None => ("Гость", None, "Оффлайн"),
+        None => ("Гость", None, "Офлайн"),
     };
 
+    if update_available {
+        let row_w = ui.available_width();
+        let (upd_rect, upd_resp) = ui.allocate_exact_size(Vec2::new(row_w, 22.0), Sense::click());
+        if ui.is_rect_visible(upd_rect) {
+            let painter = ui.painter();
+            if upd_resp.hovered() {
+                painter.rect_filled(
+                    upd_rect,
+                    CornerRadius::same(NAV_ROW_RADIUS),
+                    tokens.bg_surface_hover,
+                );
+            }
+            if is_compact {
+                painter.circle_filled(upd_rect.center(), 3.5, tokens.text_muted);
+            } else {
+                let dot_c = Pos2::new(upd_rect.left() + 10.0, upd_rect.center().y);
+                painter.circle_filled(dot_c, 3.0, tokens.text_muted);
+                let font = FontId::proportional(11.0);
+                let g = painter.layout_no_wrap(
+                    "Доступно обновление".to_owned(),
+                    font,
+                    tokens.text_muted,
+                );
+                painter.galley(
+                    Pos2::new(dot_c.x + 8.0, upd_rect.center().y - g.size().y * 0.5),
+                    g,
+                    tokens.text_muted,
+                );
+            }
+        }
+        let upd_resp = if is_compact {
+            upd_resp.on_hover_text("Доступно обновление")
+        } else {
+            upd_resp
+        };
+        if upd_resp.clicked() {
+            action = Some(SidebarAction::SelectTab(NavTab::Settings));
+        }
+        ui.add_space(4.0);
+    }
+
     let popup_id = Id::new("mq_sidebar_quick_account_popup");
-    let is_compact = ui.available_width() < 120.0;
     let available_w = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(available_w, 40.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(available_w, 44.0), Sense::click());
 
     if ui.is_rect_visible(rect) {
         let hovered = resp.hovered();
         let painter = ui.painter();
 
         if hovered {
-            painter.rect_filled(rect, RADIUS_BUTTON, tokens.bg_surface);
-            painter.rect_stroke(
-                rect,
-                RADIUS_BUTTON,
-                Stroke::new(1.0_f32, tokens.border),
-                StrokeKind::Inside,
-            );
+            painter.rect_filled(rect, RADIUS_BUTTON, tokens.bg_surface_hover);
         }
 
         let fallback;
@@ -265,76 +687,79 @@ fn render_bottom_account_profile(
         };
 
         if is_compact {
-            let avatar_rect = Rect::from_center_size(rect.center(), Vec2::splat(24.0));
+            let avatar_rect =
+                Rect::from_center_size(rect.center(), Vec2::splat(ACCOUNT_AVATAR_SIZE));
             crate::widgets::paint_skin_head_in_rect(painter, avatar_rect, resolved);
         } else {
-            // 24x24 avatar
             let avatar_rect = Rect::from_min_size(
-                Pos2::new(rect.left() + 6.0, rect.center().y - 12.0),
-                Vec2::splat(24.0),
+                Pos2::new(
+                    rect.left() + 6.0,
+                    rect.center().y - ACCOUNT_AVATAR_SIZE * 0.5,
+                ),
+                Vec2::splat(ACCOUNT_AVATAR_SIZE),
             );
             crate::widgets::paint_skin_head_in_rect(painter, avatar_rect, resolved);
 
-            // Nickname + account type
-            let name_font = FontId::proportional(12.5);
-            let galley = painter.layout_no_wrap(username.to_string(), name_font, tokens.text);
-            let name_pos = Pos2::new(rect.left() + 36.0, rect.top() + 6.0);
-            painter.galley(name_pos, galley, tokens.text);
-
-            let kind_font = FontId::proportional(10.5);
-            let kind_galley =
-                painter.layout_no_wrap(kind_str.to_string(), kind_font, tokens.text_muted);
-            let kind_pos = Pos2::new(rect.left() + 36.0, rect.top() + 22.0);
-            painter.galley(kind_pos, kind_galley, tokens.text_muted);
-
-            // Chevron on right
             let chev_rect = Rect::from_center_size(
                 Pos2::new(rect.right() - 14.0, rect.center().y),
-                Vec2::splat(12.0),
+                Vec2::splat(16.0),
             );
-            let icon = if accounts.len() > 1 {
-                VectorIcon::ChevronDown
-            } else {
-                VectorIcon::ChevronRight
-            };
-            paint_vector_icon(painter, chev_rect, icon, tokens.text_muted);
+            paint_vector_icon(
+                painter,
+                chev_rect,
+                VectorIcon::ChevronDown,
+                tokens.text_muted,
+            );
+
+            let text_left = avatar_rect.right() + 8.0;
+            let max_text_w = (chev_rect.left() - 4.0 - text_left).max(20.0);
+
+            let name_font = FontId::proportional(12.5);
+            let name_galley =
+                truncate_text_to_width(painter, username, &name_font, max_text_w, tokens.text);
+            let name_pos = Pos2::new(text_left, rect.top() + 7.0);
+            painter.galley(name_pos, name_galley, tokens.text);
+
+            let kind_font = FontId::proportional(11.0);
+            let kind_galley =
+                painter.layout_no_wrap(source_str.to_owned(), kind_font, tokens.text_muted);
+            let kind_pos = Pos2::new(text_left, rect.top() + 23.0);
+            painter.galley(kind_pos, kind_galley, tokens.text_muted);
         }
     }
 
     let resp = if is_compact {
-        resp.on_hover_text(format!("{username} ({kind_str})"))
+        resp.on_hover_text(format!("{username} ({source_str})"))
     } else {
         resp
     };
 
     if resp.clicked() {
-        if accounts.len() > 1 {
-            ui.memory_mut(|mem| mem.toggle_popup(popup_id));
-        } else {
-            action = Some(SidebarAction::OpenAccountsTab);
-        }
+        ui.memory_mut(|mem| mem.toggle_popup(popup_id));
     }
 
-    if accounts.len() > 1 {
-        egui::popup_above_or_below_widget(
-            ui,
-            popup_id,
-            &resp,
-            egui::AboveOrBelow::Above,
-            egui::PopupCloseBehavior::CloseOnClickOutside,
-            |ui| {
-                ui.set_min_width(200.0);
-                ui.label(
-                    RichText::new("Смена аккаунта")
-                        .color(tokens.text_muted)
-                        .size(11.0),
-                );
-                ui.separator();
+    egui::popup_above_or_below_widget(
+        ui,
+        popup_id,
+        &resp,
+        egui::AboveOrBelow::Above,
+        egui::PopupCloseBehavior::CloseOnClickOutside,
+        |ui| {
+            ui.set_min_width(200.0);
+            ui.label(
+                RichText::new("Аккаунты")
+                    .color(tokens.text_muted)
+                    .size(11.0),
+            );
+            ui.separator();
+            if accounts.is_empty() {
+                ui.label(RichText::new("Гость (Офлайн)").color(tokens.text_muted));
+            } else {
                 for acc in accounts {
                     let is_current = active_profile
                         .map(|curr| curr.id == acc.id)
                         .unwrap_or(false);
-                    let label = format!("{} ({})", acc.username, acc.kind.badge_label());
+                    let label = format!("{} ({})", acc.username, account_source_label(acc.kind));
                     if ui
                         .selectable_label(is_current, RichText::new(label).color(tokens.text))
                         .clicked()
@@ -343,22 +768,22 @@ fn render_bottom_account_profile(
                         ui.memory_mut(|mem| mem.close_popup());
                     }
                 }
-                ui.separator();
-                if ui
-                    .button(RichText::new("Управление аккаунтами").color(tokens.accent))
-                    .clicked()
-                {
-                    action = Some(SidebarAction::OpenAccountsTab);
-                    ui.memory_mut(|mem| mem.close_popup());
-                }
-            },
-        );
-    }
+            }
+            ui.separator();
+            if ui
+                .button(RichText::new("Управление аккаунтами").color(tokens.accent))
+                .clicked()
+            {
+                action = Some(SidebarAction::OpenAccountsTab);
+                ui.memory_mut(|mem| mem.close_popup());
+            }
+        },
+    );
 
     action
 }
 
-/// Renders the sidebar contents inside an existing [`egui::Ui`].
+/// Renders the sidebar contents inside an existing [`egui::Ui`] with default [`SidebarState`].
 pub fn render_sidebar(
     ui: &mut Ui,
     active_tab: NavTab,
@@ -367,167 +792,111 @@ pub fn render_sidebar(
     lang_code: &str,
     tokens: &Tokens,
 ) -> Option<SidebarAction> {
-    let mut action = None;
-    let lang_popup_id = Id::new("mq_sidebar_language_popup");
+    render_sidebar_with_state(
+        ui,
+        active_tab,
+        accounts,
+        active_account_id,
+        lang_code,
+        tokens,
+        SidebarState::default(),
+    )
+}
+
+/// Renders the sidebar contents inside an existing [`egui::Ui`] with dynamic badges and update state.
+pub fn render_sidebar_with_state(
+    ui: &mut Ui,
+    active_tab: NavTab,
+    accounts: &[AccountProfile],
+    active_account_id: Option<&str>,
+    lang_code: &str,
+    tokens: &Tokens,
+    state: SidebarState,
+) -> Option<SidebarAction> {
+    let mut action = handle_keyboard_navigation(ui).map(SidebarAction::SelectTab);
     let is_compact = ui.available_width() < 120.0;
 
-    if is_compact {
-        // Compact brand header: emblem centered + small globe button below
-        let emblem_rect = Rect::from_center_size(
-            Pos2::new(
-                ui.available_rect_before_wrap().center().x,
-                ui.cursor().top() + 18.0,
-            ),
-            Vec2::splat(32.0),
-        );
-        let _ = ui.allocate_space(Vec2::new(ui.available_width(), 36.0));
-        paint_mq_emblem(ui.painter(), emblem_rect, tokens);
+    // 1. Brand Header (56 px)
+    render_header(ui, is_compact, tokens);
 
-        ui.add_space(4.0);
-        let (globe_rect, globe_resp) =
-            ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::click());
-        if ui.is_rect_visible(globe_rect) {
-            let hovered = globe_resp.hovered();
-            let center_rect = Rect::from_center_size(globe_rect.center(), Vec2::splat(16.0));
-            paint_vector_icon(
-                ui.painter(),
-                center_rect,
-                VectorIcon::Globe,
-                if hovered {
-                    tokens.accent
-                } else {
-                    tokens.text_muted
-                },
-            );
+    // 2. Top groups: Библиотека & Активность
+    for group in [NavGroup::Library, NavGroup::Activity] {
+        ui.add_space(6.0);
+        paint_horizontal_divider(ui, tokens.border);
+        render_group_heading(ui, group.label(), is_compact, tokens);
+        if is_compact {
+            ui.add_space(6.0);
         }
-        let globe_resp = globe_resp.on_hover_text("Язык / Language");
-        if globe_resp.clicked() {
-            ui.memory_mut(|mem| mem.toggle_popup(lang_popup_id));
-        }
-
-        egui::popup_below_widget(
-            ui,
-            lang_popup_id,
-            &globe_resp,
-            egui::PopupCloseBehavior::CloseOnClickOutside,
-            |ui| {
-                ui.set_min_width(150.0);
-                ui.label(
-                    RichText::new("Язык / Language")
-                        .color(tokens.text_muted)
-                        .size(11.0),
-                );
-                ui.separator();
-                for lang in Language::ALL {
-                    let is_current = lang_code == lang.code();
-                    if ui
-                        .selectable_label(is_current, lang.native_name())
-                        .clicked()
-                    {
-                        action = Some(SidebarAction::ChangeLanguage(lang.code().to_string()));
-                        ui.memory_mut(|mem| mem.close_popup());
-                    }
-                }
-            },
-        );
-    } else {
-        // 1. Brand Header: MQ emblem + title + version 11px gray + Language button
-        ui.horizontal(|ui| {
-            let (emblem_rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::hover());
-            if ui.is_rect_visible(emblem_rect) {
-                paint_mq_emblem(ui.painter(), emblem_rect, tokens);
+        for &tab in group.tabs() {
+            let badge = if tab == NavTab::Downloads {
+                Some(state.active_downloads)
+            } else {
+                None
+            };
+            if render_nav_row(
+                ui,
+                tab,
+                tab == active_tab,
+                is_compact,
+                badge,
+                lang_code,
+                tokens,
+            ) {
+                action = Some(SidebarAction::SelectTab(tab));
             }
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                ui.label(
-                    RichText::new("MQ LAUNCHER")
-                        .color(tokens.text)
-                        .size(14.0)
-                        .strong(),
-                );
-                ui.label(RichText::new("v2.1.0").color(tokens.text_muted).size(11.0));
-            });
-
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let (globe_rect, globe_resp) =
-                    ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
-                if ui.is_rect_visible(globe_rect) {
-                    let hovered = globe_resp.hovered();
-                    if hovered {
-                        ui.painter()
-                            .rect_filled(globe_rect, RADIUS_BUTTON, tokens.bg_surface);
-                    }
-                    paint_vector_icon(
-                        ui.painter(),
-                        globe_rect.shrink(4.0),
-                        VectorIcon::Globe,
-                        if hovered {
-                            tokens.accent
-                        } else {
-                            tokens.text_muted
-                        },
-                    );
-                }
-                if globe_resp.clicked() {
-                    ui.memory_mut(|mem| mem.toggle_popup(lang_popup_id));
-                }
-
-                egui::popup_below_widget(
-                    ui,
-                    lang_popup_id,
-                    &globe_resp,
-                    egui::PopupCloseBehavior::CloseOnClickOutside,
-                    |ui| {
-                        ui.set_min_width(150.0);
-                        ui.label(
-                            RichText::new("Язык / Language")
-                                .color(tokens.text_muted)
-                                .size(11.0),
-                        );
-                        ui.separator();
-                        for lang in Language::ALL {
-                            let is_current = lang_code == lang.code();
-                            if ui
-                                .selectable_label(is_current, lang.native_name())
-                                .clicked()
-                            {
-                                action =
-                                    Some(SidebarAction::ChangeLanguage(lang.code().to_string()));
-                                ui.memory_mut(|mem| mem.close_popup());
-                            }
-                        }
-                    },
-                );
-            });
-        });
-    }
-
-    ui.add_space(8.0);
-    ui.separator();
-    ui.add_space(8.0);
-
-    // 2. Navigation Rows
-    for tab in NavTab::ALL {
-        if render_nav_row(ui, tab, tab == active_tab, lang_code, tokens) {
-            action = Some(SidebarAction::SelectTab(tab));
         }
     }
 
-    // 3. Bottom Mini-Profile
+    // 3. Bottom-pinned «Система» group + Account block
     ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-        if let Some(card_action) =
-            render_bottom_account_profile(ui, accounts, active_account_id, tokens)
-        {
+        if let Some(card_action) = render_bottom_account_profile(
+            ui,
+            accounts,
+            active_account_id,
+            is_compact,
+            state.update_available,
+            tokens,
+        ) {
             action = Some(card_action);
         }
         ui.add_space(6.0);
-        ui.separator();
+        paint_horizontal_divider(ui, tokens.border);
+        ui.add_space(6.0);
+
+        for &tab in NavGroup::System.tabs().iter().rev() {
+            if render_nav_row(
+                ui,
+                tab,
+                tab == active_tab,
+                is_compact,
+                None,
+                lang_code,
+                tokens,
+            ) {
+                action = Some(SidebarAction::SelectTab(tab));
+            }
+        }
+        if !is_compact {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_space(NAV_ROW_PADDING_X);
+                ui.label(
+                    RichText::new(NavGroup::System.label())
+                        .size(11.0)
+                        .color(tokens.text_muted),
+                );
+            });
+            ui.add_space(8.0);
+        } else {
+            ui.add_space(6.0);
+        }
+        paint_horizontal_divider(ui, tokens.border);
     });
 
     action
 }
 
-/// Renders the fixed-width left [`SidePanel`] and returns any triggered [`SidebarAction`].
+/// Renders the left [`SidePanel`] and returns any triggered [`SidebarAction`].
 pub fn show_sidebar(
     ctx: &Context,
     active_tab: NavTab,
@@ -557,16 +926,184 @@ pub fn show_sidebar(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::{Event, Modifiers, RawInput};
 
     #[test]
-    fn nav_tabs_have_distinct_labels_and_icons() {
-        assert_eq!(NavTab::Instances.label(), "Инстансы");
-        assert_eq!(NavTab::Catalog.label(), "Каталог");
-        assert_eq!(NavTab::Accounts.label(), "Аккаунты");
-        assert_eq!(NavTab::Performance.label(), "Производительность");
-        assert_eq!(NavTab::Settings.label(), "Настройки");
-        assert_eq!(NavTab::ALL.len(), 5);
-        assert_eq!(SIDEBAR_WIDTH, 220.0);
+    fn sidebar_dimensions_and_groups_match_spec() {
+        assert_eq!(SIDEBAR_WIDTH, 224.0);
         assert_eq!(COMPACT_SIDEBAR_WIDTH, 64.0);
+        assert_eq!(AUTO_COLLAPSE_WINDOW_WIDTH, 1000.0);
+        assert_eq!(SIDEBAR_HEADER_HEIGHT, 56.0);
+        assert_eq!(NAV_ROW_HEIGHT, 36.0);
+        assert_eq!(NAV_ROW_PADDING_X, 12.0);
+        assert_eq!(NAV_ICON_SIZE, 16.0);
+        assert_eq!(NAV_ICON_TEXT_GAP, 12.0);
+        assert_eq!(NAV_ROW_RADIUS, 6);
+        assert_eq!(ACCOUNT_AVATAR_SIZE, 28.0);
+
+        assert_eq!(NavGroup::Library.label(), "Библиотека");
+        assert_eq!(
+            NavGroup::Library.tabs(),
+            &[NavTab::Instances, NavTab::Catalog]
+        );
+        assert_eq!(NavGroup::Activity.label(), "Активность");
+        assert_eq!(
+            NavGroup::Activity.tabs(),
+            &[NavTab::Downloads, NavTab::Performance]
+        );
+        assert_eq!(NavGroup::System.label(), "Система");
+        assert_eq!(
+            NavGroup::System.tabs(),
+            &[NavTab::Accounts, NavTab::Settings]
+        );
+        assert_eq!(NavTab::ALL.len(), 6);
+    }
+
+    #[test]
+    fn auto_collapse_threshold_and_manual_override() {
+        // Auto-collapse below 1000 px
+        assert!(resolve_compact_mode(999.0, None));
+        assert!(resolve_compact_mode(800.0, None));
+        assert!(!resolve_compact_mode(1000.0, None));
+        assert!(!resolve_compact_mode(1280.0, None));
+
+        // Manual override takes precedence over window width
+        assert!(!resolve_compact_mode(800.0, Some(false)));
+        assert!(resolve_compact_mode(1280.0, Some(true)));
+    }
+
+    #[test]
+    fn sidebar_width_responds_to_viewport_and_toggle() {
+        let ctx = Context::default();
+        let wide_input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1200.0, 800.0))),
+            ..Default::default()
+        };
+        ctx.begin_pass(wide_input);
+        assert!(!is_sidebar_compact(&ctx));
+        let _ = ctx.end_pass();
+
+        let narrow_input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 800.0))),
+            ..Default::default()
+        };
+        ctx.begin_pass(narrow_input.clone());
+        assert!(is_sidebar_compact(&ctx));
+        toggle_sidebar_compact(&ctx);
+        assert!(!is_sidebar_compact(&ctx));
+        let _ = ctx.end_pass();
+
+        // Manual choice persists on subsequent frames
+        ctx.begin_pass(narrow_input);
+        assert!(!is_sidebar_compact(&ctx));
+        let _ = ctx.end_pass();
+    }
+
+    #[test]
+    fn keyboard_shortcuts_ctrl_1_to_6_select_tabs() {
+        let ctx = Context::default();
+        let tokens = Tokens::matte_dark();
+
+        for (idx, expected_tab) in NavTab::ALL.iter().enumerate() {
+            let key = match idx {
+                0 => Key::Num1,
+                1 => Key::Num2,
+                2 => Key::Num3,
+                3 => Key::Num4,
+                4 => Key::Num5,
+                _ => Key::Num6,
+            };
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 800.0))),
+                modifiers: Modifiers::CTRL,
+                events: vec![Event::Key {
+                    key,
+                    physical_key: Some(key),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::CTRL,
+                }],
+                ..Default::default()
+            };
+            let mut emitted = None;
+            ctx.begin_pass(input);
+            SidePanel::left("test_sidebar")
+                .exact_width(SIDEBAR_WIDTH)
+                .show(&ctx, |ui| {
+                    emitted = render_sidebar_with_state(
+                        ui,
+                        NavTab::Instances,
+                        &[],
+                        None,
+                        "ru",
+                        &tokens,
+                        SidebarState {
+                            active_downloads: 3,
+                            update_available: true,
+                        },
+                    );
+                });
+            let _ = ctx.end_pass();
+            assert_eq!(emitted, Some(SidebarAction::SelectTab(*expected_tab)));
+        }
+    }
+
+    #[test]
+    fn arrow_navigation_and_enter_activates_focused_tab() {
+        let ctx = Context::default();
+        let tokens = Tokens::matte_dark();
+
+        // Frame 1: focus the first nav item
+        ctx.begin_pass(RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 800.0))),
+            ..Default::default()
+        });
+        ctx.memory_mut(|m| m.request_focus(nav_item_id(NavTab::Instances)));
+        SidePanel::left("test_sidebar")
+            .exact_width(SIDEBAR_WIDTH)
+            .show(&ctx, |ui| {
+                let _ = render_sidebar(ui, NavTab::Instances, &[], None, "ru", &tokens);
+            });
+        let _ = ctx.end_pass();
+
+        // Frame 2: ArrowDown moves focus from Instances to Catalog
+        ctx.begin_pass(RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 800.0))),
+            events: vec![Event::Key {
+                key: Key::ArrowDown,
+                physical_key: Some(Key::ArrowDown),
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+            ..Default::default()
+        });
+        SidePanel::left("test_sidebar")
+            .exact_width(SIDEBAR_WIDTH)
+            .show(&ctx, |ui| {
+                let _ = render_sidebar(ui, NavTab::Instances, &[], None, "ru", &tokens);
+            });
+        let _ = ctx.end_pass();
+
+        // Frame 3: Enter activates the focused item (Catalog)
+        let mut emitted = None;
+        ctx.begin_pass(RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 800.0))),
+            events: vec![Event::Key {
+                key: Key::Enter,
+                physical_key: Some(Key::Enter),
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+            ..Default::default()
+        });
+        SidePanel::left("test_sidebar")
+            .exact_width(SIDEBAR_WIDTH)
+            .show(&ctx, |ui| {
+                emitted = render_sidebar(ui, NavTab::Instances, &[], None, "ru", &tokens);
+            });
+        let _ = ctx.end_pass();
+        assert_eq!(emitted, Some(SidebarAction::SelectTab(NavTab::Catalog)));
     }
 }
