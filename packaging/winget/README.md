@@ -22,7 +22,7 @@ winget install --manifest packaging/winget/MrQuster.MQ.yaml
 To validate the manifest format with `winget`:
 
 ```powershell
-winget validate packaging/winget/manifests/m/MrQuster/MQ/2.2.0/
+winget validate packaging/winget/manifests/m/MrQuster/MQ/2.3.0/
 ```
 
 ## Submitting a New Release Upstream
@@ -34,5 +34,5 @@ Use Microsoft's official `wingetcreate` tool:
 winget install Microsoft.WingetCreate
 
 # Update and submit automatically
-wingetcreate update MrQuster.MQ --version <NEW_VERSION> --urls https://github.com/MrQuster/mq/releases/download/v<NEW_VERSION>/MQ-Setup-<NEW_VERSION>.exe --token <GITHUB_PAT> --submit
+wingetcreate update MrQuster.MQ --version <NEW_VERSION> --urls https://github.com/MrQuster/mq/releases/download/v<NEW_VERSION>/MQ-Setup-<NEW_VERSION>-x64.exe --token <GITHUB_PAT> --submit
 ```

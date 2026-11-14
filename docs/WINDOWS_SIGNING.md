@@ -62,11 +62,11 @@ Every MQ release artifact is published alongside a canonical `SHA256SUMS` file.
 #### In PowerShell:
 ```powershell
 # Compute the SHA-256 hash of the downloaded installer:
-(Get-FileHash .\MQ-Setup-2.2.0.exe -Algorithm SHA256).Hash
+(Get-FileHash .\MQ-Setup-2.3.0-x64.exe -Algorithm SHA256).Hash
 
 # Verify automatically against SHA256SUMS:
-$expected = (Get-Content .\SHA256SUMS | Select-String "MQ-Setup-2.2.0.exe").Line.Split(" ")[0]
-$actual   = (Get-FileHash .\MQ-Setup-2.2.0.exe -Algorithm SHA256).Hash.ToLower()
+$expected = (Get-Content .\SHA256SUMS | Select-String "MQ-Setup-2.3.0-x64.exe").Line.Split(" ")[0]
+$actual   = (Get-FileHash .\MQ-Setup-2.3.0-x64.exe -Algorithm SHA256).Hash.ToLower()
 if ($actual -eq $expected) {
     Write-Host "[OK] SHA-256 matches official release!" -ForegroundColor Green
 } else {
@@ -90,12 +90,12 @@ Attestations are signed inside GitHub's ephemeral build runners using GitHub's O
 #### Verifying with GitHub CLI:
 ```powershell
 # Verify that the binary was built by GitHub Actions in the MrQuster/mq repository
-gh attestation verify .\MQ-Setup-2.2.0.exe --owner MrQuster
+gh attestation verify .\MQ-Setup-2.3.0-x64.exe --owner MrQuster
 ```
 
 **Expected output:**
 ```
-Loaded digest sha256:... for MQ-Setup-2.2.0.exe
+Loaded digest sha256:... for MQ-Setup-2.3.0-x64.exe
 Loaded 1 attestation from GitHub API
 ✓ Verification succeeded!
 
@@ -114,9 +114,9 @@ This cryptographically guarantees:
 
 ### 2.3 Minisign Verification
 
-The `SHA256SUMS` manifest is cryptographically signed using Minisign:
+The `SHA256SUMS` manifest is cryptographically signed using Minisign (embedded public key `RWRlxrUOJgeLq7AIndJRG9ZhsdT5QiHy9usykXvxt1C49a1h/km3h9lt`):
 ```powershell
-minisign -Vm SHA256SUMS -p <MQ_PUBLIC_KEY>
+minisign -Vm SHA256SUMS -P RWRlxrUOJgeLq7AIndJRG9ZhsdT5QiHy9usykXvxt1C49a1h/km3h9lt
 ```
 If valid, Minisign prints `Signature and comment signature verified`.
 
