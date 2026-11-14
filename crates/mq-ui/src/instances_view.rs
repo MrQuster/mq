@@ -1190,7 +1190,11 @@ impl InstancesView {
                         (InstanceDetailTab::Settings, "Параметры"),
                     ];
                     let prev_tab = self.current_tab;
-                    render_underline_tabs(ui, &tokens, &detail_tabs, &mut self.current_tab);
+                    ScrollArea::horizontal()
+                        .id_salt("instance_detail_tabs_scroll")
+                        .show(ui, |ui| {
+                            render_underline_tabs(ui, &tokens, &detail_tabs, &mut self.current_tab);
+                        });
                     if self.current_tab != prev_tab && self.current_tab == InstanceDetailTab::Mods {
                         let _ = state.cmd_sender.send(UiWorkerCommand::ScanInstanceMods {
                             instance_id: inst_id.clone(),
@@ -1468,256 +1472,302 @@ impl InstancesView {
         };
         let auto_name = format!("{} {}", state.create_inst_loader.as_str(), effective_ver);
 
+        let screen = ui.ctx().screen_rect();
+        egui::Area::new(egui::Id::new("create_instance_backdrop"))
+            .fixed_pos(screen.min)
+            .order(egui::Order::Middle)
+            .show(ui.ctx(), |ui| {
+                let (rect, _) = ui.allocate_exact_size(screen.size(), Sense::click());
+                ui.painter()
+                    .rect_filled(rect, 0.0, Color32::from_black_alpha(150));
+            });
+
+        let modal_frame = egui::Frame::window(ui.style())
+            .fill(tokens.bg_surface)
+            .stroke(Stroke::new(1.0_f32, tokens.border))
+            .corner_radius(RADIUS_CARD)
+            .inner_margin(egui::Margin::same(20));
+
+        let body_max_h = (screen.height() - 160.0).clamp(200.0, 500.0);
+
         egui::Window::new("Создать инстанс")
+            .order(egui::Order::Foreground)
+            .frame(modal_frame)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ui.ctx(), |ui| {
-                let modal_w = 460.0_f32.min(ui.ctx().screen_rect().width() - 32.0);
+                let modal_w = 460.0_f32.min(screen.width() - 32.0);
                 ui.set_width(modal_w);
 
-                // 1. Instance Name with auto-placeholder
-                ui.label(RichText::new("Название").color(tokens.text).strong());
-                ui.add_space(4.0);
-                ui.add(
-                    egui::TextEdit::singleline(&mut state.create_inst_name)
-                        .hint_text(&auto_name)
-                        .desired_width(ui.available_width()),
-                );
-
-                ui.add_space(10.0);
-
-                // 2. Mod Loader Selection
-                ui.label(RichText::new("Загрузчик").color(tokens.text).strong());
-                ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-                    for &ldr in &[
-                        ModLoaderKind::Vanilla,
-                        ModLoaderKind::Fabric,
-                        ModLoaderKind::Quilt,
-                        ModLoaderKind::Forge,
-                        ModLoaderKind::NeoForge,
-                    ] {
-                        let is_sel = state.create_inst_loader == ldr;
-                        if ui.selectable_label(is_sel, ldr.as_str()).clicked() {
-                            state.create_inst_loader = ldr;
-                        }
-                    }
-                });
-
-                ui.add_space(10.0);
-
-                // 3. Minecraft Version Selection
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("Версия Minecraft")
-                            .color(tokens.text)
-                            .strong(),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if state.is_fetching_manifest {
-                            ui.label(
-                                RichText::new("Загрузка...")
-                                    .color(tokens.text_muted)
-                                    .small(),
-                            );
-                        } else if button_secondary(
-                            ui,
-                            tokens,
-                            Some(VectorIcon::Refresh),
-                            "Обновить",
-                        )
-                        .clicked()
-                        {
-                            state.is_fetching_manifest = true;
-                            let _ = state.cmd_sender.send(UiWorkerCommand::FetchVersionManifest);
-                        }
-                    });
-                });
-                ui.add_space(4.0);
-
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
-                    ui.checkbox(&mut self.show_releases, "Релизы");
-                    ui.checkbox(&mut self.show_snapshots, "Снапшоты");
-                    ui.checkbox(&mut self.show_betas, "Beta");
-                    ui.checkbox(&mut self.show_alphas, "Alpha");
-                });
-
-                ui.add_space(4.0);
-
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.version_search)
-                            .hint_text("Поиск версии (26.1, 1.21.4, 25w09b)...")
-                            .desired_width(ui.available_width() - 64.0),
-                    );
-                    if !self.version_search.is_empty() && ui.small_button("Сброс").clicked() {
-                        self.version_search.clear();
-                    }
-                });
-
-                ui.add_space(6.0);
-
-                let query = self.version_search.trim().to_lowercase();
-                let mut filtered: Vec<(&str, McVersionCategory)> = Vec::new();
-
-                if !state.remote_versions.is_empty() {
-                    for (id, rel_type) in &state.remote_versions {
-                        let cat = match rel_type.as_str() {
-                            "release" => McVersionCategory::Release,
-                            "snapshot" => McVersionCategory::Snapshot,
-                            "old_beta" => McVersionCategory::OldBeta,
-                            "old_alpha" => McVersionCategory::OldAlpha,
-                            _ => continue,
-                        };
-                        let matches_cat = match cat {
-                            McVersionCategory::Release => self.show_releases,
-                            McVersionCategory::Snapshot => self.show_snapshots,
-                            McVersionCategory::OldBeta => self.show_betas,
-                            McVersionCategory::OldAlpha => self.show_alphas,
-                        };
-                        if !matches_cat {
-                            continue;
-                        }
-                        if !query.is_empty() && !id.to_lowercase().contains(&query) {
-                            continue;
-                        }
-                        filtered.push((id.as_str(), cat));
-                    }
-                } else if !state.is_fetching_manifest {
-                    if self.show_releases {
-                        for &v in ALL_MC_RELEASES {
-                            if query.is_empty() || v.to_lowercase().contains(&query) {
-                                filtered.push((v, McVersionCategory::Release));
-                            }
-                        }
-                    }
-                    if self.show_snapshots {
-                        for &v in ALL_MC_SNAPSHOTS {
-                            if query.is_empty() || v.to_lowercase().contains(&query) {
-                                filtered.push((v, McVersionCategory::Snapshot));
-                            }
-                        }
-                    }
-                    if self.show_betas {
-                        for &v in ALL_MC_BETAS {
-                            if query.is_empty() || v.to_lowercase().contains(&query) {
-                                filtered.push((v, McVersionCategory::OldBeta));
-                            }
-                        }
-                    }
-                    if self.show_alphas {
-                        for &v in ALL_MC_ALPHAS {
-                            if query.is_empty() || v.to_lowercase().contains(&query) {
-                                filtered.push((v, McVersionCategory::OldAlpha));
-                            }
-                        }
-                    }
-                }
-
-                let picker_frame = egui::Frame::new()
-                    .fill(tokens.bg_input)
-                    .stroke(Stroke::new(1.0_f32, tokens.border))
-                    .corner_radius(RADIUS_CARD)
-                    .inner_margin(egui::Margin::same(6));
-
-                picker_frame.show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ScrollArea::vertical()
-                        .id_salt("version_select_scroll")
-                        .max_height(130.0)
-                        .show(ui, |ui| {
-                            if state.is_fetching_manifest && state.remote_versions.is_empty() {
-                                for width_frac in [0.55_f32, 0.42, 0.62, 0.48] {
-                                    let avail_w = ui.available_width();
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        Vec2::new(avail_w * width_frac, 18.0),
-                                        Sense::hover(),
-                                    );
-                                    ui.painter().rect_filled(rect, 4.0, tokens.bg_surface_hover);
-                                    ui.add_space(4.0);
-                                }
-                            } else if filtered.is_empty() {
-                                ui.add_space(8.0);
-                                ui.label(
-                                    RichText::new("Нет версий, соответствующих фильтрам")
-                                        .color(tokens.text_muted),
-                                );
-                            } else {
-                                for (vid, cat) in filtered {
-                                    let is_sel = effective_ver == vid;
-                                    ui.horizontal(|ui| {
-                                        let text_col =
-                                            if is_sel { tokens.accent } else { tokens.text };
-                                        if ui
-                                            .selectable_label(
-                                                is_sel,
-                                                RichText::new(vid).color(text_col).strong(),
-                                            )
-                                            .clicked()
-                                        {
-                                            state.create_inst_mc_ver = vid.to_string();
-                                        }
-                                        version_badge(ui, cat.badge_label(), cat.badge_color());
-                                    });
-                                }
-                            }
-                        });
-                });
-
-                ui.add_space(10.0);
-
-                // 4. Collapsible Advanced Block (Memory + Java)
-                egui::CollapsingHeader::new(RichText::new("Дополнительно").color(tokens.text))
-                    .default_open(false)
+                ScrollArea::vertical()
+                    .id_salt("create_instance_modal_body")
+                    .max_height(body_max_h)
                     .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(format!(
-                                "Память: {} МБ ({:.1} ГБ)",
-                                state.create_inst_ram_mb,
-                                state.create_inst_ram_mb as f32 / 1024.0
-                            ))
-                            .color(tokens.text)
-                            .small(),
+                        // 1. Instance Name with auto-placeholder
+                        ui.label(RichText::new("Название").color(tokens.text).strong());
+                        ui.add_space(4.0);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.create_inst_name)
+                                .hint_text(&auto_name)
+                                .desired_width(ui.available_width()),
                         );
+
+                        ui.add_space(10.0);
+
+                        // 2. Mod Loader Selection
+                        ui.label(RichText::new("Загрузчик").color(tokens.text).strong());
                         ui.add_space(4.0);
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
-                            for &(mb, lbl) in &[
-                                (2048, "2 ГБ"),
-                                (4096, "4 ГБ"),
-                                (6144, "6 ГБ"),
-                                (8192, "8 ГБ"),
-                                (12288, "12 ГБ"),
-                                (16384, "16 ГБ"),
+                            for &ldr in &[
+                                ModLoaderKind::Vanilla,
+                                ModLoaderKind::Fabric,
+                                ModLoaderKind::Quilt,
+                                ModLoaderKind::Forge,
+                                ModLoaderKind::NeoForge,
                             ] {
-                                if ui
-                                    .selectable_label(state.create_inst_ram_mb == mb, lbl)
-                                    .clicked()
-                                {
-                                    state.create_inst_ram_mb = mb;
+                                let is_sel = state.create_inst_loader == ldr;
+                                if ui.selectable_label(is_sel, ldr.as_str()).clicked() {
+                                    state.create_inst_loader = ldr;
                                 }
                             }
                         });
-                        ui.add_space(4.0);
-                        ui.add(
-                            egui::Slider::new(&mut state.create_inst_ram_mb, 1024..=16384)
-                                .step_by(512.0)
-                                .show_value(false),
-                        );
 
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("Путь к Java").color(tokens.text).small());
-                        ui.add(
-                            egui::TextEdit::singleline(&mut state.create_inst_java_path)
-                                .hint_text("Авто (встроенная или системная Java)")
-                                .desired_width(ui.available_width()),
-                        );
+                        ui.add_space(10.0);
+
+                        // 3. Minecraft Version Selection
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new("Версия Minecraft")
+                                    .color(tokens.text)
+                                    .strong(),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if state.is_fetching_manifest {
+                                        ui.label(
+                                            RichText::new("Загрузка...")
+                                                .color(tokens.text_muted)
+                                                .small(),
+                                        );
+                                    } else if button_secondary(
+                                        ui,
+                                        tokens,
+                                        Some(VectorIcon::Refresh),
+                                        "Обновить",
+                                    )
+                                    .clicked()
+                                    {
+                                        state.is_fetching_manifest = true;
+                                        let _ = state
+                                            .cmd_sender
+                                            .send(UiWorkerCommand::FetchVersionManifest);
+                                    }
+                                },
+                            );
+                        });
+                        ui.add_space(4.0);
+
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(8.0, 4.0);
+                            ui.checkbox(&mut self.show_releases, "Релизы");
+                            ui.checkbox(&mut self.show_snapshots, "Снапшоты");
+                            ui.checkbox(&mut self.show_betas, "Beta");
+                            ui.checkbox(&mut self.show_alphas, "Alpha");
+                        });
+
+                        ui.add_space(4.0);
+
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.version_search)
+                                    .hint_text("Поиск версии (26.1, 1.21.4, 25w09b)...")
+                                    .desired_width(ui.available_width() - 64.0),
+                            );
+                            if !self.version_search.is_empty() && ui.small_button("Сброс").clicked()
+                            {
+                                self.version_search.clear();
+                            }
+                        });
+
+                        ui.add_space(6.0);
+
+                        let query = self.version_search.trim().to_lowercase();
+                        let mut filtered: Vec<(&str, McVersionCategory)> = Vec::new();
+
+                        if !state.remote_versions.is_empty() {
+                            for (id, rel_type) in &state.remote_versions {
+                                let cat = match rel_type.as_str() {
+                                    "release" => McVersionCategory::Release,
+                                    "snapshot" => McVersionCategory::Snapshot,
+                                    "old_beta" => McVersionCategory::OldBeta,
+                                    "old_alpha" => McVersionCategory::OldAlpha,
+                                    _ => continue,
+                                };
+                                let matches_cat = match cat {
+                                    McVersionCategory::Release => self.show_releases,
+                                    McVersionCategory::Snapshot => self.show_snapshots,
+                                    McVersionCategory::OldBeta => self.show_betas,
+                                    McVersionCategory::OldAlpha => self.show_alphas,
+                                };
+                                if !matches_cat {
+                                    continue;
+                                }
+                                if !query.is_empty() && !id.to_lowercase().contains(&query) {
+                                    continue;
+                                }
+                                filtered.push((id.as_str(), cat));
+                            }
+                        } else if !state.is_fetching_manifest {
+                            if self.show_releases {
+                                for &v in ALL_MC_RELEASES {
+                                    if query.is_empty() || v.to_lowercase().contains(&query) {
+                                        filtered.push((v, McVersionCategory::Release));
+                                    }
+                                }
+                            }
+                            if self.show_snapshots {
+                                for &v in ALL_MC_SNAPSHOTS {
+                                    if query.is_empty() || v.to_lowercase().contains(&query) {
+                                        filtered.push((v, McVersionCategory::Snapshot));
+                                    }
+                                }
+                            }
+                            if self.show_betas {
+                                for &v in ALL_MC_BETAS {
+                                    if query.is_empty() || v.to_lowercase().contains(&query) {
+                                        filtered.push((v, McVersionCategory::OldBeta));
+                                    }
+                                }
+                            }
+                            if self.show_alphas {
+                                for &v in ALL_MC_ALPHAS {
+                                    if query.is_empty() || v.to_lowercase().contains(&query) {
+                                        filtered.push((v, McVersionCategory::OldAlpha));
+                                    }
+                                }
+                            }
+                        }
+
+                        let picker_frame = egui::Frame::new()
+                            .fill(tokens.bg_input)
+                            .stroke(Stroke::new(1.0_f32, tokens.border))
+                            .corner_radius(RADIUS_CARD)
+                            .inner_margin(egui::Margin::same(6));
+
+                        picker_frame.show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ScrollArea::vertical()
+                                .id_salt("version_select_scroll")
+                                .max_height(110.0)
+                                .show(ui, |ui| {
+                                    if state.is_fetching_manifest
+                                        && state.remote_versions.is_empty()
+                                    {
+                                        for width_frac in [0.55_f32, 0.42, 0.62, 0.48] {
+                                            let avail_w = ui.available_width();
+                                            let (rect, _) = ui.allocate_exact_size(
+                                                Vec2::new(avail_w * width_frac, 18.0),
+                                                Sense::hover(),
+                                            );
+                                            ui.painter().rect_filled(
+                                                rect,
+                                                4.0,
+                                                tokens.bg_surface_hover,
+                                            );
+                                            ui.add_space(4.0);
+                                        }
+                                    } else if filtered.is_empty() {
+                                        ui.add_space(8.0);
+                                        ui.label(
+                                            RichText::new("Нет версий, соответствующих фильтрам")
+                                                .color(tokens.text_muted),
+                                        );
+                                    } else {
+                                        for (vid, cat) in filtered {
+                                            let is_sel = effective_ver == vid;
+                                            ui.horizontal(|ui| {
+                                                let text_col = if is_sel {
+                                                    tokens.accent
+                                                } else {
+                                                    tokens.text
+                                                };
+                                                if ui
+                                                    .selectable_label(
+                                                        is_sel,
+                                                        RichText::new(vid).color(text_col).strong(),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    state.create_inst_mc_ver = vid.to_string();
+                                                }
+                                                version_badge(
+                                                    ui,
+                                                    cat.badge_label(),
+                                                    cat.badge_color(),
+                                                );
+                                            });
+                                        }
+                                    }
+                                });
+                        });
+
+                        ui.add_space(10.0);
+
+                        // 4. Collapsible Advanced Block (Memory + Java)
+                        egui::CollapsingHeader::new(
+                            RichText::new("Дополнительно").color(tokens.text),
+                        )
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new(format!(
+                                    "Память: {} МБ ({:.1} ГБ)",
+                                    state.create_inst_ram_mb,
+                                    state.create_inst_ram_mb as f32 / 1024.0
+                                ))
+                                .color(tokens.text)
+                                .small(),
+                            );
+                            ui.add_space(4.0);
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                                for &(mb, lbl) in &[
+                                    (2048, "2 ГБ"),
+                                    (4096, "4 ГБ"),
+                                    (6144, "6 ГБ"),
+                                    (8192, "8 ГБ"),
+                                    (12288, "12 ГБ"),
+                                    (16384, "16 ГБ"),
+                                ] {
+                                    if ui
+                                        .selectable_label(state.create_inst_ram_mb == mb, lbl)
+                                        .clicked()
+                                    {
+                                        state.create_inst_ram_mb = mb;
+                                    }
+                                }
+                            });
+                            ui.add_space(4.0);
+                            ui.add(
+                                egui::Slider::new(&mut state.create_inst_ram_mb, 1024..=16384)
+                                    .step_by(512.0)
+                                    .show_value(false),
+                            );
+
+                            ui.add_space(8.0);
+                            ui.label(RichText::new("Путь к Java").color(tokens.text).small());
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.create_inst_java_path)
+                                    .hint_text("Авто (встроенная или системная Java)")
+                                    .desired_width(ui.available_width()),
+                            );
+                        });
                     });
 
-                ui.add_space(14.0);
+                ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if button_primary(ui, tokens, Some(VectorIcon::Check), "Создать инстанс")
                         .clicked()
