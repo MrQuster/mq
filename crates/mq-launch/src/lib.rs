@@ -392,7 +392,7 @@ IMPLEMENTOR="Oracle Corporation"
         assert!(!redacted_line.contains("ely_super_secret_access_token_777"));
         assert!(redacted_line.contains("--accessToken [REDACTED]"));
 
-        // Now test with wrapper_cmd = Some("gamemoderun")
+        // Now test with wrapper_cmd = Some("gamemoderun") (active on Unix, ignored on Windows)
         let mut wrapped_instance = instance;
         wrapped_instance.wrapper_cmd = Some("gamemoderun".to_owned());
         let wrapped_ctx = LaunchContext {
@@ -400,10 +400,22 @@ IMPLEMENTOR="Oracle Corporation"
             ..ctx
         };
         let wrapped_cmd = build_launch_command(&wrapped_ctx).expect("build wrapped command");
-        assert_eq!(wrapped_cmd.program, PathBuf::from("gamemoderun"));
-        assert_eq!(wrapped_cmd.args[0], "/usr/lib/jvm/java-21-openjdk/bin/java");
-        assert_eq!(wrapped_cmd.args[1], expected_agent);
-        assert_eq!(wrapped_cmd.args[2], "-Dauthlibinjector.side=client");
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(wrapped_cmd.program, PathBuf::from("gamemoderun"));
+            assert_eq!(wrapped_cmd.args[0], "/usr/lib/jvm/java-21-openjdk/bin/java");
+            assert_eq!(wrapped_cmd.args[1], expected_agent);
+            assert_eq!(wrapped_cmd.args[2], "-Dauthlibinjector.side=client");
+        }
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(
+                wrapped_cmd.program,
+                PathBuf::from("/usr/lib/jvm/java-21-openjdk/bin/java")
+            );
+            assert_eq!(wrapped_cmd.args[0], expected_agent);
+            assert_eq!(wrapped_cmd.args[1], "-Dauthlibinjector.side=client");
+        }
     }
 
     #[tokio::test]
@@ -411,17 +423,37 @@ IMPLEMENTOR="Oracle Corporation"
         let tmp = tempfile::tempdir().expect("create tempdir");
         let bus = EventBus::with_capacity(64);
 
-        let script = concat!(
-            "echo '[12:00:01] [Render thread/INFO]: Starting game with token secret_jwt_token_99999'\n",
-            "echo '[12:00:02] [Render thread/WARN]: Missing texture in pack'\n",
-            "echo '[12:00:03] [Server thread/ERROR]: Crash with token secret_jwt_token_99999' >&2\n"
-        );
+        #[cfg(unix)]
+        let cmd = {
+            let script = concat!(
+                "echo '[12:00:01] [Render thread/INFO]: Starting game with token secret_jwt_token_99999'\n",
+                "echo '[12:00:02] [Render thread/WARN]: Missing texture in pack'\n",
+                "echo '[12:00:03] [Server thread/ERROR]: Crash with token secret_jwt_token_99999' >&2\n"
+            );
+            BuiltLaunchCommand {
+                program: PathBuf::from("/bin/sh"),
+                args: vec!["-c".to_owned(), script.to_owned()],
+                working_dir: tmp.path().to_path_buf(),
+                env: BTreeMap::new(),
+            }
+        };
 
-        let cmd = BuiltLaunchCommand {
-            program: PathBuf::from("/bin/sh"),
-            args: vec!["-c".to_owned(), script.to_owned()],
-            working_dir: tmp.path().to_path_buf(),
-            env: BTreeMap::new(),
+        #[cfg(windows)]
+        let cmd = {
+            let script_path = tmp.path().join("emit_logs.cmd");
+            let script = concat!(
+                "@echo off\r\n",
+                "echo [12:00:01] [Render thread/INFO]: Starting game with token secret_jwt_token_99999\r\n",
+                "echo [12:00:02] [Render thread/WARN]: Missing texture in pack\r\n",
+                "echo [12:00:03] [Server thread/ERROR]: Crash with token secret_jwt_token_99999 1>&2\r\n"
+            );
+            std::fs::write(&script_path, script).expect("write test cmd script");
+            BuiltLaunchCommand {
+                program: PathBuf::from("cmd"),
+                args: vec!["/C".to_owned(), script_path.to_string_lossy().into_owned()],
+                working_dir: tmp.path().to_path_buf(),
+                env: BTreeMap::new(),
+            }
         };
 
         let status = spawn_and_stream_game(
