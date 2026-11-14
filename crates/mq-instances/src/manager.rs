@@ -169,8 +169,8 @@ impl InstanceManager {
             return Err(MqError::InstanceNotFound(id_or_name.to_owned()));
         }
 
-        // 1. Fast path: exact valid slug directory on disk.
-        if InstanceId::is_valid_slug(query) {
+        // 1. Fast path: exact lowercase valid slug directory on disk (avoids case-insensitive FS mismatch on Windows).
+        if !query.bytes().any(|b| b.is_ascii_uppercase()) && InstanceId::is_valid_slug(query) {
             let direct_toml = self.paths.instance_dir(query).join(INSTANCE_MANIFEST_FILE);
             if direct_toml.is_file() {
                 return Self::read_manifest_file(&direct_toml, Some(query));
