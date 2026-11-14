@@ -613,7 +613,7 @@ mod tests {
         .unwrap();
         let idx = serde_json::json!({
             "formatVersion": 1, "game": "minecraft", "versionId": "1", "name": "N",
-            "dependencies": {"minecraft": "1.21.1", "fabric-loader": "0.16.0"},
+            "dependencies": {"minecraft": "1.21.4", "fabric-loader": "0.16.0"},
             "files": [
               {"path":"mods/a.jar","hashes":{"sha1":"SHA1","sha512":"SHA512"},"downloads":["https://cdn.modrinth.com/a.jar"],"fileSize":100},
               {"path":"mods/b.jar","hashes":{"sha1":"SHA1","sha512":"SHA512"},"downloads":["https://cdn.modrinth.com/b.jar"],"fileSize":50,"env":{"client":"unsupported","server":"required"}}
@@ -626,7 +626,7 @@ mod tests {
         zip.write_all(raw.as_bytes()).unwrap();
         zip.finish().unwrap();
         let p = preview_archive(&path).unwrap();
-        assert_eq!(p.mc_version, "1.21.1");
+        assert_eq!(p.mc_version, "1.21.4");
         assert_eq!(p.loader, ModLoaderKind::Fabric);
         assert_eq!(p.file_count, 1, "server-only file is skipped");
         assert_eq!(p.total_size, 100);

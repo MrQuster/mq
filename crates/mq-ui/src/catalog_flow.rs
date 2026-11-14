@@ -818,7 +818,7 @@ mod tests {
         let spec = RetrySpec::Modpack {
             instance_name: "N".into(),
             preview: ModpackPreview {
-                mc_version: "1.21.1".into(),
+                mc_version: "1.21.4".into(),
                 loader: ModLoaderKind::Fabric,
                 loader_version: None,
                 file_count: 1,
@@ -877,7 +877,7 @@ mod tests {
         details.body = Some("# Hello".into());
         let page = ProjectPage {
             details,
-            versions: vec![version("1.21.1", "fabric"), version("1.20.1", "forge")],
+            versions: vec![version("1.21.4", "fabric"), version("1.20.1", "forge")],
         };
         assert!(!s.apply(id1, Ok(page.clone())));
         assert!(s.apply(id2, Ok(page)));
@@ -908,11 +908,11 @@ mod tests {
 
         let mut m = InstallDialog::new(
             hit(ProjectKind::Modpack),
-            Some(version("1.21.1", "fabric")),
+            Some(version("1.21.4", "fabric")),
             InstallTarget::NewInstance { name: "N".into() },
         );
         m.preview = Some(ModpackPreview {
-            mc_version: "1.21.1".into(),
+            mc_version: "1.21.4".into(),
             loader: ModLoaderKind::Fabric,
             loader_version: None,
             file_count: 3,
