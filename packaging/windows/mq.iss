@@ -51,7 +51,7 @@
 
 [Setup]
 ; Unique application GUID for per-user installation tracking & updates
-AppId={{9D7C52A4-325A-4B6A-B68C-7C4E15F59D18}}
+AppId={{9D7C52A4-325A-4B6A-B68C-7C4E15F59D18}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
