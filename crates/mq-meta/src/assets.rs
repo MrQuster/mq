@@ -656,7 +656,7 @@ mod tests {
 
         let jvm_arg = format_logging_jvm_argument(&config.argument, &log_file);
         assert_eq!(
-            jvm_arg,
+            jvm_arg.replace('\\', "/"),
             "-Dlog4j.configurationFile=/var/mc/assets/log_configs/client-1.12.xml"
         );
     }

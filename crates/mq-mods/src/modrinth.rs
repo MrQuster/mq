@@ -2287,7 +2287,7 @@ mod tests {
         let client = ModrinthClient::with_base_url(&base_url)
             .expect("client")
             .with_retry_policy(3, Duration::from_millis(10))
-            .with_disk_cache(tmp.path(), Duration::from_millis(50));
+            .with_disk_cache(tmp.path(), Duration::from_millis(500));
 
         // 1st call: experiences 429 -> 503 -> 200 OK and writes to disk cache with ETag.
         let hit1 = client
@@ -2306,7 +2306,7 @@ mod tests {
         assert_eq!(attempts.load(Ordering::SeqCst), 3);
 
         // Wait for TTL to expire, then 3rd call sends If-None-Match and receives 304 Not Modified!
-        tokio::time::sleep(Duration::from_millis(70)).await;
+        tokio::time::sleep(Duration::from_millis(550)).await;
         let hit3 = client
             .get_project("sodium")
             .await

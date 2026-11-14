@@ -550,14 +550,18 @@ mod tests {
         );
 
         let cp_str = format_classpath_string(&cp);
+        let sep = if cfg!(windows) { ";" } else { ":" };
         assert_eq!(
-            cp_str,
-            "/opt/mq/libraries/org/quiltmc/quilt-loader/0.27.1/quilt-loader-0.27.1.jar:\
-             /opt/mq/libraries/com/google/code/gson/gson/2.10.1/gson-2.10.1.jar:\
-             /opt/mq/libraries/org/ow2/asm/asm/9.3/asm-9.3.jar:\
-             /opt/mq/libraries/org/lwjgl/lwjgl/3.3.3/lwjgl-3.3.3.jar:\
-             /opt/mq/libraries/org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar:\
-             /opt/mq/versions/1.21.1/1.21.1.jar"
+            cp_str.replace('\\', "/"),
+            [
+                "/opt/mq/libraries/org/quiltmc/quilt-loader/0.27.1/quilt-loader-0.27.1.jar",
+                "/opt/mq/libraries/com/google/code/gson/gson/2.10.1/gson-2.10.1.jar",
+                "/opt/mq/libraries/org/ow2/asm/asm/9.3/asm-9.3.jar",
+                "/opt/mq/libraries/org/lwjgl/lwjgl/3.3.3/lwjgl-3.3.3.jar",
+                "/opt/mq/libraries/org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar",
+                "/opt/mq/versions/1.21.1/1.21.1.jar",
+            ]
+            .join(sep)
         );
     }
 
