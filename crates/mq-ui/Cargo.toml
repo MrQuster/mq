@@ -28,7 +28,7 @@ egui.workspace = true
 eframe.workspace = true
 egui_extras.workspace = true
 egui-wgpu = "0.31"
-wgpu = "24"
+wgpu = "30"
 bytemuck = { version = "1.25", features = ["derive"] }
 image = { workspace = true, features = ["jpeg", "webp"] }
 url.workspace = true
