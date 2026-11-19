@@ -67,7 +67,7 @@ hex = "0.4"
 base64 = "0.22"
 minisign-verify = "0.3"
 minisign = "0.10"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 flate2 = "1"
 tar = "0.4"
 image = { version = "0.25", default-features = false, features = ["png"] }
